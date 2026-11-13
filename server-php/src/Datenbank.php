@@ -1,0 +1,155 @@
+<?php
+declare(strict_types=1);
+
+namespace TtTurnier;
+
+use PDO;
+
+/**
+ * Datenbankzugang für MySQL/MariaDB (Webspace) und SQLite (Tests, lokale Entwicklung).
+ * Legt die Tabellen beim ersten Zugriff selbst an und hebt das Schema bei
+ * neuen Versionen automatisch an.
+ */
+final class Datenbank
+{
+    public const SCHEMA_VERSION = 1;
+
+    public readonly PDO $pdo;
+    public readonly string $treiber;
+
+    public function __construct(PDO $pdo)
+    {
+        $this->pdo = $pdo;
+        $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+        $this->treiber = (string)$this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if ($this->treiber === 'sqlite') {
+            $this->pdo->exec('PRAGMA foreign_keys = ON');
+            $this->pdo->exec('PRAGMA journal_mode = WAL');
+        }
+    }
+
+    /** @param array{dsn:string,user?:string,pass?:string} $cfg */
+    public static function verbinden(array $cfg): self
+    {
+        $pdo = new PDO($cfg['dsn'], $cfg['user'] ?? null, $cfg['pass'] ?? null, [
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ]);
+        return new self($pdo);
+    }
+
+    public function migrieren(): void
+    {
+        $version = 0;
+        try {
+            $wert = $this->pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn();
+            $version = (int)$wert;
+        } catch (\PDOException) {
+            $version = 0;
+        }
+        if ($version >= self::SCHEMA_VERSION) {
+            return;
+        }
+        if ($version < 1) {
+            foreach ($this->schemaV1() as $sql) {
+                $this->pdo->exec($sql);
+            }
+            $this->pdo->prepare('INSERT INTO meta (schluessel, wert) VALUES (?, ?)')->execute(['schema', '1']);
+        }
+        // Spätere Versionen: if ($version < 2) { … UPDATE meta … }
+    }
+
+    /** @return list<string> */
+    private function schemaV1(): array
+    {
+        $mysql = $this->treiber === 'mysql';
+        $pk = $mysql ? 'BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+        $langtext = $mysql ? 'MEDIUMTEXT' : 'TEXT';
+        $nach = $mysql ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '';
+
+        return [
+            "CREATE TABLE meta (
+                schluessel VARCHAR(64) NOT NULL PRIMARY KEY,
+                wert VARCHAR(255) NOT NULL
+            )$nach",
+            "CREATE TABLE konten (
+                id $pk,
+                name VARCHAR(120) NOT NULL,
+                email VARCHAR(190) NOT NULL UNIQUE,
+                passwort_hash VARCHAR(255) NOT NULL,
+                rolle VARCHAR(20) NOT NULL,
+                gesperrt INTEGER NOT NULL DEFAULT 0,
+                angelegt BIGINT NOT NULL,
+                letzte_anmeldung BIGINT NULL
+            )$nach",
+            "CREATE TABLE turniere (
+                id VARCHAR(16) NOT NULL PRIMARY KEY,
+                konto_id BIGINT NOT NULL,
+                name VARCHAR(160) NOT NULL,
+                datum VARCHAR(10) NULL,
+                leitung_hash VARCHAR(255) NOT NULL,
+                angelegt BIGINT NOT NULL
+            )$nach",
+            "CREATE TABLE sitzungen (
+                token_hash CHAR(64) NOT NULL PRIMARY KEY,
+                konto_id BIGINT NULL,
+                turnier_id VARCHAR(16) NULL,
+                rolle VARCHAR(20) NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                ablauf BIGINT NOT NULL
+            )$nach",
+            "CREATE TABLE ereignisse (
+                seq $pk,
+                turnier_id VARCHAR(16) NOT NULL,
+                event_id VARCHAR(64) NOT NULL,
+                art VARCHAR(64) NOT NULL,
+                daten $langtext NOT NULL,
+                zeit VARCHAR(40) NOT NULL,
+                geraet VARCHAR(64) NOT NULL,
+                autor_rolle VARCHAR(20) NOT NULL,
+                autor_name VARCHAR(120) NOT NULL,
+                empfangen BIGINT NOT NULL,
+                UNIQUE (turnier_id, event_id)
+            )$nach",
+            'CREATE INDEX idx_ereignisse_turnier ON ereignisse (turnier_id, seq)',
+            "CREATE TABLE versuche (
+                id $pk,
+                schluessel VARCHAR(190) NOT NULL,
+                zeit BIGINT NOT NULL
+            )$nach",
+            'CREATE INDEX idx_versuche ON versuche (schluessel, zeit)',
+        ];
+    }
+
+    /** @param list<mixed> $params */
+    public function eine(string $sql, array $params = []): ?array
+    {
+        $st = $this->pdo->prepare($sql);
+        $st->execute($params);
+        $zeile = $st->fetch();
+        return $zeile === false ? null : $zeile;
+    }
+
+    /** @param list<mixed> $params */
+    public function alle(string $sql, array $params = []): array
+    {
+        $st = $this->pdo->prepare($sql);
+        $st->execute($params);
+        return $st->fetchAll();
+    }
+
+    /** @param list<mixed> $params */
+    public function ausfuehren(string $sql, array $params = []): int
+    {
+        $st = $this->pdo->prepare($sql);
+        $st->execute($params);
+        return $st->rowCount();
+    }
+
+    public static function istEindeutigkeitsFehler(\PDOException $e): bool
+    {
+        $code = (string)$e->getCode();
+        // MySQL: 23000 / 1062, SQLite: 23000 bzw. "UNIQUE constraint failed"
+        return $code === '23000' || str_contains($e->getMessage(), 'UNIQUE') || str_contains($e->getMessage(), 'Duplicate');
+    }
+}

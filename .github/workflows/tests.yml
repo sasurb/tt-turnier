@@ -1,0 +1,93 @@
+name: Tests
+
+on:
+  push:
+    branches-ignore: [main]   # main wird von „Veröffentlichen“ getestet
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: App (Typen, Tests, Build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+
+  server:
+    name: PHP-Server (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ['8.1', '8.3']
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: tt_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -ptest"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_mysql, pdo_sqlite, mbstring
+          coverage: none
+      - name: Syntax
+        run: for f in server-php/src/*.php server-php/public/api/index.php; do php -l "$f"; done
+      - name: Tests mit SQLite
+        run: php server-php/tests/ApiTest.php
+      - name: Tests mit MySQL
+        env:
+          TT_TEST_DSN: mysql:host=127.0.0.1;port=3306;dbname=tt_test;charset=utf8mb4
+          TT_TEST_USER: root
+          TT_TEST_PASS: test
+        run: php server-php/tests/ApiTest.php
+
+  zusammenspiel:
+    name: Zwei Geräte gegen echten Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, mbstring
+          coverage: none
+      - run: npm ci && npm run build
+        working-directory: app
+      - name: Paket bauen und Server starten
+        run: |
+          ./scripts/paket-bauen.sh /tmp/tt
+          printf "<?php\nreturn ['db' => ['dsn' => 'sqlite:/tmp/tt/daten.sqlite'], 'setup_code' => 'einrichtung-123456'];\n" > /tmp/tt/config.php
+          php -S 127.0.0.1:8080 -t /tmp/tt/public > /tmp/php.log 2>&1 &
+          sleep 1
+          curl -sf "http://127.0.0.1:8080/api/index.php?r=info"
+      - name: Abgleich testen
+        working-directory: app
+        env:
+          TT_SERVER: http://127.0.0.1:8080/api/index.php
+        run: npx vitest run server.integration

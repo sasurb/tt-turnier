@@ -1,0 +1,12 @@
+node_modules/
+app/dist/
+paket/
+*.log
+.DS_Store
+.vscode/
+.idea/
+# Zugangsdaten und lokale Datenbanken nie einchecken
+server-php/config.php
+config.php
+*.sqlite
+*.sqlite-*

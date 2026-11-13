@@ -1,0 +1,10 @@
+# Nur index.php ausliefern, kein Verzeichnislisting
+Options -Indexes
+DirectoryIndex index.php
+
+# Authorization-Kopfzeile an PHP durchreichen (FastCGI); die App nutzt zusätzlich X-TT-Token
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>

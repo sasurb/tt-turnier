@@ -1,0 +1,132 @@
+:root {
+  --blau: #1f5aa6;
+  --blau-dunkel: #163f75;
+  --orange: #f08a24;
+  --gruen: #1f8a4c;
+  --rot: #c0392b;
+  --grund: #f4f6f9;
+  --flaeche: #ffffff;
+  --text: #17202b;
+  --leise: #5b6676;
+  --linie: #d9dee6;
+  --fokus: #f08a24;
+  --radius: 12px;
+  --abstand: 16px;
+  --schatten: 0 1px 2px rgb(0 0 0 / 6%), 0 2px 8px rgb(0 0 0 / 5%);
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 17px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --blau: #5b9bea;
+    --blau-dunkel: #3d7fd1;
+    --grund: #10151c;
+    --flaeche: #19212c;
+    --text: #e8edf3;
+    --leise: #9aa6b5;
+    --linie: #2c3644;
+    --gruen: #3fbf74;
+    --rot: #ef6b5b;
+    --schatten: none;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--grund); color: var(--text); }
+body { min-height: 100dvh; }
+
+h1, h2, h3 { line-height: 1.2; margin: 0 0 12px; }
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1.2rem; }
+h3 { font-size: 1.05rem; }
+p { margin: 0 0 12px; }
+a { color: var(--blau); }
+
+.inhalt { max-width: 44rem; margin: 0 auto; padding: var(--abstand); padding-bottom: 48px; }
+
+.karte {
+  background: var(--flaeche);
+  border: 1px solid var(--linie);
+  border-radius: var(--radius);
+  padding: var(--abstand);
+  margin-bottom: var(--abstand);
+  box-shadow: var(--schatten);
+}
+
+.leise { color: var(--leise); font-size: 0.92rem; }
+
+label { display: block; font-weight: 600; margin: 12px 0 6px; }
+label:first-child { margin-top: 0; }
+input, select, textarea {
+  width: 100%;
+  font: inherit;
+  padding: 12px 14px;
+  min-height: 48px;
+  border: 1px solid var(--linie);
+  border-radius: 10px;
+  background: var(--grund);
+  color: var(--text);
+}
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 3px solid var(--fokus);
+  outline-offset: 2px;
+}
+
+button, .knopf {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font: inherit;
+  font-weight: 600;
+  min-height: 48px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--blau);
+  color: #fff;
+  cursor: pointer;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+button:hover, .knopf:hover { background: var(--blau-dunkel); }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+button.zweit, .knopf.zweit { background: transparent; color: var(--blau); border-color: var(--linie); }
+button.zweit:hover, .knopf.zweit:hover { background: var(--grund); }
+button.gefahr { background: transparent; color: var(--rot); border-color: var(--linie); }
+button.breit, .knopf.breit { width: 100%; }
+button.klein { min-height: 40px; padding: 6px 12px; font-size: 0.92rem; }
+
+.reihe { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.reihe > .wachsen { flex: 1 1 12rem; }
+.stapel > * + * { margin-top: 10px; }
+
+.meldung { padding: 12px 14px; border-radius: 10px; margin: 12px 0; border: 1px solid; }
+.meldung.fehler { border-color: var(--rot); color: var(--rot); background: color-mix(in srgb, var(--rot) 8%, transparent); }
+.meldung.ok { border-color: var(--gruen); color: var(--gruen); background: color-mix(in srgb, var(--gruen) 8%, transparent); }
+.meldung.info { border-color: var(--linie); color: var(--leise); }
+
+.marke {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--grund);
+  border: 1px solid var(--linie);
+  color: var(--leise);
+  white-space: nowrap;
+}
+.marke.online { color: var(--blau); border-color: color-mix(in srgb, var(--blau) 40%, transparent); }
+
+ul.liste { list-style: none; margin: 0; padding: 0; }
+ul.liste > li { border-top: 1px solid var(--linie); padding: 12px 0; }
+ul.liste > li:first-child { border-top: 0; padding-top: 0; }
+
+details > summary { cursor: pointer; font-weight: 600; min-height: 40px; display: flex; align-items: center; }
+
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

@@ -1,0 +1,118 @@
+name: Veröffentlichen
+
+# Bei jedem Push auf main: testen, dann
+#  1. Server-Paket per SFTP auf den Webspace (Strato) laden – nur wenn die Secrets eingetragen sind
+#  2. Demo (nur Einzelgerät-Modus) auf GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: veroeffentlichen
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  webspace:
+    name: Webspace (SFTP)
+    needs: tests
+    runs-on: ubuntu-latest
+    env:
+      SFTP_HOST: ${{ secrets.SFTP_HOST }}
+      SFTP_USER: ${{ secrets.SFTP_USER }}
+      LFTP_PASSWORD: ${{ secrets.SFTP_PASSWORT }}
+      SFTP_ZIEL: ${{ secrets.SFTP_ZIEL }}
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORT: ${{ secrets.DB_PASSWORT }}
+      SETUP_CODE: ${{ secrets.SETUP_CODE }}
+    steps:
+      - name: Secrets prüfen
+        id: pruefen
+        run: |
+          fehlt=""
+          for v in SFTP_HOST SFTP_USER LFTP_PASSWORD SFTP_ZIEL DB_HOST DB_NAME DB_USER DB_PASSWORT SETUP_CODE; do
+            [ -z "${!v}" ] && fehlt="$fehlt $v"
+          done
+          if [ -n "$fehlt" ]; then
+            echo "::notice::Webspace-Deploy übersprungen, es fehlen Secrets:$fehlt (siehe docs/strato-einrichtung.md)"
+            echo "weiter=nein" >> "$GITHUB_OUTPUT"
+          else
+            echo "weiter=ja" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.pruefen.outputs.weiter == 'ja'
+      - uses: actions/setup-node@v4
+        if: steps.pruefen.outputs.weiter == 'ja'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: App bauen
+        if: steps.pruefen.outputs.weiter == 'ja'
+        working-directory: app
+        run: npm ci && npm run build
+      - name: Paket und config.php erzeugen
+        if: steps.pruefen.outputs.weiter == 'ja'
+        run: |
+          ./scripts/paket-bauen.sh paket
+          php -r '
+            $c = [
+              "db" => [
+                "dsn" => "mysql:host=" . getenv("DB_HOST") . ";dbname=" . getenv("DB_NAME") . ";charset=utf8mb4",
+                "user" => getenv("DB_USER"),
+                "pass" => getenv("DB_PASSWORT"),
+              ],
+              "setup_code" => getenv("SETUP_CODE"),
+            ];
+            file_put_contents("paket/config.php", "<?php\nreturn " . var_export($c, true) . ";\n");
+          '
+      - name: Hochladen per SFTP
+        if: steps.pruefen.outputs.weiter == 'ja'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp > /dev/null
+          lftp --env-password "sftp://${SFTP_USER}@${SFTP_HOST}" -e "
+            set sftp:auto-confirm yes;
+            set net:max-retries 3;
+            set net:timeout 30;
+            mkdir -p -f ${SFTP_ZIEL};
+            mirror --reverse --delete --verbose=1 paket/src ${SFTP_ZIEL}/src;
+            mirror --reverse --delete --verbose=1 paket/public ${SFTP_ZIEL}/public;
+            put paket/config.php -o ${SFTP_ZIEL}/config.php;
+            bye"
+      - name: Erreichbarkeit prüfen
+        if: steps.pruefen.outputs.weiter == 'ja' && vars.WEBSPACE_URL != ''
+        run: curl -sf "${{ vars.WEBSPACE_URL }}/api/index.php?r=info" && echo
+
+  pages:
+    name: Demo auf GitHub Pages
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - working-directory: app
+        run: npm ci && npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/dist
+      - id: deploy
+        uses: actions/deploy-pages@v4
