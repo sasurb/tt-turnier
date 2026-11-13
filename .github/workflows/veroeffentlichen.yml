@@ -38,8 +38,11 @@ jobs:
         id: pruefen
         run: |
           fehlt=""
-          for v in SFTP_HOST SFTP_USER LFTP_PASSWORD SFTP_ZIEL DB_HOST DB_NAME DB_USER DB_PASSWORT SETUP_CODE; do
-            [ -z "${!v}" ] && fehlt="$fehlt $v"
+          # Paare „Secret-Name:Umgebungsvariable“ – gemeldet wird der Name, den man bei GitHub einträgt
+          for paar in SFTP_HOST:SFTP_HOST SFTP_USER:SFTP_USER SFTP_PASSWORT:LFTP_PASSWORD SFTP_ZIEL:SFTP_ZIEL \
+                      DB_HOST:DB_HOST DB_NAME:DB_NAME DB_USER:DB_USER DB_PASSWORT:DB_PASSWORT SETUP_CODE:SETUP_CODE; do
+            var="${paar#*:}"
+            [ -z "${!var}" ] && fehlt="$fehlt ${paar%%:*}"
           done
           if [ -n "$fehlt" ]; then
             echo "::notice::Webspace-Deploy übersprungen, es fehlen Secrets:$fehlt (siehe docs/strato-einrichtung.md)"
@@ -47,9 +50,9 @@ jobs:
           else
             echo "weiter=ja" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.pruefen.outputs.weiter == 'ja'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.pruefen.outputs.weiter == 'ja'
         with:
           node-version: 22
@@ -102,17 +105,17 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
       - working-directory: app
         run: npm ci && npm run build
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: app/dist
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

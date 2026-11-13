@@ -74,6 +74,13 @@ Secrets sind verschlüsselt. Niemand kann sie später wieder auslesen, auch du n
 3. Optional, für eine automatische Prüfung nach jedem Hochladen: Reiter **Variables** →
    **New repository variable**, Name `WEBSPACE_URL`, Wert `https://tt-turnier.saschaurban.de`.
 
+## Schritt 4b – Demo auf GitHub Pages einschalten (einmalig)
+
+Die öffentliche Demo (nur Einzelgerät-Modus) unter https://sasurb.github.io/tt-turnier/ braucht einen Schalter:
+
+1. https://github.com/Sasurb/tt-turnier → **Settings** → links **Pages**.
+2. Unter **Build and deployment → Source** die Auswahl **GitHub Actions** treffen. Mehr ist nicht nötig.
+
 ## Schritt 5 – Erstes Hochladen auslösen
 
 1. Auf GitHub **Actions** → links **Veröffentlichen** → rechts **Run workflow** → **Run workflow**.
