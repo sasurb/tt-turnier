@@ -27,7 +27,8 @@ jobs:
       SFTP_HOST: ${{ secrets.SFTP_HOST }}
       SFTP_USER: ${{ secrets.SFTP_USER }}
       LFTP_PASSWORD: ${{ secrets.SFTP_PASSWORT }}
-      SFTP_ZIEL: ${{ secrets.SFTP_ZIEL }}
+      SFTP_ZIEL: ${{ secrets.SFTP_ZIEL }}           # Server-Code + config.php, außerhalb jedes Webroots
+      SFTP_ZIEL_WEB: ${{ secrets.SFTP_ZIEL_WEB }}   # optional: öffentlicher Ordner der App; leer = ${SFTP_ZIEL}/public
       DB_HOST: ${{ secrets.DB_HOST }}
       DB_NAME: ${{ secrets.DB_NAME }}
       DB_USER: ${{ secrets.DB_USER }}
@@ -77,19 +78,37 @@ jobs:
             ];
             file_put_contents("paket/config.php", "<?php\nreturn " . var_export($c, true) . ";\n");
           '
+          WEB="${SFTP_ZIEL_WEB:-${SFTP_ZIEL}/public}"
+          # Weg vom öffentlichen api-Ordner zum Server-Ordner (beide relativ zum SFTP-Startverzeichnis)
+          REL=$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[2], sys.argv[1]))' "$WEB/api" "$SFTP_ZIEL")
+          printf "<?php\nreturn __DIR__ . '/%s';\n" "$REL" > paket/public/api/server.php
+          echo "Öffentlich: $WEB  ·  Server: $SFTP_ZIEL  ·  Weg aus api/: $REL"
+          echo "WEB=$WEB" >> "$GITHUB_ENV"
       - name: Hochladen per SFTP
         if: steps.pruefen.outputs.weiter == 'ja'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq lftp > /dev/null
-          lftp --env-password "sftp://${SFTP_USER}@${SFTP_HOST}" -e "
-            set sftp:auto-confirm yes;
-            set net:max-retries 3;
-            set net:timeout 30;
+          verbinden() {
+            lftp --env-password "sftp://${SFTP_USER}@${SFTP_HOST}" \
+              -e "set sftp:auto-confirm yes; set net:max-retries 3; set net:timeout 30; $1 bye"
+          }
+          # Schutz: Der öffentliche Ordner wird abgeglichen (fremde Dateien darin würden gelöscht).
+          # Deshalb nur hochladen, wenn er leer ist oder erkennbar dieser App gehört.
+          INHALT=$(verbinden "cls -1a ${WEB}/;" 2>/dev/null | sed 's#/$##; s#.*/##' | grep -vE '^\.{1,2}$' || true)
+          hat() { echo "$INHALT" | grep -qxE "$1"; }
+          if [ -n "$INHALT" ] && ! hat '\.tt-turnier-app' \
+             && ! { hat 'index\.html' && hat 'api'; } \
+             && ! { hat 'public' && hat 'src' && hat 'config\.php'; }; then
+            echo "::error::Der Ordner ${WEB} enthält fremde Dateien – zum Schutz wird nichts hochgeladen."
+            echo "$INHALT"
+            exit 1
+          fi
+          verbinden "
             mkdir -p -f ${SFTP_ZIEL};
+            mkdir -p -f ${WEB};
             mirror --reverse --delete --verbose=1 paket/src ${SFTP_ZIEL}/src;
-            mirror --reverse --delete --verbose=1 paket/public ${SFTP_ZIEL}/public;
             put paket/config.php -o ${SFTP_ZIEL}/config.php;
-            bye"
+            mirror --reverse --delete --verbose=1 paket/public ${WEB};"
       - name: Erreichbarkeit prüfen
         if: steps.pruefen.outputs.weiter == 'ja' && vars.WEBSPACE_URL != ''
         run: curl -sf "${{ vars.WEBSPACE_URL }}/api/index.php?r=info" && echo

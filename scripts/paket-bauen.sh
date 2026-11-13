@@ -22,5 +22,7 @@ cp server-php/public/api/index.php server-php/public/api/.htaccess "$ZIEL/public
 cp server-php/src/*.php "$ZIEL/src/"
 # Zusätzlicher Schutz, falls die Subdomain doch auf den Oberordner zeigt
 printf 'Require all denied\n' > "$ZIEL/src/.htaccess"
+# Markierung: Dieser Ordner gehört der App (der Deploy löscht nur in eigenen Ordnern)
+printf 'tt-turnier\n' > "$ZIEL/public/.tt-turnier-app"
 git rev-parse --short HEAD > "$ZIEL/public/version.txt" 2>/dev/null || date -u +%Y%m%d%H%M > "$ZIEL/public/version.txt"
 echo "Paket gebaut: $ZIEL"

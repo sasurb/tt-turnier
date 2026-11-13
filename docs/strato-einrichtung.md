@@ -1,6 +1,6 @@
 # Einrichtung auf Strato – Schritt für Schritt
 
-Ziel: Die App läuft unter **https://tt-turnier.saschaurban.de** mit eigener Datenbank. Danach
+Ziel: Die App läuft unter **https://saschaurban.de/tt-turnier/** mit eigener Datenbank, verschlüsselt über das SSL-Zertifikat der Hauptdomain. Danach
 lädt GitHub jede neue Version automatisch hoch, ohne dass du noch etwas per Hand kopierst.
 
 Dauer: etwa 30 Minuten. Du brauchst den Strato-Kundenlogin und Zugang zu GitHub (Konto Sasurb).
@@ -64,7 +64,8 @@ Secrets sind verschlüsselt. Niemand kann sie später wieder auslesen, auch du n
 | `SFTP_HOST` | aus Schritt 2 |
 | `SFTP_USER` | aus Schritt 2 |
 | `SFTP_PASSWORT` | aus Schritt 2 |
-| `SFTP_ZIEL` | `tt-turnier` |
+| `SFTP_ZIEL` | `tt-turnier-server` (Server-Code und Zugangsdaten, außerhalb jedes Webroots) |
+| `SFTP_ZIEL_WEB` | `saschaurban/tt-turnier` (öffentlicher Ordner der App im Webroot der Hauptdomain) |
 | `DB_HOST` | aus Schritt 1 |
 | `DB_NAME` | aus Schritt 1 |
 | `DB_USER` | aus Schritt 1 |
@@ -72,7 +73,7 @@ Secrets sind verschlüsselt. Niemand kann sie später wieder auslesen, auch du n
 | `SETUP_CODE` | aus Schritt 3 |
 
 3. Optional, für eine automatische Prüfung nach jedem Hochladen: Reiter **Variables** →
-   **New repository variable**, Name `WEBSPACE_URL`, Wert `https://tt-turnier.saschaurban.de`.
+   **New repository variable**, Name `WEBSPACE_URL`, Wert `https://saschaurban.de/tt-turnier`.
 
 ## Schritt 4b – Demo auf GitHub Pages einschalten (einmalig)
 
@@ -88,31 +89,39 @@ Die öffentliche Demo (nur Einzelgerät-Modus) unter https://sasurb.github.io/tt
    auf deinem Webspace angelegt:
 
 ```
-/tt-turnier/
-   public/      ← App und Schnittstelle (hierauf zeigt gleich die Subdomain)
-   src/         ← Programmcode des Servers (von außen nicht erreichbar)
-   config.php   ← Datenbank-Zugang und Einrichtungscode (von außen nicht erreichbar)
+/saschaurban/            ← Webroot der Hauptdomain saschaurban.de
+   tt-turnier/           ← App und Schnittstelle (öffentlich)
+/tt-turnier-server/      ← außerhalb jedes Webroots, von außen nicht erreichbar
+   src/                  ← Programmcode des Servers
+   config.php            ← Datenbank-Zugang und Einrichtungscode
 ```
+
+Zum Schutz lädt der Deploy nur in einen öffentlichen Ordner hoch, der leer ist oder erkennbar zur App gehört.
+Liegen dort fremde Dateien, bricht er mit einer Meldung ab und löscht nichts.
 
 Wenn der Schritt rot ist: siehe [Probleme lösen](#probleme-lösen).
 
-## Schritt 6 – Subdomain anlegen und auf den Ordner zeigen lassen
+## Schritt 6 – Hauptdomain auf den Ordner `saschaurban` zeigen lassen
 
 1. Im Strato-Kundenlogin **Domains → Domainverwaltung**.
-2. Bei `saschaurban.de` **Subdomain anlegen**, Name `tt-turnier`, bestätigen.
-3. Die neue Subdomain öffnen (**Subdomains anzeigen** → `tt-turnier.saschaurban.de`) →
-   **Umleitung / Ziel** → **intern** → Verzeichnis **`/tt-turnier/public`** wählen → speichern.
-4. **SSL** für die Subdomain einschalten (in der Domainverwaltung bei der Subdomain,
-   „SSL-Schutz“ bzw. „SSL verwalten“). Das kann einige Minuten dauern.
-5. **PHP-Version prüfen:** unter **Datenbanken und Webspace → PHP-Version** mindestens **PHP 8.1** einstellen
-   (empfohlen: die neueste angebotene 8.x-Version).
+2. Bei `saschaurban.de` die **Umleitung** öffnen → **intern** → Verzeichnis **`/saschaurban`** wählen → speichern.
+3. Was bisher unter `saschaurban.de` lag, muss mit in den Ordner `/saschaurban`, sonst ist es nicht mehr
+   erreichbar. Beispiel: `/spieltimer` nach `/saschaurban/spieltimer` verschieben, dann ist er unter
+   `https://saschaurban.de/spieltimer/` erreichbar.
+4. **PHP-Version prüfen:** unter **Datenbanken und Webspace → PHP-Version** mindestens **PHP 8.1** einstellen.
+5. Falls eine Subdomain `tt-turnier.saschaurban.de` aus einem früheren Versuch existiert:
+   **Domainverwaltung → Subdomains anzeigen → tt-turnier → Subdomain löschen**. Sonst bleibt eine
+   unverschlüsselte Adresse erreichbar.
+6. Test im Browser: `https://saschaurban.de/tt-turnier/api/index.php?r=info` zeigt eine Zeile mit
+   `"app":"tt-turnier"` und `"eingerichtet":false`.
 
-> Wichtig: Ziel ist **`/tt-turnier/public`**, nicht `/tt-turnier`. Nur so bleiben `config.php`
-> und der Programmcode von außen unerreichbar.
+> **Alternative mit eigener Subdomain:** Secret `SFTP_ZIEL_WEB` leer lassen; dann landet die App in
+> `/<SFTP_ZIEL>/public`. Subdomain anlegen, intern auf diesen Ordner zeigen lassen und ihr ein **eigenes
+> SSL-Zertifikat** zuweisen (das enthaltene Zertifikat der Hauptdomain deckt keine Subdomains ab).
 
 ## Schritt 7 – Administrator anlegen
 
-1. https://tt-turnier.saschaurban.de öffnen. Oben erscheint „Der Server ist noch nicht eingerichtet“.
+1. https://saschaurban.de/tt-turnier/ öffnen. Oben erscheint „Der Server ist noch nicht eingerichtet“.
 2. **Server einrichten** antippen, den **Einrichtungscode** aus Schritt 3, deinen Namen,
    deine E-Mail-Adresse und ein Passwort eingeben → **Administrator anlegen**.
 3. **Anmelden**. Unter **Mein Konto** siehst du die Verwaltung: Hier legst du Veranstalter-Konten an
@@ -137,15 +146,17 @@ Fertig. Ab jetzt landet jede neue Version auf `main` automatisch auf dem Webspac
 |---|---|
 | Actions: „Webspace-Deploy übersprungen, es fehlen Secrets“ | Ein Secret fehlt oder ist falsch geschrieben (Schritt 4). Namen genau vergleichen. |
 | Actions: `Login failed` / `Access failed` beim SFTP | `SFTP_HOST`, `SFTP_USER` oder `SFTP_PASSWORT` falsch. Im Kundenlogin das Passwort des Zugangs neu setzen und das Secret überschreiben. |
-| Subdomain zeigt „Verzeichnis nicht gefunden“ | Schritt 5 lief noch nicht erfolgreich, oder das Ziel ist falsch geschrieben (genau `/tt-turnier/public`, alles klein). |
-| App zeigt „Kein Server erreichbar“ | `https://tt-turnier.saschaurban.de/api/index.php?r=info` im Browser öffnen. Kommt eine Fehlermeldung zu PHP, die PHP-Version prüfen (Schritt 6.5). |
+| Actions: „Der Ordner … enthält fremde Dateien“ | Im Ordner aus `SFTP_ZIEL_WEB` liegen Dateien, die nicht zur App gehören. Sie sichern oder verschieben, Ordner leeren, erneut starten. |
+| `saschaurban.de` zeigt „Verzeichnis nicht gefunden“ | Umleitung aus Schritt 6 prüfen (genau `/saschaurban`, alles klein). |
+| Browser meldet `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` | Die aufgerufene Adresse hat kein Zertifikat (typisch bei Subdomains). Die App über `https://saschaurban.de/tt-turnier/` aufrufen. |
+| App zeigt „Kein Server erreichbar“ | `https://saschaurban.de/tt-turnier/api/index.php?r=info` im Browser öffnen. Kommt eine Fehlermeldung zu PHP, die PHP-Version prüfen (Schritt 6.4). |
 | `…?r=info` meldet „Keine Verbindung zur Datenbank“ | Datenbank-Secrets prüfen (Schritt 1/4), danach **Run workflow** erneut ausführen. Neue Strato-Datenbanken sind manchmal erst nach einigen Minuten erreichbar. |
 | „Der Einrichtungscode ist falsch“ | Code exakt wie im Secret `SETUP_CODE` eingeben (Groß-/Kleinschreibung). Nach 10 Fehlversuchen 15 Minuten warten. |
 | Passwort des Administrators vergessen | In phpMyAdmin (Datenbankverwaltung) in der Tabelle `konten` die Zeile des Admins löschen; dann ist die Einrichtungsseite wieder offen. |
 
 ## Sicherheit in Kürze
 
-- Zugangsdaten liegen nur als GitHub-Secrets und in `config.php` außerhalb des öffentlichen Ordners.
+- Zugangsdaten liegen nur als GitHub-Secrets und in `config.php` außerhalb jedes Webroots (`/tt-turnier-server`).
 - Passwörter und Zugangscodes speichert der Server nur als Prüfwert (Hash), nie im Klartext.
 - Fehlversuche bei Anmeldung, Einrichtung und Leitungspasswort werden nach 10 Versuchen für 15 Minuten gebremst.
 - Der GitHub-Zugang nutzt einen eigenen SFTP-Benutzer; bei Bedarf im Kundenlogin löschen.
