@@ -10,3 +10,6 @@ server-php/config.php
 config.php
 *.sqlite
 *.sqlite-*
+e2e/node_modules/
+e2e/bilder/
+e2e/test-results/

@@ -8,12 +8,13 @@ import type { LokalesEreignis } from './typen';
 export interface TurnierZustand {
   name: string;
   datum: string | null;
+  abgeschlossen: boolean;
   notizen: { id: string; text: string; von: string; zeit: string; bestaetigt: boolean }[];
   anzahlEreignisse: number;
 }
 
 export function leererZustand(): TurnierZustand {
-  return { name: '', datum: null, notizen: [], anzahlEreignisse: 0 };
+  return { name: '', datum: null, abgeschlossen: false, notizen: [], anzahlEreignisse: 0 };
 }
 
 export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand {
@@ -26,6 +27,12 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (typeof d.datum === 'string' || d.datum === null) z.datum = d.datum as string | null;
       break;
     }
+    case ART.turnierAbgeschlossen:
+      z.abgeschlossen = true;
+      break;
+    case ART.turnierWiedereroeffnet:
+      z.abgeschlossen = false;
+      break;
     case ART.testNotiz: {
       const d = e.daten as { text?: unknown };
       if (typeof d.text === 'string') {

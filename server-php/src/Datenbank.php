@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 1;
+    public const SCHEMA_VERSION = 2;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -56,7 +56,20 @@ final class Datenbank
             }
             $this->pdo->prepare('INSERT INTO meta (schluessel, wert) VALUES (?, ?)')->execute(['schema', '1']);
         }
-        // Spätere Versionen: if ($version < 2) { … UPDATE meta … }
+        if ($version < 2) {
+            foreach ($this->schemaV2() as $sql) {
+                try {
+                    $this->pdo->exec($sql);
+                } catch (\PDOException $e) {
+                    // Zwei Aufrufe gleichzeitig direkt nach dem Hochladen: Spalte/Tabelle gibt es schon.
+                    if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                        throw $e;
+                    }
+                }
+            }
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['2', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 3) { … UPDATE meta … }
     }
 
     /** @return list<string> */
@@ -118,6 +131,33 @@ final class Datenbank
                 zeit BIGINT NOT NULL
             )$nach",
             'CREATE INDEX idx_versuche ON versuche (schluessel, zeit)',
+        ];
+    }
+
+    /**
+     * Version 2 (Etappe 2b): Selbst-Registrierung, Passwort zurücksetzen, Leitungscode,
+     * Sicherung per Mail, Löschung inaktiver Konten.
+     * @return list<string>
+     */
+    private function schemaV2(): array
+    {
+        $mysql = $this->treiber === 'mysql';
+        $nach = $mysql ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '';
+        return [
+            'ALTER TABLE konten ADD COLUMN aktiv BIGINT NULL',
+            'ALTER TABLE konten ADD COLUMN erinnert BIGINT NULL',
+            'UPDATE konten SET aktiv = COALESCE(letzte_anmeldung, angelegt)',
+            'ALTER TABLE turniere ADD COLUMN leitung_code VARCHAR(12) NULL',
+            'ALTER TABLE turniere ADD COLUMN sicherung_an VARCHAR(600) NULL',
+            'ALTER TABLE turniere ADD COLUMN sicherung_takt INTEGER NOT NULL DEFAULT 30',
+            'ALTER TABLE turniere ADD COLUMN sicherung_letzte BIGINT NULL',
+            'ALTER TABLE turniere ADD COLUMN sicherung_seq BIGINT NOT NULL DEFAULT 0',
+            'CREATE INDEX idx_turniere_konto ON turniere (konto_id)',
+            "CREATE TABLE rueckstellungen (
+                schluessel_hash CHAR(64) NOT NULL PRIMARY KEY,
+                konto_id BIGINT NOT NULL,
+                ablauf BIGINT NOT NULL
+            )$nach",
         ];
     }
 

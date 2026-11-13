@@ -34,6 +34,13 @@ jobs:
       DB_USER: ${{ secrets.DB_USER }}
       DB_PASSWORT: ${{ secrets.DB_PASSWORT }}
       SETUP_CODE: ${{ secrets.SETUP_CODE }}
+      ADMIN_MAIL: ${{ secrets.ADMIN_MAIL }}          # Info-Mails (neue Konten, Rückmeldungen); Antworten auf System-Mails
+      MAIL_ABSENDER: ${{ vars.BETREIBER_MAIL }}      # Postfach der eigenen Domain, z. B. tt-turnier@saschaurban.de
+      APP_URL: ${{ vars.WEBSPACE_URL }}              # Adresse der App, z. B. https://saschaurban.de/tt-turnier
+      VITE_BETREIBER_NAME: ${{ vars.BETREIBER_NAME }}
+      VITE_BETREIBER_ANSCHRIFT: ${{ vars.BETREIBER_ANSCHRIFT }}
+      VITE_BETREIBER_MAIL: ${{ vars.BETREIBER_MAIL }}
+      VITE_BETREIBER_TELEFON: ${{ vars.BETREIBER_TELEFON }}
     steps:
       - name: Secrets prüfen
         id: pruefen
@@ -51,6 +58,13 @@ jobs:
           else
             echo "weiter=ja" >> "$GITHUB_OUTPUT"
           fi
+          # Mailversand (Registrierung, Passwort vergessen, Sicherungen) ist optional
+          for paar in "Variable BETREIBER_MAIL:MAIL_ABSENDER" "Variable WEBSPACE_URL:APP_URL" "Secret ADMIN_MAIL:ADMIN_MAIL"; do
+            var="${paar#*:}"
+            [ -z "${!var}" ] && echo "::warning::${paar%%:*} fehlt – Mails (Passwort vergessen, Sicherungen, Info an den Betreiber) sind ausgeschaltet."
+          done
+          [ -z "$VITE_BETREIBER_NAME" ] && echo "::warning::Variable BETREIBER_NAME fehlt – Impressum und Datenschutzhinweis sind unvollständig."
+          true
       - uses: actions/checkout@v7
         if: steps.pruefen.outputs.weiter == 'ja'
       - uses: actions/setup-node@v7
@@ -75,6 +89,11 @@ jobs:
                 "pass" => getenv("DB_PASSWORT"),
               ],
               "setup_code" => getenv("SETUP_CODE"),
+              "app_url" => getenv("APP_URL") ?: "",
+              "mail" => [
+                "absender" => getenv("MAIL_ABSENDER") ?: "",
+                "admin" => getenv("ADMIN_MAIL") ?: "",
+              ],
             ];
             file_put_contents("paket/config.php", "<?php\nreturn " . var_export($c, true) . ";\n");
           '
@@ -131,6 +150,12 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
       - working-directory: app
+        env:
+          VITE_BETREIBER_NAME: ${{ vars.BETREIBER_NAME }}
+          VITE_BETREIBER_ANSCHRIFT: ${{ vars.BETREIBER_ANSCHRIFT }}
+          VITE_BETREIBER_MAIL: ${{ vars.BETREIBER_MAIL }}
+          VITE_BETREIBER_TELEFON: ${{ vars.BETREIBER_TELEFON }}
+          VITE_KONTAKT_URL: ${{ vars.WEBSPACE_URL }}
         run: npm ci && npm run build
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

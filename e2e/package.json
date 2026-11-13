@@ -1,0 +1,13 @@
+{
+  "name": "tt-turnier-e2e",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.20.5"
+  }
+}

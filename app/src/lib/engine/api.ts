@@ -7,14 +7,26 @@ import type {
   KontoAnlegenAnfrage,
   LoginAntwort,
   NeuesEreignis,
+  RegistrierenAnfrage,
+  RueckmeldungAnfrage,
+  Rolle,
   SendenAntwort,
   SetupAnfrage,
   TurnierAnlegenAnfrage,
   TurnierAnlegenAntwort,
   TurnierAntwort,
   TurniereAntwort,
+  TurnierEinstellungen,
+  TurnierEinstellungenAnfrage,
   TurnierZugangAntwort,
 } from '@shared/protokoll';
+
+export interface IchAntwort {
+  rolle: Rolle;
+  name: string;
+  turnier: string | null;
+  konto?: Konto | null;
+}
 
 export class ApiFehler extends Error {
   constructor(
@@ -90,6 +102,33 @@ export class Api {
   logout(token: string) {
     return this.rufe<{ ok: true }>('POST', 'logout', { token });
   }
+  ich(token: string) {
+    return this.rufe<IchAntwort>('GET', 'ich', { token });
+  }
+  registrieren(a: RegistrierenAnfrage) {
+    return this.rufe<LoginAntwort>('POST', 'registrieren', { rumpf: a });
+  }
+  passwortVergessen(email: string) {
+    return this.rufe<{ ok: true }>('POST', 'passwort.vergessen', { rumpf: { email } });
+  }
+  passwortZuruecksetzen(schluessel: string, neu: string) {
+    return this.rufe<LoginAntwort>('POST', 'passwort.zuruecksetzen', { rumpf: { schluessel, neu } });
+  }
+  kontoLoeschen(token: string, passwort: string) {
+    return this.rufe<{ ok: true }>('POST', 'konto.loeschen', { token, rumpf: { passwort } });
+  }
+  rueckmeldung(token: string | null, a: RueckmeldungAnfrage) {
+    return this.rufe<{ ok: true }>('POST', 'rueckmeldung', { token, rumpf: a });
+  }
+  einstellungen(token: string, id: string) {
+    return this.rufe<TurnierEinstellungen>('GET', 'turnier.einstellungen', { token, query: { id } });
+  }
+  einstellungenSetzen(token: string, a: TurnierEinstellungenAnfrage) {
+    return this.rufe<TurnierEinstellungen>('POST', 'turnier.einstellungen', { token, rumpf: a });
+  }
+  sichern(token: string, turnier: string) {
+    return this.rufe<{ ok: true; gesendetAn: string[]; zeit: string }>('POST', 'turnier.sichern', { token, rumpf: { turnier } });
+  }
   passwortAendern(token: string, alt: string, neu: string) {
     return this.rufe<{ ok: true }>('POST', 'passwort.aendern', { token, rumpf: { alt, neu } });
   }
@@ -111,8 +150,8 @@ export class Api {
   turnier(id: string) {
     return this.rufe<TurnierAntwort>('GET', 'turnier', { query: { id } });
   }
-  turnierZugang(turnier: string, passwort: string, name: string) {
-    return this.rufe<TurnierZugangAntwort>('POST', 'turnier.zugang', { rumpf: { turnier, passwort, name } });
+  turnierZugang(turnier: string, code: string, name: string) {
+    return this.rufe<TurnierZugangAntwort>('POST', 'turnier.zugang', { rumpf: { turnier, code, name } });
   }
   abholen(turnier: string, ab: number) {
     return this.rufe<AbholenAntwort>('GET', 'events', { query: { turnier, ab: String(ab) } });

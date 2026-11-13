@@ -13,4 +13,14 @@ return [
     ],
     // Einmaliger Code für die Einrichtungsseite (Administrator anlegen), mind. 12 Zeichen.
     'setup_code' => 'BITTE-AENDERN-mind-12-Zeichen',
+    // Adresse der App – für Links in Mails (Willkommen, Passwort zurücksetzen, Sicherung).
+    'app_url' => 'https://example.org/tt-turnier/',
+    'mail' => [
+        // Absender: eine Adresse der eigenen Domain (Postfach beim Webspace-Anbieter)
+        'absender' => 'tt-turnier@example.org',
+        // Empfänger der Info-Mails (neue Konten, Rückmeldungen); Antworten auf System-Mails gehen hierhin
+        'admin' => 'betreiber@example.org',
+        // Entwicklung: Mails als Dateien in diesen Ordner schreiben statt versenden
+        // 'datei' => __DIR__ . '/mails',
+    ],
 ];

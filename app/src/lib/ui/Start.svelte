@@ -1,16 +1,33 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import type { TurnierInfo } from '@shared/protokoll';
   import { T } from '../texte';
   import { linkZu } from '../router.svelte';
-  import { serverPruefen, speicher, type ServerZustand } from '../dienste';
-  import { gemerkteTurniere, kontoSitzung, turnierVergessen, type GemerktesTurnier } from '../einstellungen';
+  import { api, speicher } from '../dienste';
+  import { app, anmeldungAbgelaufen, kontoTurnierOeffnen } from '../app.svelte';
+  import { gemerkteTurniere, turnierVergessen, type GemerktesTurnier } from '../einstellungen';
 
-  let server = $state<ServerZustand>({ art: 'pruefe' });
-  let turniere = $state<GemerktesTurnier[]>(gemerkteTurniere());
-  const angemeldet = kontoSitzung();
+  let geraet = $state<GemerktesTurnier[]>(gemerkteTurniere());
+  let konto = $state<TurnierInfo[] | null>(null);
+  let hinweis = $state(app.hinweis);
+  app.hinweis = null;
 
-  onMount(async () => {
-    server = await serverPruefen();
+  const angemeldet = $derived(app.sitzung);
+  const bereit = $derived(app.server.art === 'bereit');
+  /** Turniere auf diesem Gerät, die nicht ohnehin in der Konto-Liste stehen */
+  const nurGeraet = $derived(konto ? geraet.filter((g) => !konto!.some((k) => k.id === g.id)) : geraet);
+
+  $effect(() => {
+    const s = app.sitzung;
+    if (!s || app.server.art !== 'bereit') {
+      konto = null;
+      return;
+    }
+    api
+      .turniere(s.token)
+      .then((a) => (konto = a.turniere))
+      .catch((x) => {
+        anmeldungAbgelaufen(x);
+      });
   });
 
   async function entfernen(t: GemerktesTurnier) {
@@ -18,7 +35,7 @@
     if (!confirm(frage)) return;
     await speicher.loeschen(t.id);
     turnierVergessen(t.id);
-    turniere = gemerkteTurniere();
+    geraet = gemerkteTurniere();
   }
 
   function datum(d: string | null) {
@@ -26,82 +43,125 @@
   }
 </script>
 
-<p class="leise">{T.start.willkommen}</p>
+{#if hinweis}
+  <div class="meldung ok" role="status">{hinweis}</div>
+{/if}
 
-{#if server.art === 'keiner'}
-  <div class="meldung info">{T.start.keinServer}</div>
-{:else if server.art === 'nicht_eingerichtet'}
+{#if angemeldet}
+  <p class="gruss">{T.start.hallo(angemeldet.konto.name)}</p>
+{:else}
+  <p class="leise">{T.start.willkommen}</p>
+{/if}
+
+<a class="knopf gross" href={linkZu('neu')} data-testid="neues-turnier">
+  <span aria-hidden="true" class="plus">+</span>
+  {T.start.neuesTurnier}
+</a>
+
+{#if app.server.art === 'nicht_eingerichtet'}
   <div class="meldung info">
     {T.start.nichtEingerichtet}
     <a href={linkZu('einrichtung')}>{T.start.einrichten}</a>
   </div>
+{:else if app.server.art === 'keiner'}
+  <div class="meldung info">{T.start.keinServer}</div>
 {/if}
 
-<section class="auswahl">
-  <a class="kachel" href={linkZu('neu')}>
-    <strong>{T.start.neuLokal}</strong>
-    <span class="leise">{T.start.neuLokalHinweis}</span>
-  </a>
-  {#if server.art === 'bereit'}
-    {#if angemeldet}
-      <a class="kachel" href={linkZu('konto')}>
-        <strong>{T.start.zumKonto}</strong>
-        <span class="leise">{angemeldet.konto.name}</span>
-      </a>
-    {:else}
-      <a class="kachel" href={linkZu('anmelden')}>
-        <strong>{T.start.anmelden}</strong>
-        <span class="leise">{T.start.anmeldenHinweis}</span>
-      </a>
-    {/if}
-    <a class="kachel" href={linkZu('beitreten')}>
-      <strong>{T.start.beitreten}</strong>
-      <span class="leise">{T.start.beitretenHinweis}</span>
-    </a>
-  {/if}
-</section>
+{#if bereit && !angemeldet}
+  <section class="karte werbung">
+    <h2>{T.start.mehrGeraeteTitel}</h2>
+    <p class="leise">{T.start.mehrGeraeteText}</p>
+    <div class="reihe">
+      <a class="knopf" href={linkZu('registrieren')}>{T.start.kontoAnlegen}</a>
+      <a class="knopf zweit" href={linkZu('anmelden')}>{T.start.anmelden}</a>
+    </div>
+  </section>
+{/if}
 
-<section class="karte">
-  <h2>{T.start.meineTurniere}</h2>
-  {#if turniere.length === 0}
-    <p class="leise">{T.start.keineTurniere}</p>
-  {:else}
-    <ul class="liste">
-      {#each turniere as t (t.id)}
-        <li class="reihe">
-          <a class="wachsen turnierlink" href={linkZu('t/' + t.id)}>
-            <strong>{t.name}</strong>
-            <span class="leise">
-              {datum(t.datum)}
-              <span class="marke" class:online={t.modus === 'online'}>
-                {t.modus === 'online' ? T.start.modusOnline : T.start.modusLokal}
+{#if konto}
+  <section class="karte">
+    <h2>{T.start.meineTurniere}</h2>
+    {#if konto.length === 0}
+      <p class="leise">{T.start.keineTurniere}</p>
+    {:else}
+      <ul class="liste">
+        {#each konto as t (t.id)}
+          <li>
+            <button class="zeile" onclick={() => kontoTurnierOeffnen(t, true)}>
+              <strong>{t.name}</strong>
+              <span class="leise">{datum(t.datum)} <span class="marke online">{T.start.modusOnline}</span></span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+{/if}
+
+{#if !konto || nurGeraet.length > 0}
+  <section class="karte">
+    <h2>{konto ? T.start.aufDiesemGeraet : T.start.meineTurniere}</h2>
+    {#if nurGeraet.length === 0}
+      <p class="leise">{T.start.keineTurniereGast}</p>
+    {:else}
+      <ul class="liste">
+        {#each nurGeraet as t (t.id)}
+          <li class="reihe">
+            <a class="wachsen zeile" href={linkZu('t/' + t.id)}>
+              <strong>{t.name}</strong>
+              <span class="leise">
+                {datum(t.datum)}
+                <span class="marke" class:online={t.modus === 'online'}>
+                  {t.modus === 'online' ? T.start.modusOnline : T.start.modusLokal}
+                </span>
+                {#if t.modus === 'online' && !t.token}<span class="marke">{T.start.rolleZuschauer}</span>{/if}
               </span>
-            </span>
-          </a>
-          <button class="gefahr klein" onclick={() => entfernen(t)} aria-label={T.start.entfernen} title={T.start.entfernen}>✕</button>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-</section>
+            </a>
+            <button class="gefahr klein" onclick={() => entfernen(t)} aria-label={T.start.entfernen} title={T.start.entfernen}>✕</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+{/if}
+
+{#if bereit}
+  <section class="beitreten">
+    <a class="knopf zweit breit" href={linkZu('beitreten')}>{T.start.beitreten}</a>
+    <p class="leise">{T.start.beitretenHinweis}</p>
+  </section>
+{/if}
 
 <style>
-  .auswahl { display: grid; gap: 12px; margin-bottom: 16px; }
-  @media (min-width: 640px) { .auswahl { grid-template-columns: repeat(3, 1fr); } }
-  .kachel {
+  .gruss { font-size: 1.15rem; font-weight: 600; margin-bottom: 14px; }
+  .knopf.gross {
+    width: 100%;
+    min-height: 64px;
+    font-size: 1.2rem;
+    margin-bottom: var(--abstand);
+    border-radius: var(--radius);
+    box-shadow: var(--schatten);
+  }
+  .plus { font-size: 1.6rem; line-height: 1; font-weight: 400; }
+  .werbung h2 { margin-bottom: 6px; }
+  .zeile {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 16px;
-    min-height: 88px;
-    border-radius: var(--radius);
-    background: var(--flaeche);
-    border: 1px solid var(--linie);
-    box-shadow: var(--schatten);
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    width: 100%;
+    min-height: 52px;
+    padding: 4px 0;
     color: var(--text);
+    background: transparent;
+    border: 0;
+    text-align: left;
     text-decoration: none;
+    font-weight: 400;
   }
-  .kachel strong { color: var(--blau); font-size: 1.05rem; }
-  .kachel:hover { border-color: var(--blau); }
-  .turnierlink { display: flex; flex-direction: column; color: var(--text); text-decoration: none; min-height: 44px; justify-content: center; }
+  .zeile:hover { background: transparent; }
+  .zeile:hover strong { color: var(--blau); }
+  .beitreten { margin-top: 8px; }
+  .beitreten p { margin-top: 8px; text-align: center; }
 </style>

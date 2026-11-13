@@ -124,19 +124,60 @@ Wenn der Schritt rot ist: siehe [Probleme lösen](#probleme-lösen).
 1. https://saschaurban.de/tt-turnier/ öffnen. Oben erscheint „Der Server ist noch nicht eingerichtet“.
 2. **Server einrichten** antippen, den **Einrichtungscode** aus Schritt 3, deinen Namen,
    deine E-Mail-Adresse und ein Passwort eingeben → **Administrator anlegen**.
-3. **Anmelden**. Unter **Mein Konto** siehst du die Verwaltung: Hier legst du Veranstalter-Konten an
-   und siehst, wer die App nutzt.
+3. **Anmelden**. Über dein Namensfeld oben rechts → **Verwaltung** siehst du alle Konten und kannst sie
+   bei Missbrauch sperren. Jeder kann sich selbst ein Konto anlegen; du bekommst dazu jeweils eine Info-Mail.
 
 ## Schritt 8 – Abgleich mit zwei Geräten testen
 
-1. Unter **Mein Konto → Neues Turnier**: Name, Datum und Leitungspasswort eingeben → **Turnier anlegen**.
-2. **Teilen** öffnen und den Link auf ein zweites Gerät schicken (z. B. per Messenger).
-3. Auf dem zweiten Gerät den Link öffnen → **Als Leitung anmelden** mit dem Leitungspasswort.
+1. Startseite → **Neues Turnier**: Name eingeben, „Mehrere Geräte (online)“ ist vorausgewählt, der
+   Leitungscode ist vorgeschlagen → **Turnier anlegen**.
+2. Unter **Teilen** den Link auf ein zweites Gerät schicken (z. B. per Messenger).
+3. Auf dem zweiten Gerät den Link öffnen → bei **Mitleiten** den Leitungscode und einen Namen eingeben.
 4. Auf einem Gerät einen **Testeintrag** machen: Er erscheint nach wenigen Sekunden auf dem anderen.
 5. Gegenprobe: Auf dem zweiten Gerät WLAN und mobile Daten ausschalten, etwas eintragen
    („wird gesendet“), wieder einschalten: Der Eintrag kommt beim ersten Gerät an.
 
 Fertig. Ab jetzt landet jede neue Version auf `main` automatisch auf dem Webspace.
+
+## Schritt 9 – Mails und Impressum (ab Version 0.3)
+
+Für Willkommensmails, „Passwort vergessen“, Sicherungen per Mail und das Kontaktformular braucht der
+Server einen Absender, die Adresse der App und deine Adresse für Info-Mails. Impressum und
+Datenschutzhinweis zeigen deine Betreiberangaben.
+
+**a) Postfach** `tt-turnier@saschaurban.de` im Strato-Kundenlogin unter **E-Mail** anlegen (erledigt).
+Strato stellt Mails von PHP zuverlässiger zu, wenn der Absender als Postfach existiert.
+
+**b) Secret** (Settings → Secrets and variables → Actions → Reiter **Secrets** → **New repository secret**):
+
+| Name | Wert |
+|---|---|
+| `ADMIN_MAIL` | `sascha.urban@gmail.com` – bekommt die Info über neue Konten und Rückmeldungen; Antworten auf alle System-Mails gehen hierhin |
+
+**c) Variablen** (gleiche Seite, Reiter **Variables** → **New repository variable**). Variablen sind nicht
+geheim – diese Angaben stehen ohnehin öffentlich im Impressum.
+
+| Name | Wert |
+|---|---|
+| `WEBSPACE_URL` | `https://saschaurban.de/tt-turnier` (falls noch nicht vorhanden) |
+| `BETREIBER_NAME` | `Sascha Urban` |
+| `BETREIBER_ANSCHRIFT` | `Klappholzer Weg 11, 24890 Stolk` (Komma trennt die Zeilen) |
+| `BETREIBER_MAIL` | `tt-turnier@saschaurban.de` (auch Absender der Mails) |
+| `BETREIBER_TELEFON` | optional, leer lassen oder Nummer eintragen |
+
+**d) Veröffentlichen:** Actions → **Veröffentlichen** → **Run workflow**. Fehlt etwas, erscheint im Lauf
+eine gelbe Warnung, der Rest wird trotzdem hochgeladen.
+
+**e) Prüfen:**
+1. `https://saschaurban.de/tt-turnier/api/index.php?r=info` zeigt `"mail":true`.
+2. Mit einer zweiten E-Mail-Adresse ein Konto anlegen: Willkommensmail kommt an, du bekommst die Info-Mail.
+3. Abmelden → **Passwort vergessen?** → Mail mit Link kommt an (ggf. im Spam-Ordner nachsehen).
+4. In einem Online-Turnier unter **Einstellungen → Jetzt per Mail sichern**: Mail mit Anhang kommt an.
+5. Fußzeile → **Impressum**: deine Angaben stehen dort.
+
+**f) Auftragsverarbeitung:** Für personenbezogene Daten Dritter auf dem Webspace braucht es einen
+Vertrag zur Auftragsverarbeitung (AVV) mit Strato. Er lässt sich im Kundenlogin abschließen
+(Suchbegriff „Auftragsverarbeitung“).
 
 ---
 
@@ -152,7 +193,8 @@ Fertig. Ab jetzt landet jede neue Version auf `main` automatisch auf dem Webspac
 | App zeigt „Kein Server erreichbar“ | `https://saschaurban.de/tt-turnier/api/index.php?r=info` im Browser öffnen. Kommt eine Fehlermeldung zu PHP, die PHP-Version prüfen (Schritt 6.4). |
 | `…?r=info` meldet „Keine Verbindung zur Datenbank“ | Datenbank-Secrets prüfen (Schritt 1/4), danach **Run workflow** erneut ausführen. Neue Strato-Datenbanken sind manchmal erst nach einigen Minuten erreichbar. |
 | „Der Einrichtungscode ist falsch“ | Code exakt wie im Secret `SETUP_CODE` eingeben (Groß-/Kleinschreibung). Nach 10 Fehlversuchen 15 Minuten warten. |
-| Passwort des Administrators vergessen | In phpMyAdmin (Datenbankverwaltung) in der Tabelle `konten` die Zeile des Admins löschen; dann ist die Einrichtungsseite wieder offen. |
+| Mails kommen nicht an | `…?r=info` muss `"mail":true` zeigen; sonst Variable `BETREIBER_MAIL`/`WEBSPACE_URL` prüfen (Schritt 9). Spam-Ordner prüfen. Das Postfach `tt-turnier@saschaurban.de` muss existieren. |
+| Passwort des Administrators vergessen | Auf der Anmeldeseite **Passwort vergessen?** (ab Version 0.3). Ohne Mailversand: In phpMyAdmin (Datenbankverwaltung) in der Tabelle `konten` die Zeile des Admins löschen; dann ist die Einrichtungsseite wieder offen. |
 
 ## Sicherheit in Kürze
 

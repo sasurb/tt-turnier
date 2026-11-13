@@ -30,8 +30,8 @@ describe.skipIf(!basis)('Integration mit echtem Server', () => {
     const admin = await api.login(adminMail, adminPw);
     await api.kontoAnlegen(admin.token, { name: 'TTC Test', email: `v-${zufall}@example.org`, passwort: 'veranst-pw' });
     const v = await api.login(`v-${zufall}@example.org`, 'veranst-pw');
-    const t = await api.turnierAnlegen(v.token, { name: 'Integrationstest', datum: '2026-12-01', leitungsPasswort: 'leitung' });
-    const zugangB = await api.turnierZugang(t.turnier.id, 'leitung', 'Helferin B');
+    const t = await api.turnierAnlegen(v.token, { name: 'Integrationstest', datum: '2026-12-01', leitungsCode: '583920' });
+    const zugangB = await api.turnierZugang(t.turnier.id, '583920', 'Helferin B');
 
     const geraet = (name: string, token: string | null) =>
       new TurnierSitzung({

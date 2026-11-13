@@ -101,6 +101,43 @@ export class TurnierSitzung {
     return this.o.speicher.alle(this.o.turnier);
   }
 
+  /**
+   * Ereignisse aus einer Sicherung übernehmen (IDs bleiben erhalten, damit erneutes Einspielen
+   * nichts verdoppelt). Lokal gelten sie sofort; online werden sie wie neue Einträge gesendet –
+   * als Autor setzt der Server dann die Person, die wiederherstellt.
+   */
+  importieren(liste: Pick<LokalesEreignis, 'id' | 'art' | 'daten' | 'zeit' | 'geraet' | 'autor'>[]): Promise<number> {
+    const schritt = this.warteschlange.then(async () => {
+      const { speicher, turnier, modus } = this.o;
+      const vorhanden = new Set((await speicher.alle(turnier)).map((e) => e.id));
+      let seq = (await speicher.alle(turnier)).reduce((m, e) => Math.max(m, e.seq ?? 0), 0);
+      const neu: LokalesEreignis[] = [];
+      for (const e of liste) {
+        if (vorhanden.has(e.id)) continue;
+        vorhanden.add(e.id);
+        neu.push({
+          id: e.id,
+          art: e.art,
+          daten: e.daten,
+          zeit: e.zeit,
+          geraet: e.geraet,
+          turnier,
+          status: modus === 'lokal' ? 'lokal' : 'ausstehend',
+          seq: modus === 'lokal' ? ++seq : null,
+          empfangen: modus === 'lokal' ? e.zeit : null,
+          autor: modus === 'lokal' ? e.autor : this.o.autor,
+          reihe: naechsteReihe(),
+        });
+      }
+      await speicher.uebernehmen(neu);
+      this.o.beiAenderung?.();
+      void this.abgleich?.anstossen();
+      return neu.length;
+    });
+    this.warteschlange = schritt.catch(() => undefined);
+    return schritt;
+  }
+
   async zustand(): Promise<TurnierZustand> {
     return berechnen(await this.ereignisse());
   }

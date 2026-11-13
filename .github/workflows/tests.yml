@@ -91,3 +91,37 @@ jobs:
         env:
           TT_SERVER: http://127.0.0.1:8080/api/index.php
         run: npx vitest run server.integration
+
+  oberflaeche:
+    name: Oberfläche (Handy, Tablet, PC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            e2e/package-lock.json
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, mbstring
+          coverage: none
+      - run: npm ci
+        working-directory: app
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: e2e
+      - name: Abläufe im Browser prüfen
+        working-directory: e2e
+        run: npx playwright test
+      - name: Screenshots aufheben
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: |
+            e2e/bilder/
+            e2e/test-results/
+          retention-days: 14

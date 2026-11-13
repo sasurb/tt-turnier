@@ -127,6 +127,60 @@ ul.liste { list-style: none; margin: 0; padding: 0; }
 ul.liste > li { border-top: 1px solid var(--linie); padding: 12px 0; }
 ul.liste > li:first-child { border-top: 0; padding-top: 0; }
 
-details > summary { cursor: pointer; font-weight: 600; min-height: 40px; display: flex; align-items: center; }
+/* Aufklappbare Bereiche: Pfeil rechts zeigt, dass man tippen kann */
+details > summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 1.1rem;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::after {
+  content: '';
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-right: 2.5px solid var(--blau);
+  border-bottom: 2.5px solid var(--blau);
+  transform: rotate(45deg) translateY(-3px);
+  transition: transform 0.15s;
+}
+details[open] > summary::after { transform: rotate(-135deg) translateY(-3px); }
+details[open] > summary { margin-bottom: 8px; }
 
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* Auswahl als große Karten (Radio) */
+fieldset { border: 0; padding: 0; margin: 16px 0 4px; min-width: 0; }
+legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
+.wahl {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-weight: 400;
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border: 2px solid var(--linie);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.wahl.aktiv { border-color: var(--blau); background: color-mix(in srgb, var(--blau) 6%, transparent); }
+.wahl.aus { cursor: default; }
+.wahl.aus strong { color: var(--leise); }
+.wahl input { width: 22px; height: 22px; min-height: 0; margin: 2px 0 0; flex: none; accent-color: var(--blau); }
+.wahl > span { display: flex; flex-direction: column; gap: 2px; }
+
+/* Eingabe des 6-stelligen Leitungscodes */
+.code-feld, input.code { font-family: ui-monospace, monospace; font-size: 1.35rem; letter-spacing: 0.25em; }
+
+textarea { min-height: 120px; line-height: 1.4; }
+
+/* Feldbeschriftung mit Hilfe-Symbol daneben (Symbol nicht Teil der Beschriftung) */
+.label-zeile { display: flex; align-items: center; margin: 12px 0 6px; }
+.label-zeile label { margin: 0; }

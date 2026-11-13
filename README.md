@@ -3,8 +3,10 @@
 Kostenlose Open-Source-Web-App für Tischtennisturniere auf **Handy und Tablet**: Turniere anlegen,
 Spieler auslosen, Ergebnisse eintragen, auf mehreren Geräten gleichzeitig.
 
-**Stand: Etappe 2 – Grundgerüst.** Die App gleicht ein Turnier zwischen mehreren Geräten ab
-(online oder nur auf einem Gerät). Spieler, Auslosung und Ergebnisse folgen ab Etappe 3.
+**Stand: Etappe 2b – Konten, Mail, Leitungscode, Bedienung.** Jeder kann sich ein Konto anlegen und
+Online-Turniere starten; weitere Personen leiten mit einem 6-stelligen Leitungscode mit. Turnierstände
+gehen auf Wunsch regelmäßig per Mail an die Leitung und lassen sich aus einer Sicherungsdatei
+wiederherstellen. Spieler, Auslosung und Ergebnisse folgen ab Etappe 3.
 
 - Demo (nur Einzelgerät-Modus): https://sasurb.github.io/tt-turnier/
 - Eigene Installation: [docs/strato-einrichtung.md](docs/strato-einrichtung.md) (funktioniert auf jedem PHP-Webspace)
@@ -27,6 +29,7 @@ app/          Svelte + TypeScript (Vite): Oberfläche und Turnier-Engine
 server-php/   schlanker Ereignis-Server (PHP 8.1+, PDO MySQL/SQLite)
 shared/       Schnittstellen-Vertrag (protokoll.ts), gilt für alle Server
 docs/         Schnittstelle, Strato-Einrichtung
+e2e/          Oberflächentests mit Playwright (Handy, Tablet, PC) gegen den echten PHP-Server
 scripts/      Paket für den Webspace bauen
 ```
 
@@ -51,12 +54,17 @@ cp server-php/config.example.php server-php/config.php
 #   in config.php die SQLite-Zeile aktivieren
 php -S localhost:8080 -t server-php/public
 php server-php/tests/ApiTest.php      # Server-Tests
+#   für Mails ohne Versand in config.php: 'mail' => ['datei' => __DIR__ . '/mails'], 'app_url' => 'http://localhost:5173/'
+
+# Oberflächentests (startet App + PHP-Server selbst, Screenshots in e2e/bilder/)
+cd e2e && npm install && npx playwright install chromium && npx playwright test
 ```
 
 Der Vite-Entwicklungsserver leitet `/api` an `localhost:8080` weiter.
 
 Bei jedem Push laufen in GitHub Actions: Typprüfung, Engine-Tests, Server-Tests (SQLite und MySQL,
-PHP 8.1 und 8.3) und ein Abgleichtest zweier Geräte gegen einen echten Server.
+PHP 8.1 und 8.3), ein Abgleichtest zweier Geräte gegen einen echten Server und die Oberflächentests
+auf Handy, Tablet und PC (Screenshots als Artefakt des Laufs).
 Pushes auf `main` werden danach automatisch auf den Webspace und auf GitHub Pages veröffentlicht.
 
 ## Lizenz
