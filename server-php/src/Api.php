@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.3.0';
+    public const VERSION = '0.4.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_DATEN_BYTES = 16384;
@@ -25,6 +25,12 @@ final class Api
     private const SICHERUNG_TAKTE = [0, 15, 30, 60, -1];   // Minuten; 0 = aus, -1 = nur beim Abschluss
     private const SICHERUNG_MAX_EMPFAENGER = 3;
     private const ART_ABGESCHLOSSEN = 'turnier.abgeschlossen';
+    /** shared/protokoll.ts ARTEN_SPIELER / ARTEN_HELFER */
+    private const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'];
+    private const ARTEN_HELFER = ['spiel.ergebnis'];
+    private const MAX_CODES = 400;
+    private const MAX_POOL = 3000;
+    private const MAX_UEBERSICHT = 60000;
 
     /** @var callable():int */
     private $uhr;
@@ -115,6 +121,15 @@ final class Api
                 'GET turnier.einstellungen' => $this->einstellungen($this->turnierLaden((string)($a->query['id'] ?? '')), $a),
                 'POST turnier.einstellungen' => $this->einstellungenSetzen($a),
                 'POST turnier.sichern' => $this->sichernJetzt($a),
+                'GET codes' => $this->codes($a),
+                'POST codes.anlegen' => $this->codesAnlegen($a),
+                'POST code.neu' => $this->codeNeu($a),
+                'POST code.sperren' => $this->codeSperren($a),
+                'POST code.entfernen' => $this->codeEntfernen($a),
+                'GET pool' => $this->pool($a),
+                'POST pool.speichern' => $this->poolSpeichern($a),
+                'POST pool.loeschen' => $this->poolLoeschen($a),
+                'POST turnier.uebersicht' => $this->uebersichtSetzen($a),
                 'GET events' => $this->abholen($a),
                 'POST events' => $this->senden($a),
                 default => throw new ApiFehler('nicht_gefunden', 'Unbekannte Route: ' . $schluessel),
@@ -256,17 +271,17 @@ final class Api
         $this->db->ausfuehren('DELETE FROM versuche WHERE schluessel = ?', [$schluessel]);
     }
 
-    private function neuesToken(?int $kontoId, ?string $turnierId, string $rolle, string $name): string
+    private function neuesToken(?int $kontoId, ?string $turnierId, string $rolle, string $name, ?string $bezug = null): string
     {
         $token = bin2hex(random_bytes(32));
         $this->db->ausfuehren(
-            'INSERT INTO sitzungen (token_hash, konto_id, turnier_id, rolle, name, ablauf) VALUES (?, ?, ?, ?, ?, ?)',
-            [hash('sha256', $token), $kontoId, $turnierId, $rolle, $name, $this->jetzt() + self::SITZUNG_DAUER]
+            'INSERT INTO sitzungen (token_hash, konto_id, turnier_id, rolle, name, ablauf, bezug) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [hash('sha256', $token), $kontoId, $turnierId, $rolle, $name, $this->jetzt() + self::SITZUNG_DAUER, $bezug]
         );
         return $token;
     }
 
-    /** @return array{konto_id:?int,turnier_id:?string,rolle:string,name:string}|null */
+    /** @return array{konto_id:?int,turnier_id:?string,rolle:string,name:string,bezug:?string}|null */
     private function sitzung(Anfrage $a): ?array
     {
         if ($a->token === null || !preg_match('/^[a-f0-9]{64}$/', $a->token)) {
@@ -291,6 +306,7 @@ final class Api
             'turnier_id' => $s['turnier_id'],
             'rolle' => (string)$s['rolle'],
             'name' => (string)$s['name'],
+            'bezug' => $s['bezug'] === null ? null : (string)$s['bezug'],
         ];
     }
 
@@ -382,6 +398,7 @@ final class Api
             'zeit' => self::iso($this->jetzt()),
             'registrierung' => true,
             'mail' => $this->mailBereit(),
+            'codes' => true,
         ];
     }
 
@@ -460,6 +477,9 @@ final class Api
             throw new ApiFehler('nicht_angemeldet', 'Nicht angemeldet.');
         }
         $antwort = ['rolle' => $s['rolle'], 'name' => $s['name'], 'turnier' => $s['turnier_id']];
+        if ($s['rolle'] === 'spieler' && $s['bezug'] !== null) {
+            $antwort['spieler'] = $s['bezug'];
+        }
         if ($s['konto_id'] !== null) {
             $k = $this->db->eine('SELECT * FROM konten WHERE id = ?', [$s['konto_id']]);
             $antwort['konto'] = $k === null ? null : self::kontoAusgabe($k);
@@ -592,13 +612,28 @@ final class Api
         $schluessel = 'zugang|' . $t['id'] . '|' . $a->ip;
         $this->bremse($schluessel);
         $pw = trim((string)($a->rumpf['code'] ?? $a->rumpf['passwort'] ?? ''));
-        if (!password_verify($pw, (string)$t['leitung_hash'])) {
+        if ($pw !== '' && password_verify($pw, (string)$t['leitung_hash'])) {
+            $this->versucheLoeschen($schluessel);
+            $name = trim((string)($a->rumpf['name'] ?? ''));
+            $name = $name === '' ? 'Leitung' : mb_substr($name, 0, 120);
+            return ['token' => $this->neuesToken(null, (string)$t['id'], 'leitung', $name), 'rolle' => 'leitung', 'name' => $name];
+        }
+        // Spieler- oder Helfer-Code
+        $c = preg_match('/^[0-9]{6}$/', $pw)
+            ? $this->db->eine('SELECT * FROM codes WHERE turnier_id = ? AND code = ? AND gesperrt = 0', [$t['id'], $pw])
+            : null;
+        if ($c === null) {
             $this->fehlversuch($schluessel);
-            throw new ApiFehler('falsche_zugangsdaten', 'Der Leitungscode ist falsch.');
+            throw new ApiFehler('falsche_zugangsdaten', 'Dieser Code passt nicht zu diesem Turnier.');
         }
         $this->versucheLoeschen($schluessel);
-        $name = $this->text($a, 'name', 1, 120);
-        return ['token' => $this->neuesToken(null, (string)$t['id'], 'leitung', $name), 'rolle' => 'leitung'];
+        $rolle = (string)$c['rolle'];
+        $token = $this->neuesToken(null, (string)$t['id'], $rolle, (string)$c['name'], (string)$c['bezug']);
+        $antwort = ['token' => $token, 'rolle' => $rolle, 'name' => (string)$c['name']];
+        if ($rolle === 'spieler') {
+            $antwort['spieler'] = (string)$c['bezug'];
+        }
+        return $antwort;
     }
 
     private function abholen(Anfrage $a): array
@@ -624,7 +659,7 @@ final class Api
                 'zeit' => (string)$z['zeit'],
                 'geraet' => (string)$z['geraet'],
                 'empfangen' => self::iso((int)$z['empfangen']),
-                'autor' => ['rolle' => (string)$z['autor_rolle'], 'name' => (string)$z['autor_name']],
+                'autor' => self::autorAusgabe($z),
             ], $zeilen),
             'hoechsteSeq' => $hoechste,
             'mehr' => $mehr,
@@ -648,6 +683,20 @@ final class Api
             throw new ApiFehler('ungueltig', 'Feld „ereignisse“ muss eine Liste mit höchstens ' . self::MAX_EREIGNISSE . ' Einträgen sein.');
         }
         $rolle = $s['rolle'] === 'admin' || $s['rolle'] === 'veranstalter' ? 'leitung' : $s['rolle'];
+        $erlaubt = match ($rolle) {
+            'spieler' => self::ARTEN_SPIELER,
+            'helfer' => self::ARTEN_HELFER,
+            default => null,
+        };
+        if ($erlaubt !== null) {
+            foreach ($liste as $e) {
+                $art = is_array($e) ? ($e['art'] ?? null) : ($e instanceof \stdClass ? ($e->art ?? null) : null);
+                if (!in_array($art, $erlaubt, true)) {
+                    throw new ApiFehler('keine_berechtigung', 'Mit diesem Code dürfen nur Ergebnisse eingetragen werden.');
+                }
+            }
+        }
+        $bezug = $rolle === 'spieler' ? $s['bezug'] : null;
 
         $angenommen = [];
         $this->db->pdo->beginTransaction();
@@ -660,7 +709,7 @@ final class Api
             }
             foreach ($liste as $e) {
                 $e = $e instanceof \stdClass ? get_object_vars($e) : $e;
-                $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name']);
+                $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug);
                 $angenommen[] = ['id' => (string)$e['id'], 'seq' => $seq];
             }
             $this->db->pdo->commit();
@@ -678,7 +727,7 @@ final class Api
         return ['angenommen' => $angenommen, 'hoechsteSeq' => $hoechste];
     }
 
-    private function einEreignis(string $turnierId, mixed $e, string $rolle, string $name): int
+    private function einEreignis(string $turnierId, mixed $e, string $rolle, string $name, ?string $bezug = null): int
     {
         if ($e instanceof \stdClass) {
             $e = get_object_vars($e);
@@ -719,9 +768,9 @@ final class Api
             return (int)$vorhanden['seq'];
         }
         $this->db->ausfuehren(
-            'INSERT INTO ereignisse (turnier_id, event_id, art, daten, zeit, geraet, autor_rolle, autor_name, empfangen)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [$turnierId, $id, $art, $json, $zeit, $geraet, $rolle, $name, $this->jetzt()]
+            'INSERT INTO ereignisse (turnier_id, event_id, art, daten, zeit, geraet, autor_rolle, autor_name, empfangen, autor_bezug)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [$turnierId, $id, $art, $json, $zeit, $geraet, $rolle, $name, $this->jetzt(), $bezug]
         );
         return (int)$this->db->pdo->lastInsertId();
     }
@@ -845,7 +894,9 @@ final class Api
             foreach ($this->db->alle('SELECT id FROM turniere WHERE konto_id = ?', [$kontoId]) as $t) {
                 $this->db->ausfuehren('DELETE FROM ereignisse WHERE turnier_id = ?', [$t['id']]);
                 $this->db->ausfuehren('DELETE FROM sitzungen WHERE turnier_id = ?', [$t['id']]);
+                $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ?', [$t['id']]);
             }
+            $this->db->ausfuehren('DELETE FROM pool WHERE konto_id = ?', [$kontoId]);
             $this->db->ausfuehren('DELETE FROM turniere WHERE konto_id = ?', [$kontoId]);
             $this->db->ausfuehren('DELETE FROM sitzungen WHERE konto_id = ?', [$kontoId]);
             $this->db->ausfuehren('DELETE FROM rueckstellungen WHERE konto_id = ?', [$kontoId]);
@@ -942,6 +993,9 @@ final class Api
         $r = $a->rumpf ?? [];
         if (array_key_exists('leitungsCode', $r)) {
             $code = $this->leitungsCodeFeld($a);
+            if ($this->db->eine('SELECT bezug FROM codes WHERE turnier_id = ? AND code = ?', [$t['id'], $code]) !== null) {
+                throw new ApiFehler('konflikt', 'Diesen Code hat schon ein Spieler oder Helfer. Bitte einen anderen wählen.');
+            }
             $this->db->ausfuehren('UPDATE turniere SET leitung_code = ?, leitung_hash = ? WHERE id = ?', [$code, password_hash($code, PASSWORD_DEFAULT), $t['id']]);
         }
         if (array_key_exists('sicherungAn', $r)) {
@@ -1037,7 +1091,7 @@ final class Api
                 'geraet' => (string)$z['geraet'],
                 'seq' => (int)$z['seq'],
                 'empfangen' => self::iso((int)$z['empfangen']),
-                'autor' => ['rolle' => (string)$z['autor_rolle'], 'name' => (string)$z['autor_name']],
+                'autor' => self::autorAusgabe($z),
             ];
         }
         $sicherung = [
@@ -1055,6 +1109,7 @@ final class Api
             . "Datum:        {$datum}\nVeranstalter: " . ($t['veranstalter'] ?? '') . "\nStand:        {$stand}\n"
             . "Einträge:     " . count($ereignisse) . "\nStatus:       " . ($abgeschlossen ? 'abgeschlossen' : 'läuft') . "\n"
             . "Anlass:       {$grund}\n\n"
+            . $this->uebersichtAbschnitt($t)
             . "Im Anhang liegt die Sicherungsdatei. Wiederherstellen: App öffnen → „Neues Turnier“ →\n"
             . "„Aus Sicherung wiederherstellen“ und die Datei auswählen.\n\n"
             . "Turnier öffnen: {$url}#/t/{$t['id']}\n\n"
@@ -1066,6 +1121,280 @@ final class Api
             $alle = $this->mail($an, "Sicherung: {$t['name']} ({$stand})", $text, $datei, (string)$json) && $alle;
         }
         return $alle;
+    }
+
+    /* ---------------- Spieler- und Helfer-Codes ---------------- */
+
+    private static function autorAusgabe(array $z): array
+    {
+        $a = ['rolle' => (string)$z['autor_rolle'], 'name' => (string)$z['autor_name']];
+        if ($z['autor_rolle'] === 'spieler' && ($z['autor_bezug'] ?? null) !== null) {
+            $a['spieler'] = (string)$z['autor_bezug'];
+        }
+        return $a;
+    }
+
+    private static function codeAusgabe(array $z): array
+    {
+        return [
+            'rolle' => (string)$z['rolle'],
+            'bezug' => (string)$z['bezug'],
+            'name' => (string)$z['name'],
+            'code' => (string)$z['code'],
+            'gesperrt' => (int)$z['gesperrt'] === 1,
+        ];
+    }
+
+    /** Zufälliger gültiger Code, im Turnier noch nicht vergeben und nicht der Leitungscode */
+    private function freierCode(array $t): string
+    {
+        for ($i = 0; $i < 1000; $i++) {
+            $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            if (!self::codeGueltig($code) || $code === (string)($t['leitung_code'] ?? '')) {
+                continue;
+            }
+            if ($t['leitung_code'] === null && password_verify($code, (string)$t['leitung_hash'])) {
+                continue;
+            }
+            if ($this->db->eine('SELECT bezug FROM codes WHERE turnier_id = ? AND code = ?', [$t['id'], $code]) === null) {
+                return $code;
+            }
+        }
+        throw new ApiFehler('serverfehler', 'Es konnte kein freier Code erzeugt werden.');
+    }
+
+    /** @return array{0:string,1:string} Rolle und Bezug aus der Anfrage */
+    private function codeZiel(Anfrage $a): array
+    {
+        $rolle = $a->rumpf['rolle'] ?? null;
+        $bezug = $a->rumpf['bezug'] ?? null;
+        if (!in_array($rolle, ['spieler', 'helfer'], true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug)) {
+            throw new ApiFehler('ungueltig', 'Rolle oder Bezug ungültig.');
+        }
+        return [$rolle, $bezug];
+    }
+
+    private function codesListe(string $turnierId): array
+    {
+        $zeilen = $this->db->alle('SELECT * FROM codes WHERE turnier_id = ? ORDER BY rolle DESC, name', [$turnierId]);
+        return ['codes' => array_map([self::class, 'codeAusgabe'], $zeilen)];
+    }
+
+    private function codes(Anfrage $a): array
+    {
+        $t = $this->turnierLaden((string)($a->query['turnier'] ?? ''));
+        $this->leitungPruefen($a, $t);
+        return $this->codesListe((string)$t['id']);
+    }
+
+    private function codesAnlegen(Anfrage $a): array
+    {
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        $this->leitungPruefen($a, $t);
+        $liste = $a->rumpf['eintraege'] ?? null;
+        if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_CODES) {
+            throw new ApiFehler('ungueltig', 'Feld „eintraege“ muss eine Liste sein.');
+        }
+        $this->db->pdo->beginTransaction();
+        try {
+            foreach ($liste as $e) {
+                $e = $e instanceof \stdClass ? get_object_vars($e) : $e;
+                $rolle = $e['rolle'] ?? null;
+                $bezug = $e['bezug'] ?? null;
+                $name = is_string($e['name'] ?? null) ? mb_substr(trim($e['name']), 0, 160) : '';
+                if (!in_array($rolle, ['spieler', 'helfer'], true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug) || $name === '') {
+                    throw new ApiFehler('ungueltig', 'Ungültiger Eintrag für einen Code.');
+                }
+                $alt = $this->db->eine('SELECT name FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
+                if ($alt !== null) {
+                    if ($alt['name'] !== $name) {
+                        $this->db->ausfuehren('UPDATE codes SET name = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$name, $t['id'], $rolle, $bezug]);
+                        $this->db->ausfuehren('UPDATE sitzungen SET name = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$name, $t['id'], $rolle, $bezug]);
+                    }
+                    continue;
+                }
+                $anzahl = (int)($this->db->eine('SELECT COUNT(*) AS n FROM codes WHERE turnier_id = ?', [$t['id']])['n'] ?? 0);
+                if ($anzahl >= self::MAX_CODES) {
+                    throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_CODES . ' Codes je Turnier.');
+                }
+                $this->db->ausfuehren(
+                    'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt) VALUES (?, ?, ?, ?, ?, 0, ?)',
+                    [$t['id'], $rolle, $bezug, $name, $this->freierCode($t), $this->jetzt()]
+                );
+            }
+            $this->db->pdo->commit();
+        } catch (\Throwable $x) {
+            $this->db->pdo->rollBack();
+            throw $x;
+        }
+        return $this->codesListe((string)$t['id']);
+    }
+
+    /** Anmeldungen mit dem bisherigen Code beenden */
+    private function codeSitzungenBeenden(string $turnierId, string $rolle, string $bezug): void
+    {
+        $this->db->ausfuehren('DELETE FROM sitzungen WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$turnierId, $rolle, $bezug]);
+    }
+
+    private function codeLaden(array $t, string $rolle, string $bezug): array
+    {
+        $c = $this->db->eine('SELECT * FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
+        if ($c === null) {
+            throw new ApiFehler('nicht_gefunden', 'Code nicht gefunden.');
+        }
+        return $c;
+    }
+
+    private function codeNeu(Anfrage $a): array
+    {
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        $this->leitungPruefen($a, $t);
+        [$rolle, $bezug] = $this->codeZiel($a);
+        $this->codeLaden($t, $rolle, $bezug);
+        $this->db->ausfuehren('UPDATE codes SET code = ?, gesperrt = 0 WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$this->freierCode($t), $t['id'], $rolle, $bezug]);
+        $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        return ['code' => self::codeAusgabe($this->codeLaden($t, $rolle, $bezug))];
+    }
+
+    private function codeSperren(Anfrage $a): array
+    {
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        $this->leitungPruefen($a, $t);
+        [$rolle, $bezug] = $this->codeZiel($a);
+        $this->codeLaden($t, $rolle, $bezug);
+        $gesperrt = ($a->rumpf['gesperrt'] ?? false) === true;
+        $this->db->ausfuehren('UPDATE codes SET gesperrt = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$gesperrt ? 1 : 0, $t['id'], $rolle, $bezug]);
+        if ($gesperrt) {
+            $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        }
+        return ['code' => self::codeAusgabe($this->codeLaden($t, $rolle, $bezug))];
+    }
+
+    private function codeEntfernen(Anfrage $a): array
+    {
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        $this->leitungPruefen($a, $t);
+        [$rolle, $bezug] = $this->codeZiel($a);
+        $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
+        $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        return ['ok' => true];
+    }
+
+    /* ---------------- Spielerpool des Kontos ---------------- */
+
+    private static function poolAusgabe(array $z): array
+    {
+        $d = json_decode((string)$z['daten'], true);
+        $d = is_array($d) ? $d : [];
+        $d['id'] = (string)$z['id'];
+        $d['geaendert'] = self::iso((int)$z['geaendert']);
+        return $d;
+    }
+
+    /** Ein Pool-Eintrag, auf bekannte Felder beschränkt */
+    private static function poolEintrag(mixed $e): array
+    {
+        $e = $e instanceof \stdClass ? get_object_vars($e) : $e;
+        if (!is_array($e)) {
+            throw new ApiFehler('ungueltig', 'Spieler muss ein Objekt sein.');
+        }
+        $id = $e['id'] ?? null;
+        if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{1,40}$/', $id)) {
+            throw new ApiFehler('ungueltig', 'Spieler-ID ungültig.');
+        }
+        $txt = static fn(mixed $v, int $max): string => is_string($v) ? mb_substr(trim($v), 0, $max) : '';
+        $d = [
+            'vorname' => $txt($e['vorname'] ?? '', 80),
+            'nachname' => $txt($e['nachname'] ?? '', 80),
+            'verein' => $txt($e['verein'] ?? '', 120),
+        ];
+        if ($d['vorname'] === '' && $d['nachname'] === '') {
+            throw new ApiFehler('ungueltig', 'Spieler braucht einen Namen.');
+        }
+        $ttr = $e['ttr'] ?? null;
+        $d['ttr'] = is_int($ttr) && $ttr >= 0 && $ttr <= 4000 ? $ttr : null;
+        $jg = $e['jahrgang'] ?? null;
+        $d['jahrgang'] = is_int($jg) && $jg >= 1900 && $jg <= 2100 ? $jg : null;
+        $d['klasse'] = $txt($e['klasse'] ?? '', 40) ?: null;
+        $g = $e['geschlecht'] ?? null;
+        $d['geschlecht'] = in_array($g, ['m', 'w', 'd'], true) ? $g : null;
+        return [$id, $d];
+    }
+
+    private function pool(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $zeilen = $this->db->alle('SELECT * FROM pool WHERE konto_id = ? ORDER BY id', [$s['konto_id']]);
+        return ['spieler' => array_map([self::class, 'poolAusgabe'], $zeilen)];
+    }
+
+    private function poolSpeichern(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $liste = $a->rumpf['spieler'] ?? null;
+        if (!is_array($liste) || !array_is_list($liste) || count($liste) > 500) {
+            throw new ApiFehler('ungueltig', 'Feld „spieler“ muss eine Liste mit höchstens 500 Einträgen sein.');
+        }
+        $eintraege = array_map([self::class, 'poolEintrag'], $liste);
+        $this->db->pdo->beginTransaction();
+        try {
+            foreach ($eintraege as [$id, $d]) {
+                $json = json_encode($d, JSON_UNESCAPED_UNICODE);
+                $n = $this->db->ausfuehren('UPDATE pool SET daten = ?, geaendert = ? WHERE konto_id = ? AND id = ?', [$json, $this->jetzt(), $s['konto_id'], $id]);
+                if ($n === 0 && $this->db->eine('SELECT id FROM pool WHERE konto_id = ? AND id = ?', [$s['konto_id'], $id]) === null) {
+                    $anzahl = (int)($this->db->eine('SELECT COUNT(*) AS n FROM pool WHERE konto_id = ?', [$s['konto_id']])['n'] ?? 0);
+                    if ($anzahl >= self::MAX_POOL) {
+                        throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_POOL . ' Spieler im Pool.');
+                    }
+                    $this->db->ausfuehren('INSERT INTO pool (konto_id, id, daten, geaendert) VALUES (?, ?, ?, ?)', [$s['konto_id'], $id, $json, $this->jetzt()]);
+                }
+            }
+            $this->db->pdo->commit();
+        } catch (\Throwable $x) {
+            $this->db->pdo->rollBack();
+            throw $x;
+        }
+        return $this->pool($a);
+    }
+
+    private function poolLoeschen(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $ids = $a->rumpf['ids'] ?? null;
+        if (!is_array($ids) || !array_is_list($ids) || count($ids) > self::MAX_POOL) {
+            throw new ApiFehler('ungueltig', 'Feld „ids“ muss eine Liste sein.');
+        }
+        foreach ($ids as $id) {
+            if (is_string($id)) {
+                $this->db->ausfuehren('DELETE FROM pool WHERE konto_id = ? AND id = ?', [$s['konto_id'], $id]);
+            }
+        }
+        return ['ok' => true];
+    }
+
+    /* ---------------- Lesbare Übersicht (erzeugt die App) ---------------- */
+
+    private function uebersichtSetzen(Anfrage $a): array
+    {
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        $this->leitungPruefen($a, $t);
+        $text = $a->rumpf['text'] ?? null;
+        if (!is_string($text) || mb_strlen($text) > self::MAX_UEBERSICHT) {
+            throw new ApiFehler('ungueltig', 'Übersicht fehlt oder ist zu lang.');
+        }
+        $this->db->ausfuehren('UPDATE turniere SET uebersicht = ?, uebersicht_zeit = ? WHERE id = ?', [$text, $this->jetzt(), $t['id']]);
+        return ['ok' => true];
+    }
+
+    private function uebersichtAbschnitt(array $t): string
+    {
+        $text = (string)($t['uebersicht'] ?? '');
+        if (trim($text) === '') {
+            return '';
+        }
+        $zeit = gmdate('d.m.Y H:i', (int)$t['uebersicht_zeit']) . ' UTC';
+        return "Aktueller Stand (von der App erstellt, {$zeit}):\n"
+            . str_repeat('-', 60) . "\n" . rtrim($text) . "\n" . str_repeat('-', 60) . "\n\n";
     }
 
     /* ---------------- Wartung (höchstens einmal täglich, bei einem beliebigen Aufruf) ---------------- */

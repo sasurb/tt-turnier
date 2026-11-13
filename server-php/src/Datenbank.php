@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 2;
+    public const SCHEMA_VERSION = 3;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -69,7 +69,19 @@ final class Datenbank
             }
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['2', 'schema']);
         }
-        // Spätere Versionen: if ($version < 3) { … UPDATE meta … }
+        if ($version < 3) {
+            foreach ($this->schemaV3() as $sql) {
+                try {
+                    $this->pdo->exec($sql);
+                } catch (\PDOException $e) {
+                    if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                        throw $e;
+                    }
+                }
+            }
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['3', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 4) { … UPDATE meta … }
     }
 
     /** @return list<string> */
@@ -157,6 +169,42 @@ final class Datenbank
                 schluessel_hash CHAR(64) NOT NULL PRIMARY KEY,
                 konto_id BIGINT NOT NULL,
                 ablauf BIGINT NOT NULL
+            )$nach",
+        ];
+    }
+
+    /**
+     * Version 3 (Etappe 3): Spieler- und Helfer-Codes, Spielerpool je Konto,
+     * lesbare Übersicht für die Sicherungsmail.
+     * @return list<string>
+     */
+    private function schemaV3(): array
+    {
+        $mysql = $this->treiber === 'mysql';
+        $langtext = $mysql ? 'MEDIUMTEXT' : 'TEXT';
+        $nach = $mysql ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '';
+        return [
+            'ALTER TABLE sitzungen ADD COLUMN bezug VARCHAR(64) NULL',
+            'ALTER TABLE ereignisse ADD COLUMN autor_bezug VARCHAR(64) NULL',
+            "ALTER TABLE turniere ADD COLUMN uebersicht $langtext NULL",
+            'ALTER TABLE turniere ADD COLUMN uebersicht_zeit BIGINT NULL',
+            "CREATE TABLE codes (
+                turnier_id VARCHAR(16) NOT NULL,
+                rolle VARCHAR(20) NOT NULL,
+                bezug VARCHAR(64) NOT NULL,
+                name VARCHAR(160) NOT NULL,
+                code VARCHAR(12) NOT NULL,
+                gesperrt INTEGER NOT NULL DEFAULT 0,
+                angelegt BIGINT NOT NULL,
+                PRIMARY KEY (turnier_id, rolle, bezug)
+            )$nach",
+            'CREATE INDEX idx_codes_code ON codes (turnier_id, code)',
+            "CREATE TABLE pool (
+                konto_id BIGINT NOT NULL,
+                id VARCHAR(40) NOT NULL,
+                daten TEXT NOT NULL,
+                geaendert BIGINT NOT NULL,
+                PRIMARY KEY (konto_id, id)
             )$nach",
         ];
     }

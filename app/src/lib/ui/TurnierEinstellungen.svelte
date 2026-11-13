@@ -123,7 +123,7 @@
   {/if}
 {/snippet}
 
-<details class="karte einstellungen" id="einstellungen">
+<details class="karte einstellungen" id="einstellungen" open>
   <summary>{T.einstellungen.titel}</summary>
 
   {#if !lokal && einst}

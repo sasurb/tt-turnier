@@ -1,0 +1,183 @@
+<script lang="ts">
+  import { T } from '../../texte';
+  import { standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
+  import Hilfe from '../Hilfe.svelte';
+  import WertungInfo from './WertungInfo.svelte';
+
+  let {
+    start = standardEinstellungen(),
+    gestartet = false,
+    knopf,
+    speichern,
+    abbrechen,
+  }: {
+    start?: KonkurrenzEinstellungen;
+    gestartet?: boolean;
+    knopf: string;
+    speichern: (e: KonkurrenzEinstellungen) => Promise<void>;
+    abbrechen: () => void;
+  } = $props();
+
+  const id = Math.random().toString(36).slice(2, 7);
+  // svelte-ignore state_referenced_locally
+  let e = $state<KonkurrenzEinstellungen>(JSON.parse(JSON.stringify(start)));
+  // svelte-ignore state_referenced_locally
+  let gesetzte = $state(start.gesetzte === null ? '' : String(start.gesetzte));
+  // svelte-ignore state_referenced_locally
+  let klassen = $state(start.zulassung.klassen.join(', '));
+  const zahl = (t: string) => (t === '' ? null : Number.isFinite(parseInt(t, 10)) ? parseInt(t, 10) : null);
+  // svelte-ignore state_referenced_locally
+  let zl = $state({
+    ttrMin: start.zulassung.ttrMin?.toString() ?? '',
+    ttrMax: start.zulassung.ttrMax?.toString() ?? '',
+    jahrgangVon: start.zulassung.jahrgangVon?.toString() ?? '',
+    jahrgangBis: start.zulassung.jahrgangBis?.toString() ?? '',
+  });
+  let fehler = $state('');
+  let sendet = $state(false);
+  const mitGruppen = $derived(e.modus !== 'ko');
+  const mitKo = $derived(e.modus !== 'jgj');
+
+  async function absenden(ev: SubmitEvent) {
+    ev.preventDefault();
+    if (e.name.trim().length < 1) return;
+    const aus: KonkurrenzEinstellungen = {
+      ...$state.snapshot(e),
+      name: e.name.trim(),
+      gesetzte: zahl(gesetzte),
+      zulassung: {
+        ttrMin: zahl(zl.ttrMin),
+        ttrMax: zahl(zl.ttrMax),
+        jahrgangVon: zahl(zl.jahrgangVon),
+        jahrgangBis: zahl(zl.jahrgangBis),
+        klassen: klassen.split(',').map((k) => k.trim()).filter(Boolean),
+        geschlecht: [...e.zulassung.geschlecht],
+      },
+    };
+    sendet = true;
+    fehler = '';
+    try {
+      await speichern(aus);
+    } catch (x) {
+      fehler = x instanceof Error ? x.message : String(x);
+    } finally {
+      sendet = false;
+    }
+  }
+</script>
+
+<form onsubmit={absenden} class="konk-form">
+  <label for="kn-{id}">{T.konk.name}</label>
+  <input id="kn-{id}" bind:value={e.name} placeholder={T.konk.namePlatzhalter} required maxlength="80" />
+
+  <fieldset disabled={gestartet}>
+    <legend>{T.konk.modus}</legend>
+    {#each ['gruppen_ko', 'jgj', 'ko'] as const as m (m)}
+      <label class="wahl" class:aktiv={e.modus === m}>
+        <input type="radio" name="modus-{id}" value={m} bind:group={e.modus} />
+        <span><strong>{T.konk.modi[m]}</strong><span class="leise">{T.konk.modiText[m]}</span></span>
+      </label>
+    {/each}
+  </fieldset>
+
+  <div class="raster">
+    <div>
+      <label for="bo-{id}">{T.konk.bestOf}</label>
+      <select id="bo-{id}" bind:value={e.bestOf} disabled={gestartet}>
+        {#each [3, 5, 7] as b (b)}<option value={b as BestOf}>{T.konk.bestOfWahl[b]}</option>{/each}
+      </select>
+    </div>
+    <div>
+      <div class="label-zeile"><label for="ei-{id}">{T.konk.eingabe}</label><Hilfe text={T.konk.eingabeHilfe} /></div>
+      <select id="ei-{id}" bind:value={e.eingabe} disabled={gestartet}>
+        {#each ['punkte', 'saetze'] as x (x)}<option value={x}>{T.konk.eingabeWahl[x]}</option>{/each}
+      </select>
+    </div>
+    {#if mitGruppen}
+      {#if e.modus === 'gruppen_ko'}
+        <div>
+          <label for="gg-{id}">{T.konk.gruppenGroesse}</label>
+          <select id="gg-{id}" bind:value={e.gruppenGroesse} disabled={gestartet}>
+            {#each [3, 4, 5, 6, 7, 8] as g (g)}<option value={g}>{g}</option>{/each}
+          </select>
+        </div>
+        <div>
+          <label for="au-{id}">{T.konk.aufsteiger}</label>
+          <select id="au-{id}" bind:value={e.aufsteiger}>
+            {#each [1, 2, 3, 4] as g (g)}<option value={g}>{g}</option>{/each}
+          </select>
+        </div>
+      {/if}
+    {/if}
+  </div>
+
+  {#if mitGruppen}
+    <label for="we-{id}">{T.konk.wertung}</label>
+    <select id="we-{id}" bind:value={e.wertung}>
+      {#each ['dttb', 'ittf'] as w (w)}<option value={w}>{T.konk.wertungWahl[w]}</option>{/each}
+    </select>
+    <WertungInfo aktiv={e.wertung} />
+    <div class="label-zeile"><label for="rz-{id}">{T.konk.rueckzug}</label><Hilfe text={T.konk.rueckzugHilfe} /></div>
+    <select id="rz-{id}" bind:value={e.rueckzug}>
+      {#each ['wo', 'hobby'] as w (w)}<option value={w}>{T.konk.rueckzugWahl[w]}</option>{/each}
+    </select>
+  {/if}
+  {#if mitKo}
+    <label class="haken"><input type="checkbox" bind:checked={e.platz3} /> {T.konk.platz3}</label>
+  {/if}
+
+  <details class="weitere">
+    <summary>{T.konk.weitere}</summary>
+    <div class="raster">
+      <div>
+        <label for="se-{id}">{T.konk.setzung}</label>
+        <select id="se-{id}" bind:value={e.setzung} disabled={gestartet}>
+          {#each ['ttr', 'manuell', 'keine'] as s (s)}<option value={s}>{T.konk.setzungWahl[s]}</option>{/each}
+        </select>
+      </div>
+      <div>
+        <div class="label-zeile"><label for="gs-{id}">{T.konk.gesetzte}</label><Hilfe text={T.konk.gesetzteHilfe} /></div>
+        <input id="gs-{id}" bind:value={gesetzte} inputmode="numeric" placeholder={T.konk.gesetzteAuto} disabled={gestartet || e.setzung === 'keine'} />
+      </div>
+    </div>
+    <label class="haken"><input type="checkbox" bind:checked={e.vereinstrennung} disabled={gestartet} /> {T.konk.vereine}</label>
+
+    <h3>{T.konk.zulassung}</h3>
+    <p class="leise">{T.konk.zulassungText}</p>
+    <div class="raster">
+      <div><label for="t1-{id}">{T.konk.ttrMin}</label><input id="t1-{id}" bind:value={zl.ttrMin} inputmode="numeric" /></div>
+      <div><label for="t2-{id}">{T.konk.ttrMax}</label><input id="t2-{id}" bind:value={zl.ttrMax} inputmode="numeric" /></div>
+      <div><label for="j1-{id}">{T.konk.jahrgangVon}</label><input id="j1-{id}" bind:value={zl.jahrgangVon} inputmode="numeric" /></div>
+      <div><label for="j2-{id}">{T.konk.jahrgangBis}</label><input id="j2-{id}" bind:value={zl.jahrgangBis} inputmode="numeric" /></div>
+    </div>
+    <label for="kl-{id}">{T.konk.klassen}</label>
+    <input id="kl-{id}" bind:value={klassen} placeholder="Anfänger, Fortgeschritten" />
+    <fieldset>
+      <legend>{T.konk.geschlecht}</legend>
+      <div class="reihe">
+        {#each ['m', 'w', 'd'] as g (g)}
+          <label class="haken"><input type="checkbox" value={g as Geschlecht} bind:group={e.zulassung.geschlecht} /> {T.tspieler.geschlechter[g]}</label>
+        {/each}
+      </div>
+    </fieldset>
+  </details>
+
+  {#if gestartet}<p class="leise">{T.konk.festNachStart}</p>{/if}
+  {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
+  <div class="reihe" style="margin-top:12px">
+    <button type="submit" disabled={sendet || !e.name.trim()}>{knopf}</button>
+    <button type="button" class="zweit" onclick={abbrechen}>{T.app.abbrechen}</button>
+  </div>
+</form>
+
+<style>
+  .raster { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  @media (max-width: 480px) {
+    .raster { grid-template-columns: 1fr; }
+  }
+  .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; margin: 12px 0 6px; }
+  .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
+  .weitere { margin-top: 16px; }
+  .weitere summary { font-size: 1rem; }
+  h3 { margin-top: 16px; }
+</style>

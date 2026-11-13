@@ -45,6 +45,7 @@
         <div class="menue" role="menu">
           <div class="leise wer">{T.kopf.angemeldetAls}<br /><strong>{name}</strong><br />{app.sitzung.konto.email}</div>
           <a role="menuitem" href={linkZu('konto')}>{T.kopf.konto}</a>
+          <a role="menuitem" href={linkZu('pool')}>{T.pool.titel}</a>
           {#if app.sitzung.konto.rolle === 'admin'}
             <a role="menuitem" href={linkZu('verwaltung')}>{T.kopf.verwaltung}</a>
           {/if}

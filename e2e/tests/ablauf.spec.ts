@@ -51,24 +51,62 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await bild(page, '04-neues-turnier');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
 
-  // Turnierseite: Teilen mit Leitungscode
+  // Turnierseite: ohne Spieler öffnet „Spieler“
   await expect(page.getByRole('heading', { name: `Herbstpokal ${geraet}` })).toBeVisible();
-  await expect(page.getByTestId('leitungscode')).toHaveText(`${code.slice(0, 3)} ${code.slice(3)}`);
   await expect(page.getByText('Verbunden')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Spieler im Turnier/ })).toBeVisible();
+  const spieler = [
+    ['Anna', 'Alpha', 'TTC Nord', '1650'],
+    ['Ben', 'Beta', 'TSV Süd', '1500'],
+    ['Cem', 'Gamma', 'TTC Nord', '1420'],
+    ['Dora', 'Delta', 'SV Ost', '1300'],
+  ];
+  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  for (const [v, n, ve, ttr] of spieler) {
+    await page.getByLabel('Vorname').fill(v!);
+    await page.getByLabel('Nachname').fill(n!);
+    await page.getByLabel('Verein').fill(ve!);
+    await page.getByRole('textbox', { name: 'TTR-Punkte' }).fill(ttr!);
+    await page.getByRole('button', { name: 'Hinzufügen' }).click();
+    await expect(page.getByText(`${v} ${n} ✓`)).toBeVisible();
+  }
+  await expect(page.getByRole('heading', { name: /Spieler im Turnier \(4\)/ })).toBeVisible();
+  await bild(page, '05-spieler');
+
+  // Konkurrenz: Jeder gegen jeden, alle melden, auslosen, starten
+  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Herren');
+  await page.getByLabel(/Jeder gegen jeden/).check();
+  await expect(page.getByText(/Wie wird bei Gleichstand gewertet/).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+  await page.getByRole('button', { name: 'Alle melden' }).click();
+  await expect(page.getByText('Meldungen (4)')).toBeVisible();
+  await page.getByRole('button', { name: 'Auslosen' }).click();
+  await expect(page.getByTestId('starten')).toBeVisible();
+  await bild(page, '06-auslosung');
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('starten').click();
+  await expect(page.getByTestId('konkurrenz').getByText('Gruppenphase')).toBeVisible();
+
+  // Zugänge: Leitungscode, Link, Spieler-Codes
+  await page.getByRole('link', { name: 'Zugänge' }).click();
+  await expect(page.getByTestId('leitungscode')).toHaveText(`${code.slice(0, 3)} ${code.slice(3)}`);
   const link = await page.getByLabel('Link').inputValue();
-  await bild(page, '05-turnier-leitung');
+  await expect(page.getByTestId('code')).toHaveCount(4);
+  const annaCode = (await page.locator('li', { hasText: 'Anna Alpha' }).getByTestId('code').innerText()).replace(/\s/g, '');
+  expect(annaCode).toMatch(/^\d{6}$/);
+  await bild(page, '07-zugaenge');
 
   // Hilfe am Leitungscode: antippen (Handy/Tablet) bzw. darüberfahren (PC)
   const hilfe = page.getByRole('button', { name: 'Hilfe' }).first();
   if (info.project.use.hasTouch) await hilfe.tap();
   else await hilfe.hover();
   await expect(page.getByRole('tooltip').first()).toBeVisible();
-  await bild(page, '06-hilfe');
   await page.keyboard.press('Escape');
   await page.mouse.move(0, 0);
 
   // Einstellungen: Erklärung, Sicherung jetzt senden
-  await page.getByText('Einstellungen', { exact: true }).click();
+  await page.getByRole('link', { name: 'Einstellungen' }).click();
   await expect(page.getByText(/Solange das Turnier auf mindestens einem Gerät geöffnet ist/)).toBeVisible();
   await expect(page.getByLabel('Empfänger (bis zu 3) 1')).toHaveValue(email);
   await page.getByLabel('Wie oft?').selectOption({ label: 'Alle 15 Minuten' });
@@ -80,23 +118,40 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   const sm = letzteMail(`helfer-${geraet}@example.org`, /Sicherung: Herbstpokal/);
   expect(sm?.anhang).toBe(true);
   expect(sm?.text).toContain('Warum diese Mail?');
-  await bild(page, '07-einstellungen');
+  await bild(page, '08-einstellungen');
 
-  // Zweites Gerät: Link öffnen, mit Code mitleiten, eintragen
+  // Zweites Gerät: Spielerin Anna öffnet ihren persönlichen Link und trägt ein
   const u = info.project.use;
   const zweites = await browser.newContext({ viewport: u.viewport, isMobile: u.isMobile, hasTouch: u.hasTouch, deviceScaleFactor: u.deviceScaleFactor, userAgent: u.userAgent, locale: 'de-DE' });
   const p2 = await zweites.newPage();
   await p2.goto(link);
-  await expect(p2.getByText('Du schaust zu')).toBeVisible();
-  await bild(p2, '08-zweites-geraet-zuschauer');
-  await p2.getByLabel('Leitungscode (6 Ziffern)').fill(code);
-  await p2.getByLabel('Dein Name (erscheint im Protokoll)').fill('Helferin Jana');
-  await p2.getByRole('button', { name: 'Mitleiten' }).click();
-  await expect(p2.getByPlaceholder('Testeintrag')).toBeVisible();
-  await p2.getByPlaceholder('Testeintrag').fill('Tisch 3 frei');
-  await p2.getByRole('button', { name: 'Eintragen' }).click();
-  await expect(page.getByText('Tisch 3 frei')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/von Helferin Jana/)).toBeVisible();
+  await expect(p2.getByText('Mitmachen').first()).toBeVisible();
+  await expect(p2.getByRole('link', { name: 'Tabellen' })).toBeVisible();
+  await bild(p2, '09-zuschauer');
+  await p2.goto(link.replace('#/t/', '#/c/') + '/' + annaCode);
+  await expect(p2.getByText(/Willkommen, Anna Alpha/)).toBeVisible();
+  await expect(p2.getByRole('link', { name: 'Meine Spiele' })).toHaveAttribute('aria-current', 'page');
+  await expect(p2.getByTestId('spiel')).toHaveCount(3);
+  await p2.getByTestId('spiel').first().click();
+  const dialog = p2.getByRole('dialog');
+  for (const [i, punkte] of [[1, '5'], [2, '7'], [3, '9']] as const) {
+    await dialog.getByTestId(`satz-${i}`).getByRole('radio', { name: /Anna Alpha/ }).click();
+    await dialog.getByLabel(`Punkte des Verlierers Satz ${i}`).fill(punkte);
+  }
+  await expect(dialog.getByText('3:0 (11:5, 11:7, 11:9)')).toBeVisible();
+  await bild(p2, '10-ergebnis-eingeben');
+  await dialog.getByRole('button', { name: 'Ergebnis speichern' }).click();
+  await expect(p2.getByText('vom Spieler eingetragen').first()).toBeVisible();
+
+  // Leitung sieht das Ergebnis (mit Abgleich) in Spielen und Tabelle
+  await page.getByRole('link', { name: 'Spiele', exact: true }).click();
+  await page.getByRole('radio', { name: 'Gespielt' }).click();
+  await expect(page.getByText('vom Spieler eingetragen')).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('link', { name: 'Tabellen' }).click();
+  await expect(page.getByTestId('tabelle-A').locator('tbody tr').first()).toContainText('Anna Alpha');
+  await bild(page, '11-tabelle');
+  await page.getByRole('link', { name: 'Protokoll' }).click();
+  await expect(page.getByText(/von Anna Alpha \(Spieler\)/)).toBeVisible();
   await zweites.close();
 
   // Abmelden über das Kopfzeilen-Menü
@@ -155,11 +210,14 @@ test('Turnier nur auf diesem Gerät: Sicherung herunterladen und wiederherstelle
   await page.getByLabel(/^Dein Name/).fill('Sascha');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByRole('heading', { name: 'Hallenturnier offline' })).toBeVisible();
-  await page.getByPlaceholder('Testeintrag').fill('Runde 1 fertig');
-  await page.getByRole('button', { name: 'Eintragen' }).click();
+  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByLabel('Vorname').fill('Lotte');
+  await page.getByLabel('Nachname').fill('Lokal');
+  await page.getByRole('button', { name: 'Hinzufügen' }).click();
+  await expect(page.getByText('Lotte Lokal ✓')).toBeVisible();
 
-  await page.getByText('Einstellungen', { exact: true }).click();
-  await expect(page.getByText(/Dieses Turnier liegt nur auf diesem Gerät/)).toBeVisible();
+  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await expect(page.getByText(/Dieses Turnier liegt nur auf diesem Gerät/).first()).toBeVisible();
   await bild(page, '13-lokal-einstellungen');
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Sicherung herunterladen' }).click()]);
   const datei = `bilder/${test.info().project.name}/sicherung.json`;
@@ -173,8 +231,63 @@ test('Turnier nur auf diesem Gerät: Sicherung herunterladen und wiederherstelle
   await bild(page, '14-wiederherstellen');
   await page.getByRole('button', { name: 'Wiederherstellen' }).click();
   await expect(page.getByText(/Turnier wiederhergestellt: 2 Einträge übernommen/)).toBeVisible();
-  await expect(page.getByText('Runde 1 fertig')).toBeVisible();
+  await page.getByRole('link', { name: 'Spieler', exact: true }).click();
+  await expect(page.getByText('Lotte Lokal')).toBeVisible();
+  await page.getByRole('link', { name: 'Protokoll' }).click();
   await expect(page.getByText(/Aus Sicherung wiederhergestellt/)).toBeVisible();
+});
+
+test('Einzelgerät: Gruppen + K.-o. mit Ergebnissen der Leitung', async ({ page }) => {
+  await page.goto('./');
+  await page.getByTestId('neues-turnier').click();
+  await page.getByLabel('Name des Turniers').fill('Vereinsmeisterschaft');
+  await page.getByLabel(/^Dein Name/).fill('Sascha');
+  await page.getByRole('button', { name: 'Turnier anlegen' }).click();
+  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  for (const [v, ttr] of [['Ali', '1800'], ['Bea', '1700'], ['Cid', '1600'], ['Dan', '1500'], ['Eva', '1400'], ['Fin', '1300']]) {
+    await page.getByLabel('Vorname').fill(v!);
+    await page.getByLabel('Nachname').fill('Test');
+    await page.getByRole('textbox', { name: 'TTR-Punkte' }).fill(ttr!);
+    await page.getByRole('button', { name: 'Hinzufügen' }).click();
+    await expect(page.getByText(`${v} Test ✓`)).toBeVisible();
+  }
+  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Offen');
+  await page.getByLabel('Gewinnsätze').selectOption({ label: '2 Gewinnsätze (Best of 3)' });
+  await page.getByLabel('Spieler je Gruppe (höchstens)').selectOption('3');
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+  await page.getByRole('button', { name: 'Alle melden' }).click();
+  await page.getByRole('button', { name: 'Auslosen' }).click();
+  await expect(page.getByText('Gruppe B')).toBeVisible();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('starten').click();
+
+  // Alle 6 Gruppenspiele: links gewinnt 2:0
+  await page.getByRole('link', { name: 'Spiele', exact: true }).click();
+  for (let i = 0; i < 6; i++) {
+    await page.getByTestId('spiel').first().click();
+    const d = page.getByRole('dialog');
+    for (const s of [1, 2]) {
+      await d.getByTestId(`satz-${s}`).getByRole('radio').first().click();
+      await d.getByLabel(`Punkte des Verlierers Satz ${s}`).fill('8');
+    }
+    await d.getByRole('button', { name: 'Ergebnis speichern' }).click();
+    await expect(d).toBeHidden();
+  }
+  await expect(page.getByText('Keine Spiele in dieser Auswahl.')).toBeVisible();
+  await page.getByRole('link', { name: 'Tabellen' }).click();
+  await expect(page.getByTestId('tabelle-A')).toBeVisible();
+  await bild(page, '18-gruppen');
+
+  // Endrunde
+  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await page.getByRole('button', { name: 'Endrunde auslosen' }).click();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByRole('button', { name: 'Endrunde starten' }).click();
+  await page.getByRole('link', { name: 'Tabellen' }).click();
+  await expect(page.getByText('Halbfinale')).toBeVisible();
+  await expect(page.getByText('Endspiel')).toBeVisible();
+  await bild(page, '19-ko-baum');
 });
 
 test('Impressum, Datenschutz und Kontakt ohne Anmeldung', async ({ page }) => {

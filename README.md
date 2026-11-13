@@ -3,10 +3,13 @@
 Kostenlose Open-Source-Web-App für Tischtennisturniere auf **Handy und Tablet**: Turniere anlegen,
 Spieler auslosen, Ergebnisse eintragen, auf mehreren Geräten gleichzeitig.
 
-**Stand: Etappe 2b – Konten, Mail, Leitungscode, Bedienung.** Jeder kann sich ein Konto anlegen und
-Online-Turniere starten; weitere Personen leiten mit einem 6-stelligen Leitungscode mit. Turnierstände
-gehen auf Wunsch regelmäßig per Mail an die Leitung und lassen sich aus einer Sicherungsdatei
-wiederherstellen. Spieler, Auslosung und Ergebnisse folgen ab Etappe 3.
+**Stand: Etappe 3 – erstes spielbares Turnier.** Spielerpool (im Konto oder auf dem Gerät, CSV-Import),
+Konkurrenzen mit Leistungsklassen, Setzung nach TTR oder eigener Liste, Auslosung mit Vereinstrennung,
+Spielsysteme *Jeder gegen jeden*, *Gruppen + K.-o.* und *K.-o.* (Freilose und Setzplätze nach DTTB-WO),
+Tabellen nach DTTB-Wettspielordnung D 7.5 oder ITTF-Regel 3.7.5, Rückzug nach WO D 7.9.
+Spieler tragen mit ihrem persönlichen Code (QR-Zettel) ihre Ergebnisse selbst ein; der Gegner kann
+bestätigen oder anfechten, die Leitung entscheidet. Helfer-Codes für Schiedsrichter.
+Sicherungsmails enthalten die aktuellen Tabellen als Text.
 
 - Demo (nur Einzelgerät-Modus): https://sasurb.github.io/tt-turnier/
 - Eigene Installation: [docs/strato-einrichtung.md](docs/strato-einrichtung.md) (funktioniert auf jedem PHP-Webspace)
@@ -23,7 +26,8 @@ wiederherstellen. Spieler, Auslosung und Ergebnisse folgen ab Etappe 3.
 
 ```
 app/          Svelte + TypeScript (Vite): Oberfläche und Turnier-Engine
-  src/lib/engine/   Ereignisspeicher, Abgleich, Zustandsberechnung (ohne Oberfläche, getestet)
+  src/lib/engine/   Ereignisspeicher, Abgleich, Zustandsberechnung, Auslosung, Wertung, K.-o.
+                    (ohne Oberfläche, mit Vitest getestet: turnierlogik.test.ts)
   src/lib/ui/       Seiten und Bausteine
   src/lib/texte.ts  alle Texte der Oberfläche
 server-php/   schlanker Ereignis-Server (PHP 8.1+, PDO MySQL/SQLite)

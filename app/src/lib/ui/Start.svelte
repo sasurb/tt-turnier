@@ -132,6 +132,8 @@
   </section>
 {/if}
 
+<p class="pool-link"><a href={linkZu('pool')}>{T.pool.titel}</a> <span class="leise">– {T.pool.text}</span></p>
+
 <style>
   .gruss { font-size: 1.15rem; font-weight: 600; margin-bottom: 14px; }
   .knopf.gross {
@@ -163,5 +165,6 @@
   .zeile:hover { background: transparent; }
   .zeile:hover strong { color: var(--blau); }
   .beitreten { margin-top: 8px; }
+  .pool-link { margin-top: 20px; text-align: center; }
   .beitreten p { margin-top: 8px; text-align: center; }
 </style>

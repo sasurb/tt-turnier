@@ -20,6 +20,7 @@
   import Datenschutz from './lib/ui/Datenschutz.svelte';
   import Wiederherstellen from './lib/ui/Wiederherstellen.svelte';
   import TurnierAnsicht from './lib/ui/TurnierAnsicht.svelte';
+  import Pool from './lib/ui/Pool.svelte';
 
   onMount(() => void serverLaden());
 </script>
@@ -55,9 +56,15 @@
     <Datenschutz />
   {:else if route.seite === 'wiederherstellen'}
     <Wiederherstellen />
-  {:else if route.seite === 't' && route.param}
+  {:else if route.seite === 'pool'}
+    <Pool />
+  {:else if (route.seite === 't' || route.seite === 'c') && route.param}
     {#key route.param}
-      <TurnierAnsicht id={route.param} />
+      <TurnierAnsicht
+        id={route.param}
+        reiter={route.seite === 't' ? (route.rest[0] ?? null) : null}
+        code={route.seite === 'c' ? (route.rest[0] ?? null) : null}
+      />
     {/key}
   {:else}
     <p>{T.turnier.nichtGefunden}</p>

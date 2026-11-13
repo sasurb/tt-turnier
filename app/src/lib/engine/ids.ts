@@ -31,3 +31,12 @@ export function naechsteReihe(): number {
   letzteReihe = Math.max(letzteReihe + 1, Date.now() * 1000);
   return letzteReihe;
 }
+
+/** Kurze ID für Spieler, Konkurrenzen und Helfer innerhalb eines Turniers (10 Zeichen, a–z/0–9). */
+export function kurzId(): string {
+  const zeichen = 'abcdefghijkmnpqrstuvwxyz23456789';
+  const b = new Uint8Array(10);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(b);
+  else for (let i = 0; i < 10; i++) b[i] = Math.floor(Math.random() * 256);
+  return Array.from(b, (x) => zeichen[x % zeichen.length]).join('');
+}

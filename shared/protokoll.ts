@@ -19,6 +19,8 @@ export type Rolle = 'admin' | 'veranstalter' | 'leitung' | 'helfer' | 'spieler' 
 export interface Autor {
   rolle: Rolle;
   name: string;
+  /** Bei Rolle „spieler“: ID des Spielers im Turnier (setzt der Server anhand des Spieler-Codes). */
+  spieler?: string;
 }
 
 /** Ereignis, wie die App es erzeugt und an den Server schickt. */
@@ -104,6 +106,8 @@ export interface InfoAntwort {
   registrierung?: boolean;
   /** Der Server kann Mails versenden (Absender und Adresse der App sind eingerichtet). */
   mail?: boolean;
+  /** Spieler-/Helfer-Codes, Spielerpool und Übersicht in der Sicherungsmail (ab Server 0.4) */
+  codes?: boolean;
 }
 
 /** POST setup – nur solange kein Administrator existiert */
@@ -207,8 +211,8 @@ export interface TurnierZugangAnfrage {
   turnier: string;
   /** Leitungscode (6 Ziffern); bei älteren Turnieren das Leitungspasswort. */
   code: string;
-  /** Anzeigename des Leiters im Protokoll */
-  name: string;
+  /** Anzeigename im Protokoll. Nur beim Leitungscode nötig; Spieler und Helfer haben ihren Namen am Code. */
+  name?: string;
 }
 
 /** Leitungscode: genau 6 Ziffern. */
@@ -270,7 +274,86 @@ export interface Sicherung {
 export interface TurnierZugangAntwort {
   token: string;
   rolle: Rolle;
+  /** Name, unter dem Einträge erscheinen */
+  name?: string;
+  /** Bei Spieler-Codes: ID des Spielers im Turnier */
+  spieler?: string;
 }
+
+/* ---------- Spieler- und Helfer-Codes (ab Server 0.4) ----------
+ * Codes liegen nur auf dem Server, nie in den öffentlich lesbaren Ereignissen.
+ * Mit einem Code meldet man sich über POST turnier.zugang an (wie mit dem Leitungscode).
+ */
+export type CodeRolle = 'spieler' | 'helfer';
+export interface CodeEintrag {
+  rolle: CodeRolle;
+  /** Spieler-ID im Turnier bzw. vom Gerät vergebene Helfer-ID */
+  bezug: string;
+  name: string;
+  code: string;
+  gesperrt: boolean;
+}
+/** GET codes&turnier=… – nur Leitung */
+export interface CodesAntwort {
+  codes: CodeEintrag[];
+}
+/** POST codes.anlegen – fehlende Codes erzeugen, Namen aktualisieren (vorhandene Codes bleiben) */
+export interface CodesAnlegenAnfrage {
+  turnier: string;
+  eintraege: { rolle: CodeRolle; bezug: string; name: string }[];
+}
+/** POST code.neu – neuen Code ausgeben; der alte gilt nicht mehr, Anmeldungen damit enden */
+export interface CodeNeuAnfrage {
+  turnier: string;
+  rolle: CodeRolle;
+  bezug: string;
+}
+/** POST code.sperren */
+export interface CodeSperrenAnfrage extends CodeNeuAnfrage {
+  gesperrt: boolean;
+}
+/** POST code.entfernen – z. B. Helfer streichen */
+export type CodeEntfernenAnfrage = CodeNeuAnfrage;
+export const MAX_CODES_JE_TURNIER = 400;
+
+/** Arten, die mit Spieler- bzw. Helfer-Code gesendet werden dürfen. Alles andere nur die Leitung. */
+export const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'] as const;
+export const ARTEN_HELFER = ['spiel.ergebnis'] as const;
+
+/* ---------- Spielerpool im Veranstalter-Konto (ab Server 0.4) ---------- */
+export interface PoolSpieler {
+  /** Vom Gerät vergebene ID */
+  id: string;
+  vorname: string;
+  nachname: string;
+  verein: string;
+  ttr?: number | null;
+  klasse?: string | null;
+  geschlecht?: 'm' | 'w' | 'd' | null;
+  jahrgang?: number | null;
+  /** Letzte Änderung (ISO), setzt der Server */
+  geaendert?: string;
+}
+export const MAX_POOL_SPIELER = 3000;
+/** GET pool – eigenes Konto */
+export interface PoolAntwort {
+  spieler: PoolSpieler[];
+}
+/** POST pool.speichern – anlegen oder ändern (je ID), höchstens 500 je Aufruf */
+export interface PoolSpeichernAnfrage {
+  spieler: PoolSpieler[];
+}
+/** POST pool.loeschen */
+export interface PoolLoeschenAnfrage {
+  ids: string[];
+}
+
+/** POST turnier.uebersicht – lesbarer Stand (Text), den die App erzeugt; kommt in die Sicherungsmail */
+export interface TurnierUebersichtAnfrage {
+  turnier: string;
+  text: string;
+}
+export const MAX_UEBERSICHT_ZEICHEN = 60_000;
 
 /** POST events&turnier=… – braucht Token mit Schreibrecht für das Turnier */
 export interface SendenAnfrage {
@@ -301,4 +384,30 @@ export const ART = {
   /** Turnier aus einer Sicherungsdatei übernommen (Daten: { quelle: Turnier-ID, erstellt, anzahl }) */
   turnierWiederhergestellt: 'turnier.wiederhergestellt',
   testNotiz: 'test.notiz',
+  /** Ort, Tische, welche Spielerangaben im Turnier stehen (Daten: TurnierDaten-Felder) */
+  turnierDaten: 'turnier.daten',
+  spielerAngelegt: 'spieler.angelegt',
+  spielerGeaendert: 'spieler.geaendert',
+  spielerEntfernt: 'spieler.entfernt',
+  konkurrenzAngelegt: 'konkurrenz.angelegt',
+  konkurrenzGeaendert: 'konkurrenz.geaendert',
+  konkurrenzEntfernt: 'konkurrenz.entfernt',
+  /** Meldung eines Spielers zu einer Konkurrenz */
+  teilnehmerGemeldet: 'teilnehmer.gemeldet',
+  /** Vor dem Start: Meldung streichen. Nach dem Start: Rückzug. */
+  teilnehmerAbgemeldet: 'teilnehmer.abgemeldet',
+  /** Manuelle Setzliste */
+  setzliste: 'konkurrenz.setzliste',
+  /** Ergebnis einer Auslosung (Gruppen oder K.-o.-Baum), mit Zufallswert */
+  auslosung: 'auslosung.gesetzt',
+  phaseGestartet: 'phase.gestartet',
+  phaseZurueck: 'phase.zurueckgenommen',
+  /** Losentscheid bei Gleichstand in einer Gruppe */
+  gruppeLos: 'gruppe.los',
+  spielErgebnis: 'spiel.ergebnis',
+  spielBestaetigt: 'spiel.bestaetigt',
+  spielAngefochten: 'spiel.angefochten',
+  /** Leitung entscheidet einen Konflikt / eine Anfechtung zugunsten eines Eintrags */
+  spielEntschieden: 'spiel.entschieden',
+  spielZurueckgesetzt: 'spiel.zurueckgesetzt',
 } as const;

@@ -5,22 +5,24 @@
   let eingabe = $state('');
   let fehler = $state('');
 
-  /** Akzeptiert die reine Kennung oder einen ganzen Link …/#/t/<kennung> */
-  function kennung(text: string): string | null {
+  /** Akzeptiert die reine Kennung, einen Link …/#/t/<kennung> oder einen persönlichen Link …/#/c/<kennung>/<code> */
+  function ziel(text: string): string | null {
     const t = text.trim().toLowerCase();
+    const mitCode = t.match(/#\/c\/([a-z0-9]{6,16})\/([0-9]{6})/);
+    if (mitCode) return `c/${mitCode[1]}/${mitCode[2]}`;
     const ausLink = t.match(/#\/t\/([a-z0-9]{6,16})/);
-    if (ausLink) return ausLink[1]!;
-    return /^[a-z0-9]{6,16}$/.test(t) ? t : null;
+    if (ausLink) return 't/' + ausLink[1]!;
+    return /^[a-z0-9]{6,16}$/.test(t) ? 't/' + t : null;
   }
 
   function weiter(e: SubmitEvent) {
     e.preventDefault();
-    const k = kennung(eingabe);
-    if (!k) {
+    const z = ziel(eingabe);
+    if (!z) {
       fehler = T.beitreten.kennungHinweis;
       return;
     }
-    gehe('t/' + k);
+    gehe(z);
   }
 </script>
 

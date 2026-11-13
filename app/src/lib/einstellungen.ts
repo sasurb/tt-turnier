@@ -14,6 +14,10 @@ export interface GemerktesTurnier {
   rolle: Rolle;
   token: string | null;
   zuletzt: string;
+  /** Mit Spieler-Code angemeldet: eigene Spieler-ID */
+  spieler?: string | null;
+  /** Name, unter dem dieses Gerät einträgt (bei Spieler/Helfer vom Code) */
+  wer?: string | null;
 }
 
 export interface KontoSitzung {
@@ -78,10 +82,30 @@ export function gemerktesTurnier(id: string): GemerktesTurnier | undefined {
 export function turnierMerken(t: Omit<GemerktesTurnier, 'zuletzt'>) {
   const liste = gemerkteTurniere().filter((x) => x.id !== t.id);
   const alt = gemerktesTurnier(t.id);
-  liste.push({ ...t, token: t.token ?? alt?.token ?? null, zuletzt: new Date().toISOString() });
+  liste.push({
+    ...t,
+    token: t.token ?? alt?.token ?? null,
+    spieler: t.spieler !== undefined ? t.spieler : alt?.spieler ?? null,
+    wer: t.wer !== undefined ? t.wer : alt?.wer ?? null,
+    zuletzt: new Date().toISOString(),
+  });
   schreiben('tt.turniere', liste);
 }
 
 export function turnierVergessen(id: string) {
   schreiben('tt.turniere', gemerkteTurniere().filter((t) => t.id !== id));
+}
+
+/** Kleiner Zwischenspeicher für größere Daten (Spielerpool) */
+export function ablageLesen<T>(schluessel: string, standard: T): T {
+  return lesen(schluessel, standard);
+}
+export function ablageSchreiben(schluessel: string, wert: unknown) {
+  schreiben(schluessel, wert);
+}
+
+/** Mit Code angemeldetes Gerät abmelden: wieder Zuschauer */
+export function turnierAbmelden(id: string) {
+  const liste = gemerkteTurniere().map((t) => (t.id === id ? { ...t, rolle: 'zuschauer' as Rolle, token: null, spieler: null, wer: null } : t));
+  schreiben('tt.turniere', liste);
 }

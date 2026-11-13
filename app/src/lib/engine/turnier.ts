@@ -14,7 +14,7 @@ export interface TurnierOptionen {
   modus: Betriebsart;
   geraet: string;
   /** Wer auf diesem Gerät einträgt (lokal endgültig, online nur vorläufige Anzeige). */
-  autor: Autor;
+  autor: Autor | (() => Autor);
   api?: Api;
   token?: () => string | null;
   intervallMs?: number;
@@ -45,6 +45,10 @@ export class TurnierSitzung {
     }
   }
 
+  private autor(): Autor {
+    return typeof this.o.autor === 'function' ? this.o.autor() : this.o.autor;
+  }
+
   get turnier() {
     return this.o.turnier;
   }
@@ -71,7 +75,8 @@ export class TurnierSitzung {
   }
 
   private async eintragenIntern(art: string, daten: Record<string, unknown>): Promise<LokalesEreignis> {
-    const { speicher, turnier, modus, geraet, autor } = this.o;
+    const { speicher, turnier, modus, geraet } = this.o;
+    const autor = this.autor();
     const zeit = new Date().toISOString();
     let seq: number | null = null;
     if (modus === 'lokal') {
@@ -125,7 +130,7 @@ export class TurnierSitzung {
           status: modus === 'lokal' ? 'lokal' : 'ausstehend',
           seq: modus === 'lokal' ? ++seq : null,
           empfangen: modus === 'lokal' ? e.zeit : null,
-          autor: modus === 'lokal' ? e.autor : this.o.autor,
+          autor: modus === 'lokal' ? e.autor : this.autor(),
           reihe: naechsteReihe(),
         });
       }

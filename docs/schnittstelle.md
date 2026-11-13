@@ -31,11 +31,11 @@ Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 
 | Methode | Route | Zugang | Zweck |
 |---|---|---|---|
-| GET | `info` | offen | App-Kennung, Protokoll, Version, `eingerichtet`, `registrierung`, `mail` |
+| GET | `info` | offen | App-Kennung, Protokoll, Version, `eingerichtet`, `registrierung`, `mail`, `codes` (ab 0.4) |
 | POST | `setup` | Einrichtungscode | Administrator anlegen (nur solange keiner existiert) |
 | POST | `login` | offen | `{email, passwort}` → `{token, konto}` |
 | POST | `logout` | Token | Token ungültig machen |
-| GET | `ich` | Token | Rolle, Name, ggf. Konto |
+| GET | `ich` | Token | Rolle, Name, ggf. Konto bzw. `spieler` (Spieler-ID) |
 | POST | `passwort.aendern` | Konto | `{alt, neu}`; beendet andere Sitzungen |
 | POST | `registrieren` | offen | `{name, email, passwort, website}` → `{token, konto}`; `website` ist ein Fangfeld und muss leer sein |
 | POST | `passwort.vergessen` | offen | `{email}` → immer `{ok}`; bei bekanntem Konto Mail mit Link `…#/zuruecksetzen/<schlüssel>` |
@@ -48,7 +48,16 @@ Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 | GET | `turniere` | Konto | eigene Turniere; Admin mit `&alle=1` alle |
 | POST | `turnier.anlegen` | Konto | `{name, datum, leitungsCode, sicherungAn?}` → `{turnier, token}` (Leitungs-Token) |
 | GET | `turnier&id=…` | offen | Name, Datum, Veranstalter |
-| POST | `turnier.zugang` | offen | `{turnier, code, name}` → Leitungs-Token (ältere Turniere: Passwort in `code`) |
+| POST | `turnier.zugang` | offen | `{turnier, code, name?}` → `{token, rolle, name, spieler?}`. `code` ist der Leitungscode (ältere Turniere: Passwort) oder ein Spieler-/Helfer-Code. `name` nur beim Leitungscode (Standard „Leitung“) |
+| GET | `codes&turnier=…` | Leitung | `{codes: [{rolle, bezug, name, code, gesperrt}]}` |
+| POST | `codes.anlegen` | Leitung | `{turnier, eintraege: [{rolle, bezug, name}]}` – fehlende Codes erzeugen, Namen nachziehen; vorhandene Codes bleiben |
+| POST | `code.neu` | Leitung | `{turnier, rolle, bezug}` → neuer Code; Anmeldungen mit dem alten enden |
+| POST | `code.sperren` | Leitung | `{turnier, rolle, bezug, gesperrt}`; Sperre beendet Anmeldungen |
+| POST | `code.entfernen` | Leitung | `{turnier, rolle, bezug}` (z. B. Helfer streichen) |
+| GET | `pool` | Konto | Spielerpool des eigenen Kontos |
+| POST | `pool.speichern` | Konto | `{spieler: [...]}` (max. 500 je Aufruf, 3000 je Konto) – anlegen/ändern je `id` |
+| POST | `pool.loeschen` | Konto | `{ids: [...]}` |
+| POST | `turnier.uebersicht` | Leitung | `{turnier, text}` (max. 60 000 Zeichen) – lesbarer Stand, den die App erzeugt; steht in der Sicherungsmail |
 | GET | `turnier.einstellungen&id=…` | Leitung | `{leitungsCode, sicherungAn, sicherungTakt, letzteSicherung, mail}` |
 | POST | `turnier.einstellungen` | Leitung | `{turnier, leitungsCode?, sicherungAn?, sicherungTakt?}` – nur übergebene Felder |
 | POST | `turnier.sichern` | Leitung | `{turnier}` → Sicherung sofort an alle Empfänger |
@@ -59,7 +68,11 @@ Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 Eigentümer-Konto oder der Administrator.
 
 **Schreibrecht für ein Turnier** haben Tokens mit Rolle `leitung`, `helfer` oder `spieler` für dieses
-Turnier sowie das Veranstalter-Konto, dem das Turnier gehört.
+Turnier sowie das Veranstalter-Konto, dem das Turnier gehört. Ab Server 0.4 dürfen Spieler nur
+`spiel.ergebnis`, `spiel.bestaetigt` und `spiel.angefochten` senden, Helfer nur `spiel.ergebnis`
+(`ARTEN_SPIELER`/`ARTEN_HELFER` in `shared/protokoll.ts`); alles andere lehnt der Server mit 403 ab.
+Bei Spielern setzt der Server `autor.spieler` (Spieler-ID aus dem Code). Ob ein Spieler zu einem Spiel
+gehört, prüft die Turnier-Logik auf den Geräten – der Server kennt keine Spiele.
 
 ## Ereignis
 
@@ -79,8 +92,22 @@ Turnier sowie das Veranstalter-Konto, dem das Turnier gehört.
 Grenzen: `id` 8–64 Zeichen `[A-Za-z0-9-]`, `art` `[a-z][a-z0-9_.]{1,63}`, `daten` ein JSON-Objekt bis 16 KB.
 Unbekannte Arten werden von Geräten übersprungen (Vorwärtskompatibilität).
 
-Arten: `turnier.angelegt`, `turnier.umbenannt`, `turnier.abgeschlossen`, `turnier.wiedereroeffnet`,
-`turnier.wiederhergestellt`, `test.notiz`. Der Server wertet nur `turnier.abgeschlossen` aus (letzte Sicherung).
+Arten: siehe `ART` in `shared/protokoll.ts`. Turnier: `turnier.angelegt`, `turnier.umbenannt`,
+`turnier.daten`, `turnier.abgeschlossen`, `turnier.wiedereroeffnet`, `turnier.wiederhergestellt`.
+Spieler: `spieler.angelegt|geaendert|entfernt`. Konkurrenzen: `konkurrenz.angelegt|geaendert|entfernt`,
+`teilnehmer.gemeldet|abgemeldet`, `konkurrenz.setzliste`, `auslosung.gesetzt`, `phase.gestartet`,
+`phase.zurueckgenommen`, `gruppe.los`. Spiele: `spiel.ergebnis`, `spiel.bestaetigt`, `spiel.angefochten`,
+`spiel.entschieden`, `spiel.zurueckgesetzt`. Der Server wertet nur `turnier.abgeschlossen` aus (letzte Sicherung).
+
+Die Auslosung wird mit ihrem Ergebnis gespeichert (nicht nur mit dem Zufallswert), damit spätere
+App-Versionen mit geänderten Verfahren alte Turniere unverändert anzeigen.
+
+## Spieler- und Helfer-Codes
+
+6 Ziffern wie der Leitungscode, je Turnier eindeutig und nie gleich dem Leitungscode. Sie stehen nur in
+der Tabelle `codes`, nicht in den (öffentlich lesbaren) Ereignissen. Die Leitung kann sie einsehen,
+sperren und neu ausgeben. Persönlicher Link: `…/#/c/<turnier>/<code>` (meldet direkt an).
+Fehlversuche je IP und Turnier werden gebremst (10 in 15 Minuten).
 
 ## Leitungscode
 

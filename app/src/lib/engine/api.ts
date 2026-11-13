@@ -1,5 +1,10 @@
 import type {
   AbholenAntwort,
+  CodeEintrag,
+  CodeRolle,
+  CodesAntwort,
+  PoolAntwort,
+  PoolSpieler,
   FehlerCode,
   InfoAntwort,
   KontenAntwort,
@@ -26,6 +31,7 @@ export interface IchAntwort {
   name: string;
   turnier: string | null;
   konto?: Konto | null;
+  spieler?: string;
 }
 
 export class ApiFehler extends Error {
@@ -150,8 +156,35 @@ export class Api {
   turnier(id: string) {
     return this.rufe<TurnierAntwort>('GET', 'turnier', { query: { id } });
   }
-  turnierZugang(turnier: string, code: string, name: string) {
+  turnierZugang(turnier: string, code: string, name?: string) {
     return this.rufe<TurnierZugangAntwort>('POST', 'turnier.zugang', { rumpf: { turnier, code, name } });
+  }
+  codes(token: string, turnier: string) {
+    return this.rufe<CodesAntwort>('GET', 'codes', { token, query: { turnier } });
+  }
+  codesAnlegen(token: string, turnier: string, eintraege: { rolle: CodeRolle; bezug: string; name: string }[]) {
+    return this.rufe<CodesAntwort>('POST', 'codes.anlegen', { token, rumpf: { turnier, eintraege } });
+  }
+  codeNeu(token: string, turnier: string, rolle: CodeRolle, bezug: string) {
+    return this.rufe<{ code: CodeEintrag }>('POST', 'code.neu', { token, rumpf: { turnier, rolle, bezug } });
+  }
+  codeSperren(token: string, turnier: string, rolle: CodeRolle, bezug: string, gesperrt: boolean) {
+    return this.rufe<{ code: CodeEintrag }>('POST', 'code.sperren', { token, rumpf: { turnier, rolle, bezug, gesperrt } });
+  }
+  codeEntfernen(token: string, turnier: string, rolle: CodeRolle, bezug: string) {
+    return this.rufe<{ ok: true }>('POST', 'code.entfernen', { token, rumpf: { turnier, rolle, bezug } });
+  }
+  pool(token: string) {
+    return this.rufe<PoolAntwort>('GET', 'pool', { token });
+  }
+  poolSpeichern(token: string, spieler: PoolSpieler[]) {
+    return this.rufe<PoolAntwort>('POST', 'pool.speichern', { token, rumpf: { spieler } });
+  }
+  poolLoeschen(token: string, ids: string[]) {
+    return this.rufe<{ ok: true }>('POST', 'pool.loeschen', { token, rumpf: { ids } });
+  }
+  uebersicht(token: string, turnier: string, text: string) {
+    return this.rufe<{ ok: true }>('POST', 'turnier.uebersicht', { token, rumpf: { turnier, text } });
   }
   abholen(turnier: string, ab: number) {
     return this.rufe<AbholenAntwort>('GET', 'events', { query: { turnier, ab: String(ab) } });
