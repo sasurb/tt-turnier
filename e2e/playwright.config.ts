@@ -9,6 +9,7 @@ const PORT = Number(process.env.PORT ?? 8090);
 
 export default defineConfig({
   testDir: './tests',
+  testIgnore: /zentrale\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   timeout: 90_000,

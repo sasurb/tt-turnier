@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 3;
+    public const SCHEMA_VERSION = 4;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -81,7 +81,32 @@ final class Datenbank
             }
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['3', 'schema']);
         }
-        // Spätere Versionen: if ($version < 4) { … UPDATE meta … }
+        if ($version < 4) {
+            foreach ($this->schemaV4() as $sql) {
+                try {
+                    $this->pdo->exec($sql);
+                } catch (\PDOException $e) {
+                    if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                        throw $e;
+                    }
+                }
+            }
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['4', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 5) { … UPDATE meta … }
+    }
+
+    /**
+     * Version 4 (Etappe 4): Turnier liegt auf einer Android-Zentrale (gesperrt für Einträge online).
+     * @return list<string>
+     */
+    private function schemaV4(): array
+    {
+        return [
+            'ALTER TABLE turniere ADD COLUMN zentrale VARCHAR(160) NULL',
+            'ALTER TABLE turniere ADD COLUMN zentrale_id VARCHAR(40) NULL',
+            'ALTER TABLE turniere ADD COLUMN zentrale_seit BIGINT NULL',
+        ];
     }
 
     /** @return list<string> */

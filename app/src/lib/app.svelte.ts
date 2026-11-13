@@ -29,7 +29,24 @@ export const app = $state<{
 
 export async function serverLaden(neu = false) {
   app.server = await serverPruefen(neu);
-  if (app.server.art === 'bereit' && app.sitzung) void kontoPruefen();
+  if (app.server.art !== 'bereit') return;
+  if (app.sitzung) {
+    void kontoPruefen();
+  } else if (app.server.info.zentrale && ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)) {
+    // Gerät der Android-Zentrale: deren Konto ist ohne Passwort angemeldet
+    await zentraleAnmelden();
+  }
+}
+
+/** Auf dem Gerät der Zentrale deren Konto anmelden (kein Passwort: nur dieses Gerät darf das). */
+export async function zentraleAnmelden() {
+  try {
+    const a = await api.zentraleAnmelden();
+    setzeSitzung({ token: a.token, konto: a.konto });
+    if (!anzeigeName()) setzeAnzeigeName(a.konto.name);
+  } catch {
+    /* Zentrale nicht erreichbar – dann eben ohne Konto */
+  }
 }
 
 /** Prüft beim Start, ob die gespeicherte Anmeldung noch gilt, und holt aktuelle Kontodaten. */
@@ -40,7 +57,10 @@ async function kontoPruefen() {
     const ich = await api.ich(s.token);
     if (ich.konto) setzeSitzung({ token: s.token, konto: ich.konto });
   } catch (x) {
-    if (x instanceof ApiFehler && (x.code === 'nicht_angemeldet' || x.code === 'gesperrt')) setzeSitzung(null);
+    if (x instanceof ApiFehler && (x.code === 'nicht_angemeldet' || x.code === 'gesperrt')) {
+      setzeSitzung(null);
+      if (app.server.art === 'bereit' && app.server.info.zentrale) await zentraleAnmelden();
+    }
   }
 }
 

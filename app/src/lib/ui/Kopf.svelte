@@ -2,6 +2,7 @@
   import { app, abmelden } from '../app.svelte';
   import { linkZu, route } from '../router.svelte';
   import { T } from '../texte';
+  import { amGeraetDerZentrale, istZentrale } from '../zentrale.svelte';
 
   let offen = $state(false);
   let wurzel: HTMLDivElement | undefined = $state();
@@ -44,16 +45,22 @@
       {#if offen}
         <div class="menue" role="menu">
           <div class="leise wer">{T.kopf.angemeldetAls}<br /><strong>{name}</strong><br />{app.sitzung.konto.email}</div>
-          <a role="menuitem" href={linkZu('konto')}>{T.kopf.konto}</a>
+          {#if amGeraetDerZentrale()}
+            <a role="menuitem" href={linkZu('zentrale')}>{T.zentrale.menue}</a>
+          {:else}
+            <a role="menuitem" href={linkZu('konto')}>{T.kopf.konto}</a>
+          {/if}
           <a role="menuitem" href={linkZu('pool')}>{T.pool.titel}</a>
           {#if app.sitzung.konto.rolle === 'admin'}
             <a role="menuitem" href={linkZu('verwaltung')}>{T.kopf.verwaltung}</a>
           {/if}
-          <button role="menuitem" class="abmelden" onclick={abmelden}>{T.kopf.abmelden}</button>
+          {#if !istZentrale()}
+            <button role="menuitem" class="abmelden" onclick={abmelden}>{T.kopf.abmelden}</button>
+          {/if}
         </div>
       {/if}
     </div>
-  {:else if app.server.art === 'bereit' && route.seite !== 'anmelden'}
+  {:else if app.server.art === 'bereit' && !app.server.info.zentrale && route.seite !== 'anmelden'}
     <a class="anmelden" href={linkZu('anmelden')}>{T.kopf.anmelden}</a>
   {/if}
 </header>

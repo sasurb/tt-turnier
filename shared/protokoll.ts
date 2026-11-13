@@ -1,8 +1,8 @@
 /**
- * Schnittstellen-Vertrag zwischen App und Server (PHP auf dem Webspace,
- * später auch die Android-Zentrale). Beide Server müssen genau dieses
- * Verhalten liefern. Änderungen hier immer zusammen mit
- * docs/schnittstelle.md und server-php/src/Api.php vornehmen.
+ * Schnittstellen-Vertrag zwischen App und Server (PHP auf dem Webspace und
+ * Android-Zentrale). Beide Server müssen genau dieses Verhalten liefern.
+ * Änderungen hier immer zusammen mit docs/schnittstelle.md,
+ * server-php/src/Api.php und zentrale/kern/…/Zentrale.java vornehmen.
  */
 
 export const PROTOKOLL_VERSION = 1;
@@ -70,6 +70,13 @@ export interface TurnierInfo {
   datum: string | null;
   angelegt: string;
   veranstalter: string;
+  /** Online-Server (ab 0.5): Name der Zentrale, auf der das Turnier gerade läuft – dann online nur lesbar */
+  zentrale?: string | null;
+  zentraleId?: string | null;
+  /** Zentrale: „zentrale“ = dort angelegt, „online“ = vom Online-Server übernommen */
+  herkunft?: 'zentrale' | 'online';
+  /** Zentrale: an den Online-Server zurückgegeben, hier nur noch lesbar */
+  abgegeben?: boolean;
 }
 
 /* ---------- Anfragen und Antworten je Endpunkt ----------
@@ -108,6 +115,14 @@ export interface InfoAntwort {
   mail?: boolean;
   /** Spieler-/Helfer-Codes, Spielerpool und Übersicht in der Sicherungsmail (ab Server 0.4) */
   codes?: boolean;
+  /** Nur bei der Android-Zentrale (ab 0.5) */
+  zentrale?: {
+    version: string;
+    /** Adresse, unter der andere Geräte im WLAN die App öffnen, z. B. http://192.168.43.1:8080/ */
+    adresse: string | null;
+    /** Online-Konto verbunden (für Übernahme, Rückgabe, Sicherungsmails) */
+    online: boolean;
+  };
 }
 
 /** POST setup – nur solange kein Administrator existiert */
@@ -235,8 +250,10 @@ export interface TurnierEinstellungen {
   sicherungAn: string[];
   sicherungTakt: SicherungTakt;
   letzteSicherung: string | null;
-  /** Mailversand auf dem Server eingerichtet */
+  /** Mailversand auf dem Server eingerichtet (Zentrale: Online-Konto verbunden) */
   mail: boolean;
+  /** Zentrale: Sicherung ist vorgemerkt und wartet auf Internet */
+  wartend?: boolean;
 }
 /** POST turnier.einstellungen – nur übergebene Felder werden geändert */
 export interface TurnierEinstellungenAnfrage {
@@ -411,3 +428,42 @@ export const ART = {
   spielEntschieden: 'spiel.entschieden',
   spielZurueckgesetzt: 'spiel.zurueckgesetzt',
 } as const;
+
+/* ---------- Android-Zentrale (ab 0.5) ----------
+ * Routen „zentrale.*“ beantwortet nur die Zentrale, und nur Anfragen vom Gerät der Zentrale selbst.
+ * Der Online-Server kennt dafür zentrale.uebernehmen / zentrale.rueckgabe / zentrale.freigeben
+ * und sicherung.senden (siehe docs/schnittstelle.md).
+ */
+export interface ZentraleStatus {
+  version: string;
+  id: string;
+  port: number;
+  /** Adressen der App im WLAN, beste zuerst */
+  adressen: string[];
+  /** Geräte, die in den letzten 3 Minuten zugegriffen haben */
+  geraete: number;
+  /** Vom Nutzer eingetragene Zugangsdaten des Handy-Hotspots (für den WLAN-QR-Code) */
+  wlan: { ssid: string | null; passwort: string | null };
+  /** Hotspot, den die App selbst startet (Name und Passwort vergibt Android) */
+  hotspot: { aktiv: boolean; ssid: string | null; passwort: string | null; moeglich?: boolean };
+  akkuAusnahme: boolean;
+  internet: boolean;
+  online: {
+    url: string;
+    verbunden: boolean;
+    konto: { name: string; email: string } | null;
+    mail: boolean;
+    fehler: string | null;
+  };
+  /** Sicherungen, die auf Internet warten */
+  warteschlange: { turnier: string; name: string | null; anlass: string; seit: string; fehler: string | null }[];
+  /** Nur nach zentrale.hotspot: Hinweis des Systems */
+  meldung?: string | null;
+}
+
+/** GET zentrale.online.turniere – Turniere des verbundenen Online-Kontos */
+export interface OnlineTurnier extends TurnierInfo {
+  /** liegt auf dieser Zentrale (übernommen, nicht zurückgegeben) */
+  aufDieserZentrale: boolean;
+  vonDieserZentrale: boolean;
+}

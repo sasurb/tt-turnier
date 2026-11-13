@@ -6,6 +6,7 @@
   import { codeAnzeige, codeEingabe, codeGueltig } from '../code';
   import { kannTeilen, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben } from '../sicherung';
   import Hilfe from './Hilfe.svelte';
+  import { istZentrale } from '../zentrale.svelte';
 
   let {
     id,
@@ -75,8 +76,13 @@
     if (!token) return;
     try {
       const a = await api.sichern(token, id);
-      einst = einst ? { ...einst, letzteSicherung: a.zeit } : einst;
-      zeige('mail', true, T.einstellungen.gesendet(a.gesendetAn.join(', ')));
+      if (a.wartend) {
+        einst = einst ? { ...einst, wartend: true } : einst;
+        zeige('mail', true, T.zentrale.sicherungWartet);
+      } else {
+        einst = einst ? { ...einst, letzteSicherung: a.zeit, wartend: false } : einst;
+        zeige('mail', true, T.einstellungen.gesendet(a.gesendetAn.join(', ')));
+      }
     } catch (x) {
       zeige('mail', false, fehlerText(x, T.app.fehlerAllgemein));
     }
@@ -131,7 +137,7 @@
       <h3>{T.einstellungen.sicherungTitel}</h3>
       <p class="leise">{T.einstellungen.erklaerung}</p>
       {#if !einst.mail}
-        <div class="meldung info">{T.einstellungen.keinMail}</div>
+        <div class="meldung info">{istZentrale() ? T.zentrale.sicherungKeinKonto : T.einstellungen.keinMail}</div>
       {:else}
         <form onsubmit={sicherungSpeichern}>
           <label for="st">{T.einstellungen.takt}</label>

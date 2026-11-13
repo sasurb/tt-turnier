@@ -13,3 +13,4 @@ config.php
 e2e/node_modules/
 e2e/bilder/
 e2e/test-results/
+zentrale/kern/build/

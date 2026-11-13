@@ -1,0 +1,1695 @@
+package de.saschaurban.ttturnier.kern;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
+
+/**
+ * Der Turnier-Server der Android-Zentrale. Verhält sich nach außen wie der PHP-Server
+ * (shared/protokoll.ts, docs/schnittstelle.md), ohne Konten-Verwaltung: Die Zentrale hat
+ * genau ein eigenes Konto, angemeldet wird es nur vom Gerät der Zentrale selbst.
+ * Dazu kommen die Routen „zentrale.*“ (nur vom Gerät selbst): WLAN, Online-Konto,
+ * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
+ */
+public final class Zentrale implements HttpServer.Bearbeiter {
+    public static final String VERSION = "0.5.0";
+    public static final int PROTOKOLL = 1;
+    public static final String ONLINE_STANDARD = "https://saschaurban.de/tt-turnier/api/index.php";
+
+    private static final int MAX_EREIGNISSE = 200;
+    private static final int MAX_DATEN_BYTES = 16384;
+    private static final long SITZUNG_DAUER = 60L * 60 * 24 * 30;
+    private static final long VERSUCHE_FENSTER = 15 * 60;
+    private static final int VERSUCHE_MAX = 10;
+    private static final String ID_ZEICHEN = "abcdefghijkmnpqrstuvwxyz23456789";
+    private static final List<Long> TAKTE = Arrays.asList(0L, 15L, 30L, 60L, -1L);
+    private static final int MAX_EMPFAENGER = 3;
+    private static final String ART_ABGESCHLOSSEN = "turnier.abgeschlossen";
+    private static final List<String> ARTEN_SPIELER = Arrays.asList("spiel.ergebnis", "spiel.bestaetigt", "spiel.angefochten");
+    private static final List<String> ARTEN_HELFER = Collections.singletonList("spiel.ergebnis");
+    private static final int MAX_CODES = 400;
+    private static final int MAX_POOL = 3000;
+    private static final int MAX_UEBERSICHT = 60000;
+    private static final long KONTO_ID = 1;
+    /** Geräte gelten so lange als verbunden, wie ihr letzter Abruf her ist (Sekunden). */
+    private static final long GERAET_AKTIV = 180;
+
+    private static final Pattern P_EREIGNIS_ID = Pattern.compile("^[A-Za-z0-9-]{8,64}$");
+    private static final Pattern P_ART = Pattern.compile("^[a-z][a-z0-9_.]{1,63}$");
+    private static final Pattern P_GERAET = Pattern.compile("^[A-Za-z0-9-]{4,64}$");
+    private static final Pattern P_ZEIT = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?)?(Z|[+-]\\d{2}:?\\d{2})?$");
+    private static final Pattern P_TURNIER_ID = Pattern.compile("^[a-z0-9]{6,16}$");
+    private static final Pattern P_DATUM = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+    private static final Pattern P_BEZUG = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
+    private static final Pattern P_POOL_ID = Pattern.compile("^[A-Za-z0-9_-]{1,40}$");
+    private static final Pattern P_TOKEN = Pattern.compile("^[a-f0-9]{64}$");
+    private static final Pattern P_EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
+
+    private final Speicher speicher;
+    private final Plattform plattform;
+    private final Online online;
+    private final LongSupplier uhr;
+    private final SecureRandom zufall = new SecureRandom();
+
+    private final Map<String, Speicher.Turnier> turniere;
+    private final Map<String, Map<String, Object>> sitzungen = new LinkedHashMap<>();
+    private final Map<String, Object> einst;
+    private final Map<String, Map<String, Object>> pool = new LinkedHashMap<>();
+    private final Map<String, Map<String, Object>> warteschlange = new LinkedHashMap<>();
+    private final Map<String, List<Long>> versuche = new HashMap<>();
+    private final Map<String, Long> geraete = new HashMap<>();
+    private int gemeldeteGeraete = -1;
+    private volatile int port = 0;
+    /** Nur ein Versand der Warteschlange gleichzeitig */
+    private final Object versandSperre = new Object();
+
+    public Zentrale(Speicher speicher, Plattform plattform, Online online, LongSupplier uhrSekunden) {
+        this.speicher = speicher;
+        this.plattform = plattform;
+        this.online = online;
+        this.uhr = uhrSekunden;
+        this.turniere = speicher.ladeTurniere();
+        this.einst = speicher.ladeObjekt("zentrale.json");
+        if (!(einst.get("id") instanceof String)) {
+            einst.put("id", "z-" + zufallsText(10));
+            einst.put("angelegt", iso(jetzt()));
+            speicher.speichereObjekt("zentrale.json", einst);
+        }
+        Map<String, Object> s = speicher.ladeObjekt("sitzungen.json");
+        for (Map.Entry<String, Object> e : s.entrySet()) {
+            Map<String, Object> m = Json.alsObjekt(e.getValue());
+            if (m != null) sitzungen.put(e.getKey(), m);
+        }
+        Map<String, Object> p = speicher.ladeObjekt("pool.json");
+        for (Map.Entry<String, Object> e : p.entrySet()) {
+            Map<String, Object> m = Json.alsObjekt(e.getValue());
+            if (m != null) pool.put(e.getKey(), m);
+        }
+        Map<String, Object> w = speicher.ladeObjekt("warteschlange.json");
+        for (Map.Entry<String, Object> e : w.entrySet()) {
+            Map<String, Object> m = Json.alsObjekt(e.getValue());
+            if (m != null) warteschlange.put(e.getKey(), m);
+        }
+    }
+
+    public Zentrale(Speicher speicher, Plattform plattform) {
+        this(speicher, plattform, new Online(10_000), () -> System.currentTimeMillis() / 1000);
+    }
+
+    public void setzePort(int port) {
+        this.port = port;
+    }
+
+    /* ======================================================================
+     * HTTP
+     * ==================================================================== */
+
+    @Override
+    public HttpServer.Antwort bearbeiten(HttpServer.Anfrage a) {
+        if (!a.vomGeraetSelbst) {
+            synchronized (geraete) {
+                geraete.put(a.ip, jetzt());
+            }
+        }
+        if (a.pfad.startsWith("/api/")) return api(a);
+        if (!"GET".equals(a.methode) && !"HEAD".equals(a.methode)) {
+            return new HttpServer.Antwort(405, "text/plain; charset=utf-8", "Nicht erlaubt".getBytes(StandardCharsets.UTF_8));
+        }
+        return datei(a.pfad);
+    }
+
+    private HttpServer.Antwort datei(String pfad) {
+        String p = pfad.replaceFirst("^/+", "");
+        if (p.isEmpty()) p = "index.html";
+        if (p.contains("..") || p.contains("\\") || p.contains("\0")) {
+            return new HttpServer.Antwort(404, "text/plain; charset=utf-8", "Nicht gefunden".getBytes(StandardCharsets.UTF_8));
+        }
+        byte[] inhalt = plattform.datei(p);
+        if (inhalt == null && !p.contains(".")) {
+            p = "index.html";
+            inhalt = plattform.datei(p);
+        }
+        if (inhalt == null) {
+            return new HttpServer.Antwort(404, "text/plain; charset=utf-8", "Nicht gefunden".getBytes(StandardCharsets.UTF_8));
+        }
+        HttpServer.Antwort a = new HttpServer.Antwort(200, dateiTyp(p), inhalt);
+        a.kopf.put("Cache-Control", p.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache");
+        return a;
+    }
+
+    static String dateiTyp(String p) {
+        String e = p.contains(".") ? p.substring(p.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";
+        switch (e) {
+            case "html": return "text/html; charset=utf-8";
+            case "js":
+            case "mjs": return "text/javascript; charset=utf-8";
+            case "css": return "text/css; charset=utf-8";
+            case "svg": return "image/svg+xml";
+            case "png": return "image/png";
+            case "jpg":
+            case "jpeg": return "image/jpeg";
+            case "webp": return "image/webp";
+            case "ico": return "image/x-icon";
+            case "json": return "application/json; charset=utf-8";
+            case "webmanifest": return "application/manifest+json";
+            case "woff2": return "font/woff2";
+            case "txt": return "text/plain; charset=utf-8";
+            default: return "application/octet-stream";
+        }
+    }
+
+    /** Eine API-Anfrage; öffentlich für Tests ohne Netzwerk. */
+    public HttpServer.Antwort api(HttpServer.Anfrage a) {
+        String route = a.query.getOrDefault("r", "");
+        String token = a.kopf.get("x-tt-token");
+        String auth = a.kopf.get("authorization");
+        if (token == null && auth != null && auth.regionMatches(true, 0, "Bearer ", 0, 7)) token = auth.substring(7).trim();
+        try {
+            Map<String, Object> rumpf = new LinkedHashMap<>();
+            if (a.rumpf.length > 0) {
+                try {
+                    Map<String, Object> m = Json.alsObjekt(Json.lesen(new String(a.rumpf, StandardCharsets.UTF_8)));
+                    if (m == null) throw new ApiFehler("ungueltig", "Der Inhalt der Anfrage ist kein gültiges JSON.");
+                    rumpf = m;
+                } catch (Json.Fehler x) {
+                    throw new ApiFehler("ungueltig", "Der Inhalt der Anfrage ist kein gültiges JSON.");
+                }
+            }
+            Anf f = new Anf(a, route, rumpf, token);
+            Object daten = route(a.methode + " " + route, f);
+            return HttpServer.Antwort.json(200, daten);
+        } catch (ApiFehler x) {
+            return HttpServer.Antwort.json(x.status(), Json.obj("fehler", x.code, "meldung", x.getMessage()));
+        } catch (RuntimeException x) {
+            plattform.protokoll("Fehler bei " + route + ": " + x);
+            return HttpServer.Antwort.json(500, Json.obj("fehler", "serverfehler", "meldung", "Interner Fehler auf der Zentrale."));
+        }
+    }
+
+    /** Anfrage mit gelesenem Rumpf */
+    private static final class Anf {
+        final HttpServer.Anfrage http;
+        final String route;
+        final Map<String, Object> rumpf;
+        final String token;
+
+        Anf(HttpServer.Anfrage http, String route, Map<String, Object> rumpf, String token) {
+            this.http = http;
+            this.route = route;
+            this.rumpf = rumpf;
+            this.token = token;
+        }
+
+        String q(String k) {
+            return http.query.getOrDefault(k, "");
+        }
+    }
+
+    private Object route(String schluessel, Anf a) {
+        switch (schluessel) {
+            case "GET info": return info();
+            case "GET ich": return ich(a);
+            case "POST logout": return logout(a);
+            case "GET turniere": return turniereListe(a);
+            case "POST turnier.anlegen": return turnierAnlegen(a);
+            case "GET turnier": return Json.obj("turnier", turnierAusgabe(turnierLaden(a.q("id"))));
+            case "POST turnier.zugang": return turnierZugang(a);
+            case "GET turnier.einstellungen": return einstellungen(turnierLaden(a.q("id")), a);
+            case "POST turnier.einstellungen": return einstellungenSetzen(a);
+            case "POST turnier.sichern": return sichernJetzt(a);
+            case "GET codes": return codes(a);
+            case "POST codes.anlegen": return codesAnlegen(a);
+            case "POST code.neu": return codeNeu(a);
+            case "POST code.sperren": return codeSperren(a);
+            case "POST code.entfernen": return codeEntfernen(a);
+            case "GET pool": return poolListe(a);
+            case "POST pool.speichern": return poolSpeichern(a);
+            case "POST pool.loeschen": return poolLoeschen(a);
+            case "POST turnier.uebersicht": return uebersichtSetzen(a);
+            case "GET events": return abholen(a);
+            case "POST events": return senden(a);
+
+            case "POST login":
+                throw new ApiFehler("nicht_eingerichtet", "Auf der Zentrale meldet sich niemand mit E-Mail an: Turniere legt man am Gerät der Zentrale an, "
+                    + "andere Geräte treten mit Leitungs-, Helfer- oder Spieler-Code bei.");
+            case "POST setup":
+            case "POST registrieren":
+            case "POST passwort.vergessen":
+            case "POST passwort.zuruecksetzen":
+            case "POST passwort.aendern":
+            case "POST konto.loeschen":
+            case "POST konto.anlegen":
+            case "POST konto.sperren":
+            case "GET konten":
+            case "POST rueckmeldung":
+                throw new ApiFehler("nicht_eingerichtet", "Auf der Zentrale nicht verfügbar – bitte die Online-Seite nutzen.");
+
+            /* --- nur vom Gerät der Zentrale --- */
+            case "POST zentrale.anmelden": return zentraleAnmelden(a);
+            case "GET zentrale.status": selbst(a); return zentraleStatus();
+            case "POST zentrale.wlan": return zentraleWlan(a);
+            case "POST zentrale.hotspot": return zentraleHotspot(a);
+            case "POST zentrale.oeffnen": selbst(a); return Json.obj("ok", plattform.oeffnen(text(a, "ziel", 1, 20)));
+            case "POST zentrale.online.anmelden": return onlineAnmelden(a);
+            case "POST zentrale.online.abmelden": return onlineAbmelden(a);
+            case "GET zentrale.online.turniere": return onlineTurniere(a);
+            case "POST zentrale.uebernehmen": return uebernehmen(a);
+            case "POST zentrale.rueckgabe": return rueckgabe(a);
+            case "POST zentrale.pool.abgleichen": return poolAbgleichen(a);
+            case "POST zentrale.sicherungen.senden": selbst(a); warteschlangeSenden(); return zentraleStatus();
+            case "POST zentrale.turnier.loeschen": return turnierLoeschen(a);
+            default:
+                throw new ApiFehler("nicht_gefunden", "Unbekannte Route: " + schluessel);
+        }
+    }
+
+    /* ======================================================================
+     * Hilfen
+     * ==================================================================== */
+
+    private long jetzt() {
+        return uhr.getAsLong();
+    }
+
+    static String iso(long sekunden) {
+        return Instant.ofEpochSecond(sekunden).toString();
+    }
+
+    private static long ausIso(Object o, long ersatz) {
+        if (!(o instanceof String)) return ersatz;
+        try {
+            return Instant.parse((String) o).getEpochSecond();
+        } catch (RuntimeException x) {
+            return ersatz;
+        }
+    }
+
+    private String zufallsText(int n) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < n; i++) b.append(ID_ZEICHEN.charAt(zufall.nextInt(ID_ZEICHEN.length())));
+        return b.toString();
+    }
+
+    static String sha256(String s) {
+        try {
+            byte[] h = MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8));
+            StringBuilder b = new StringBuilder();
+            for (byte x : h) b.append(String.format("%02x", x & 0xff));
+            return b.toString();
+        } catch (NoSuchAlgorithmException x) {
+            throw new IllegalStateException(x);
+        }
+    }
+
+    private static boolean gleich(String a, String b) {
+        return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String text(Anf a, String feld, int min, int max) {
+        String w = Json.alsText(a.rumpf.get(feld));
+        if (w == null) throw new ApiFehler("ungueltig", "Feld „" + feld + "“ fehlt.");
+        w = w.trim();
+        int n = w.codePointCount(0, w.length());
+        if (n < min || n > max) throw new ApiFehler("ungueltig", "Feld „" + feld + "“ muss " + min + " bis " + max + " Zeichen lang sein.");
+        return w;
+    }
+
+    private static String kuerzen(String s, int max) {
+        if (s.codePointCount(0, s.length()) <= max) return s;
+        return s.substring(0, s.offsetByCodePoints(0, max));
+    }
+
+    private static String email(String e) {
+        if (e == null) return null;
+        e = e.trim().toLowerCase(Locale.ROOT);
+        return e.length() <= 190 && P_EMAIL.matcher(e).matches() ? e : null;
+    }
+
+    static boolean codeGueltig(String code) {
+        if (code == null || !code.matches("^[0-9]{6}$")) return false;
+        boolean gleich = true, auf = true, ab = true;
+        for (int i = 1; i < 6; i++) {
+            int v = code.charAt(i - 1) - '0', c = code.charAt(i) - '0';
+            gleich = gleich && c == v;
+            auf = auf && c == (v + 1) % 10;
+            ab = ab && c == (v + 9) % 10;
+        }
+        return !gleich && !auf && !ab;
+    }
+
+    private static String leitungsCodeFeld(Anf a) {
+        String c = Json.alsText(a.rumpf.get("leitungsCode"));
+        c = c == null ? "" : c.trim();
+        if (!codeGueltig(c)) {
+            throw new ApiFehler("ungueltig", "Der Leitungscode muss aus 6 Ziffern bestehen und darf nicht zu einfach sein (z. B. nicht 123456).");
+        }
+        return c;
+    }
+
+    private static List<Object> empfaengerFeld(Object o) {
+        List<Object> l = Json.alsListe(o);
+        if (l == null || l.size() > MAX_EMPFAENGER) {
+            throw new ApiFehler("ungueltig", "Höchstens " + MAX_EMPFAENGER + " Empfänger für die Sicherung.");
+        }
+        Set<String> aus = new LinkedHashSet<>();
+        for (Object x : l) {
+            String e = x instanceof String ? ((String) x).trim().toLowerCase(Locale.ROOT) : "";
+            if (e.isEmpty()) continue;
+            if (email(e) == null) throw new ApiFehler("ungueltig", "Ungültige E-Mail-Adresse: " + e);
+            aus.add(e);
+        }
+        return new ArrayList<>(aus);
+    }
+
+    private static List<String> empfaengerAus(Speicher.Turnier t) {
+        List<String> aus = new ArrayList<>();
+        List<Object> l = Json.alsListe(t.kopf.get("sicherungAn"));
+        if (l != null) for (Object o : l) if (o instanceof String) aus.add((String) o);
+        return aus;
+    }
+
+    private static long zahl(Object o, long ersatz) {
+        return o instanceof Number ? ((Number) o).longValue() : ersatz;
+    }
+
+    private static boolean wahr(Object o) {
+        return Boolean.TRUE.equals(o);
+    }
+
+    private void bremse(String schluessel) {
+        if (anzahlVersuche(schluessel, VERSUCHE_FENSTER) >= VERSUCHE_MAX) {
+            throw new ApiFehler("zu_viele_versuche", "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.");
+        }
+    }
+
+    private int anzahlVersuche(String schluessel, long fenster) {
+        synchronized (versuche) {
+            List<Long> l = versuche.get(schluessel);
+            if (l == null) return 0;
+            long grenze = jetzt() - fenster;
+            l.removeIf(z -> z < grenze - VERSUCHE_FENSTER);
+            int n = 0;
+            for (long z : l) if (z >= grenze) n++;
+            return n;
+        }
+    }
+
+    private void fehlversuch(String schluessel) {
+        synchronized (versuche) {
+            versuche.computeIfAbsent(schluessel, k -> new ArrayList<>()).add(jetzt());
+        }
+    }
+
+    private void versucheLoeschen(String schluessel) {
+        synchronized (versuche) {
+            versuche.remove(schluessel);
+        }
+    }
+
+    private void begrenzen(String schluessel, int max, long fenster, String meldung) {
+        if (anzahlVersuche(schluessel, fenster) >= max) throw new ApiFehler("zu_viele_versuche", meldung);
+        fehlversuch(schluessel);
+    }
+
+    /* ---------------- Sitzungen ---------------- */
+
+    private String neuesToken(boolean konto, String turnier, String rolle, String name, String bezug) {
+        byte[] b = new byte[32];
+        zufall.nextBytes(b);
+        StringBuilder t = new StringBuilder();
+        for (byte x : b) t.append(String.format("%02x", x & 0xff));
+        String token = t.toString();
+        synchronized (this) {
+            sitzungen.put(sha256(token), Json.obj(
+                "konto", konto, "turnier", turnier, "rolle", rolle, "name", name, "bezug", bezug,
+                "ablauf", jetzt() + SITZUNG_DAUER));
+            sitzungenSpeichern();
+        }
+        return token;
+    }
+
+    private void sitzungenSpeichern() {
+        long j = jetzt();
+        sitzungen.values().removeIf(s -> zahl(s.get("ablauf"), 0) < j);
+        speicher.speichereObjekt("sitzungen.json", sitzungen);
+    }
+
+    /** Sitzung zum Token oder null */
+    private synchronized Map<String, Object> sitzung(Anf a) {
+        if (a.token == null || !P_TOKEN.matcher(a.token).matches()) return null;
+        Map<String, Object> s = sitzungen.get(sha256(a.token));
+        if (s == null || zahl(s.get("ablauf"), 0) < jetzt()) return null;
+        return s;
+    }
+
+    private static boolean istKonto(Map<String, Object> s) {
+        return s != null && wahr(s.get("konto"));
+    }
+
+    private Map<String, Object> konto(Anf a) {
+        Map<String, Object> s = sitzung(a);
+        if (!istKonto(s)) throw new ApiFehler("nicht_angemeldet", "Bitte am Gerät der Zentrale öffnen.");
+        return s;
+    }
+
+    private static void selbst(Anf a) {
+        if (!a.http.vomGeraetSelbst) throw new ApiFehler("keine_berechtigung", "Nur am Gerät der Zentrale möglich.");
+    }
+
+    private synchronized void sitzungenEntfernen(String turnier, String rolle, String bezug) {
+        boolean geaendert = sitzungen.values().removeIf(s -> turnier.equals(s.get("turnier")) && rolle.equals(s.get("rolle")) && bezug.equals(s.get("bezug")));
+        if (geaendert) sitzungenSpeichern();
+    }
+
+    /* ---------------- Konto der Zentrale ---------------- */
+
+    private synchronized Map<String, Object> onlineKonto() {
+        return Json.alsObjekt(einst.get("onlineKonto"));
+    }
+
+    private synchronized String onlineToken() {
+        return Json.alsText(einst.get("onlineToken"));
+    }
+
+    private synchronized String onlineUrl() {
+        String u = Json.alsText(einst.get("onlineUrl"));
+        return u == null || u.isEmpty() ? ONLINE_STANDARD : u;
+    }
+
+    private synchronized boolean verbunden() {
+        return onlineToken() != null;
+    }
+
+    private synchronized boolean mailBereit() {
+        return verbunden() && wahr(einst.get("onlineMail"));
+    }
+
+    private synchronized String kontoName() {
+        Map<String, Object> k = onlineKonto();
+        String n = k == null ? null : Json.alsText(k.get("name"));
+        return n == null || n.isEmpty() ? "Zentrale" : n;
+    }
+
+    private synchronized Map<String, Object> kontoAusgabe() {
+        Map<String, Object> k = onlineKonto();
+        String mail = k == null ? null : Json.alsText(k.get("email"));
+        return Json.obj("id", KONTO_ID, "name", kontoName(), "email", mail == null ? "" : mail, "rolle", "veranstalter",
+            "gesperrt", false, "angelegt", einst.get("angelegt"), "letzteAnmeldung", null, "zuletztAktiv", null,
+            "turniere", (long) turniere.size());
+    }
+
+    private void einstSpeichern() {
+        speicher.speichereObjekt("zentrale.json", einst);
+    }
+
+    /* ---------------- Turniere ---------------- */
+
+    private synchronized Speicher.Turnier turnierLaden(String id) {
+        Speicher.Turnier t = id == null || !P_TURNIER_ID.matcher(id).matches() ? null : turniere.get(id);
+        if (t == null) throw new ApiFehler("nicht_gefunden", "Turnier nicht gefunden.");
+        return t;
+    }
+
+    private Map<String, Object> turnierAusgabe(Speicher.Turnier t) {
+        return Json.obj(
+            "id", t.id,
+            "name", t.kopf.get("name"),
+            "datum", t.kopf.get("datum"),
+            "angelegt", t.kopf.get("angelegt"),
+            "veranstalter", kontoName(),
+            "herkunft", t.kopf.get("herkunft"),
+            "abgegeben", wahr(t.kopf.get("abgegeben")));
+    }
+
+    private String neueTurnierId() {
+        String id;
+        do {
+            id = zufallsText(10);
+        } while (turniere.containsKey(id));
+        return id;
+    }
+
+    private boolean leitungsRecht(Map<String, Object> s, Speicher.Turnier t) {
+        if (s == null) return false;
+        return (t.id.equals(s.get("turnier")) && "leitung".equals(s.get("rolle"))) || istKonto(s);
+    }
+
+    private void leitungPruefen(Anf a, Speicher.Turnier t) {
+        Map<String, Object> s = sitzung(a);
+        if (s == null) throw new ApiFehler("nicht_angemeldet", "Bitte als Turnierleitung anmelden.");
+        if (!leitungsRecht(s, t)) throw new ApiFehler("keine_berechtigung", "Nur für die Turnierleitung.");
+    }
+
+    /** Nach der Rückgabe an den Online-Server ist das Turnier auf der Zentrale nur noch lesbar. */
+    private static void beschreibbar(Speicher.Turnier t) {
+        if (wahr(t.kopf.get("rueckgabeLaeuft"))) {
+            throw new ApiFehler("konflikt", "Das Turnier wird gerade an den Online-Server zurückgegeben. Bitte kurz warten.");
+        }
+        if (wahr(t.kopf.get("abgegeben"))) {
+            throw new ApiFehler("konflikt", "Dieses Turnier wurde an den Online-Server zurückgegeben. Weitere Einträge bitte online "
+                + "oder nach erneuter Übernahme auf die Zentrale.");
+        }
+    }
+
+    /* ======================================================================
+     * Endpunkte wie beim PHP-Server
+     * ==================================================================== */
+
+    private Map<String, Object> info() {
+        List<String> adr = plattform.adressen();
+        String adresse = adr.isEmpty() || port <= 0 ? null : "http://" + adr.get(0) + ":" + port + "/";
+        return Json.obj(
+            "app", "tt-turnier",
+            "protokoll", (long) PROTOKOLL,
+            "version", VERSION,
+            "eingerichtet", true,
+            "zeit", iso(jetzt()),
+            "registrierung", false,
+            "mail", mailBereit(),
+            "codes", true,
+            "zentrale", Json.obj("version", VERSION, "adresse", adresse, "online", verbunden()));
+    }
+
+    private Map<String, Object> ich(Anf a) {
+        Map<String, Object> s = sitzung(a);
+        if (s == null) throw new ApiFehler("nicht_angemeldet", "Nicht angemeldet.");
+        Map<String, Object> aus = Json.obj("rolle", s.get("rolle"), "name", s.get("name"), "turnier", s.get("turnier"));
+        if ("spieler".equals(s.get("rolle")) && s.get("bezug") != null) aus.put("spieler", s.get("bezug"));
+        if (istKonto(s)) aus.put("konto", kontoAusgabe());
+        return aus;
+    }
+
+    private synchronized Map<String, Object> logout(Anf a) {
+        if (a.token != null && sitzungen.remove(sha256(a.token)) != null) sitzungenSpeichern();
+        return Json.obj("ok", true);
+    }
+
+    private synchronized Map<String, Object> turniereListe(Anf a) {
+        konto(a);
+        List<Speicher.Turnier> l = new ArrayList<>(turniere.values());
+        l.sort((x, y) -> String.valueOf(y.kopf.get("angelegt")).compareTo(String.valueOf(x.kopf.get("angelegt"))));
+        List<Object> aus = new ArrayList<>();
+        for (Speicher.Turnier t : l) aus.add(turnierAusgabe(t));
+        return Json.obj("turniere", aus);
+    }
+
+    private Map<String, Object> turnierAnlegen(Anf a) {
+        konto(a);
+        String name = text(a, "name", 2, 160);
+        Object datum = a.rumpf.get("datum");
+        if (datum != null && (!(datum instanceof String) || !P_DATUM.matcher((String) datum).matches())) {
+            throw new ApiFehler("ungueltig", "Datum im Format JJJJ-MM-TT angeben.");
+        }
+        String code = leitungsCodeFeld(a);
+        List<Object> empf;
+        if (a.rumpf.containsKey("sicherungAn")) {
+            empf = empfaengerFeld(a.rumpf.get("sicherungAn"));
+        } else {
+            empf = new ArrayList<>();
+            Map<String, Object> k = onlineKonto();
+            String m = k == null ? null : email(Json.alsText(k.get("email")));
+            if (m != null) empf.add(m);
+        }
+        Speicher.Turnier t;
+        synchronized (this) {
+            String id = neueTurnierId();
+            long j = jetzt();
+            t = new Speicher.Turnier(id, Json.obj(
+                "name", name, "datum", datum, "angelegt", iso(j), "angelegtSek", j,
+                "leitungCode", code, "sicherungAn", empf, "sicherungTakt", 30L,
+                "sicherungLetzte", null, "sicherungSeq", 0L, "uebersicht", null, "uebersichtZeit", null,
+                "herkunft", "zentrale", "abgegeben", false));
+            speicher.turnierAnlegen(t);
+            turniere.put(id, t);
+        }
+        String token = neuesToken(true, t.id, "leitung", kontoName(), null);
+        return Json.obj("turnier", turnierAusgabe(t), "token", token);
+    }
+
+    private Map<String, Object> turnierZugang(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        String schluessel = "zugang|" + t.id + "|" + a.http.ip;
+        bremse(schluessel);
+        Object roh = a.rumpf.containsKey("code") ? a.rumpf.get("code") : a.rumpf.get("passwort");
+        String code = roh instanceof String ? ((String) roh).trim() : "";
+        String leitung;
+        synchronized (this) {
+            leitung = Json.alsText(t.kopf.get("leitungCode"));
+        }
+        if (!code.isEmpty() && leitung != null && gleich(code, leitung)) {
+            versucheLoeschen(schluessel);
+            String name = Json.alsText(a.rumpf.get("name"));
+            name = name == null || name.trim().isEmpty() ? "Leitung" : kuerzen(name.trim(), 120);
+            return Json.obj("token", neuesToken(false, t.id, "leitung", name, null), "rolle", "leitung", "name", name);
+        }
+        Map<String, Object> c = null;
+        if (code.matches("^[0-9]{6}$")) {
+            synchronized (this) {
+                for (Map<String, Object> x : t.codes) {
+                    if (code.equals(x.get("code")) && !wahr(x.get("gesperrt"))) { c = x; break; }
+                }
+            }
+        }
+        if (c == null) {
+            fehlversuch(schluessel);
+            throw new ApiFehler("falsche_zugangsdaten", "Dieser Code passt nicht zu diesem Turnier.");
+        }
+        versucheLoeschen(schluessel);
+        String rolle = (String) c.get("rolle");
+        String token = neuesToken(false, t.id, rolle, (String) c.get("name"), (String) c.get("bezug"));
+        Map<String, Object> aus = Json.obj("token", token, "rolle", rolle, "name", c.get("name"));
+        if ("spieler".equals(rolle)) aus.put("spieler", c.get("bezug"));
+        return aus;
+    }
+
+    private Map<String, Object> abholen(Anf a) {
+        Speicher.Turnier t = turnierLaden(a.q("turnier"));
+        long ab;
+        try {
+            ab = Long.parseLong(a.q("ab").isEmpty() ? "0" : a.q("ab"));
+        } catch (NumberFormatException x) {
+            ab = 0;
+        }
+        synchronized (this) {
+            List<Object> aus = new ArrayList<>();
+            boolean mehr = false;
+            // Laufnummern sind lückenlos 1..n, also direkt ab Position ab
+            int start = (int) Math.max(0, Math.min(ab, t.ereignisse.size()));
+            while (start > 0 && zahl(t.ereignisse.get(start - 1).get("seq"), 0) > ab) start--;
+            for (int i = start; i < t.ereignisse.size(); i++) {
+                Map<String, Object> e = t.ereignisse.get(i);
+                if (zahl(e.get("seq"), 0) <= ab) continue;
+                if (aus.size() == MAX_EREIGNISSE) { mehr = true; break; }
+                aus.add(ausgabe(e, true));
+            }
+            return Json.obj("ereignisse", aus, "hoechsteSeq", t.hoechsteSeq(), "mehr", mehr);
+        }
+    }
+
+    private static Map<String, Object> ausgabe(Map<String, Object> e, boolean mitSeqZuerst) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (mitSeqZuerst) m.put("seq", e.get("seq"));
+        m.put("id", e.get("id"));
+        m.put("art", e.get("art"));
+        m.put("daten", e.get("daten"));
+        m.put("zeit", e.get("zeit"));
+        m.put("geraet", e.get("geraet"));
+        if (!mitSeqZuerst) m.put("seq", e.get("seq"));
+        m.put("empfangen", e.get("empfangen"));
+        m.put("autor", e.get("autor"));
+        return m;
+    }
+
+    private Map<String, Object> senden(Anf a) {
+        Speicher.Turnier t = turnierLaden(a.q("turnier"));
+        Map<String, Object> s = sitzung(a);
+        if (s == null) throw new ApiFehler("nicht_angemeldet", "Zum Eintragen bitte anmelden.");
+        String srolle = (String) s.get("rolle");
+        boolean darf = (t.id.equals(s.get("turnier")) && Arrays.asList("leitung", "helfer", "spieler").contains(srolle)) || istKonto(s);
+        if (!darf) throw new ApiFehler("keine_berechtigung", "Keine Berechtigung für dieses Turnier.");
+        List<Object> liste = Json.alsListe(a.rumpf.get("ereignisse"));
+        if (liste == null || liste.size() > MAX_EREIGNISSE) {
+            throw new ApiFehler("ungueltig", "Feld „ereignisse“ muss eine Liste mit höchstens " + MAX_EREIGNISSE + " Einträgen sein.");
+        }
+        String rolle = istKonto(s) ? "leitung" : srolle;
+        List<String> erlaubt = "spieler".equals(rolle) ? ARTEN_SPIELER : "helfer".equals(rolle) ? ARTEN_HELFER : null;
+        if (erlaubt != null) {
+            for (Object o : liste) {
+                Map<String, Object> e = Json.alsObjekt(o);
+                if (e == null || !erlaubt.contains(e.get("art"))) {
+                    throw new ApiFehler("keine_berechtigung", "Mit diesem Code dürfen nur Ergebnisse eingetragen werden.");
+                }
+            }
+        }
+        Map<String, Object> autor = Json.obj("rolle", rolle, "name", s.get("name"));
+        if ("spieler".equals(rolle) && s.get("bezug") != null) autor.put("spieler", s.get("bezug"));
+
+        List<Map<String, Object>> geprueft = new ArrayList<>();
+        for (Object o : liste) geprueft.add(ereignisPruefen(o));
+
+        List<Object> angenommen = new ArrayList<>();
+        boolean abschluss = false;
+        synchronized (this) {
+            beschreibbar(t);
+            List<Map<String, Object>> neu = new ArrayList<>();
+            Map<String, Long> inDiesemAufruf = new HashMap<>();
+            long seq = t.hoechsteSeq();
+            for (Map<String, Object> e : geprueft) {
+                String id = (String) e.get("id");
+                Integer pos = t.index.get(id);
+                if (pos != null) {
+                    angenommen.add(Json.obj("id", id, "seq", t.ereignisse.get(pos).get("seq")));
+                    continue;
+                }
+                Long schon = inDiesemAufruf.get(id);
+                if (schon != null) {
+                    angenommen.add(Json.obj("id", id, "seq", schon));
+                    continue;
+                }
+                Map<String, Object> z = new LinkedHashMap<>(e);
+                z.put("seq", ++seq);
+                z.put("empfangen", iso(jetzt()));
+                z.put("autor", autor);
+                z.put("online", false);
+                neu.add(z);
+                inDiesemAufruf.put(id, seq);
+                angenommen.add(Json.obj("id", id, "seq", seq));
+                abschluss = abschluss || ART_ABGESCHLOSSEN.equals(e.get("art"));
+            }
+            speicher.ereignisseAnhaengen(t, neu);
+            for (Map<String, Object> z : neu) t.aufnehmen(z);
+            if (abschluss) sicherungEinreihen(t, "Turnier abgeschlossen");
+            return Json.obj("angenommen", angenommen, "hoechsteSeq", t.hoechsteSeq());
+        }
+    }
+
+    /** Prüft ein Ereignis wie der PHP-Server; liefert {id, art, daten, zeit, geraet}. */
+    static Map<String, Object> ereignisPruefen(Object o) {
+        Map<String, Object> e = Json.alsObjekt(o);
+        if (e == null) throw new ApiFehler("ungueltig", "Ereignis muss ein Objekt sein.");
+        String id = Json.alsText(e.get("id"));
+        String art = Json.alsText(e.get("art"));
+        String zeit = Json.alsText(e.get("zeit"));
+        String geraet = Json.alsText(e.get("geraet"));
+        Map<String, Object> daten = Json.alsObjekt(e.get("daten"));
+        if (id == null || !P_EREIGNIS_ID.matcher(id).matches()) throw new ApiFehler("ungueltig", "Ereignis-ID ungültig.");
+        if (art == null || !P_ART.matcher(art).matches()) throw new ApiFehler("ungueltig", "Ereignis-Art ungültig.");
+        if (zeit == null || zeit.length() > 40 || !P_ZEIT.matcher(zeit).matches()) throw new ApiFehler("ungueltig", "Ereignis-Zeit ungültig.");
+        if (geraet == null || !P_GERAET.matcher(geraet).matches()) throw new ApiFehler("ungueltig", "Geräte-Kennung ungültig.");
+        if (daten == null) throw new ApiFehler("ungueltig", "Ereignis-Daten müssen ein Objekt sein.");
+        if (Json.schreiben(daten).getBytes(StandardCharsets.UTF_8).length > MAX_DATEN_BYTES) {
+            throw new ApiFehler("ungueltig", "Ereignis-Daten sind zu groß.");
+        }
+        return Json.obj("id", id, "art", art, "daten", daten, "zeit", zeit, "geraet", geraet);
+    }
+
+    /* ---------------- Einstellungen und Sicherung ---------------- */
+
+    private synchronized Map<String, Object> einstellungen(Speicher.Turnier t, Anf a) {
+        leitungPruefen(a, t);
+        return Json.obj(
+            "leitungsCode", t.kopf.get("leitungCode"),
+            "sicherungAn", new ArrayList<Object>(empfaengerAus(t)),
+            "sicherungTakt", zahl(t.kopf.get("sicherungTakt"), 30),
+            "letzteSicherung", t.kopf.get("sicherungLetzte"),
+            "mail", mailBereit(),
+            "wartend", warteschlange.containsKey(t.id));
+    }
+
+    private Map<String, Object> einstellungenSetzen(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        leitungPruefen(a, t);
+        synchronized (this) {
+            beschreibbar(t);
+            if (a.rumpf.containsKey("leitungsCode")) {
+                String code = leitungsCodeFeld(a);
+                for (Map<String, Object> c : t.codes) {
+                    if (code.equals(c.get("code"))) {
+                        throw new ApiFehler("konflikt", "Diesen Code hat schon ein Spieler oder Helfer. Bitte einen anderen wählen.");
+                    }
+                }
+                t.kopf.put("leitungCode", code);
+            }
+            if (a.rumpf.containsKey("sicherungAn")) t.kopf.put("sicherungAn", empfaengerFeld(a.rumpf.get("sicherungAn")));
+            if (a.rumpf.containsKey("sicherungTakt")) {
+                Long takt = Json.alsGanzzahl(a.rumpf.get("sicherungTakt"));
+                if (takt == null || !TAKTE.contains(takt)) throw new ApiFehler("ungueltig", "Ungültiger Abstand für die Sicherung.");
+                t.kopf.put("sicherungTakt", takt);
+            }
+            speicher.kopfSpeichern(t);
+            return einstellungen(t, a);
+        }
+    }
+
+    private Map<String, Object> sichernJetzt(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        leitungPruefen(a, t);
+        if (!mailBereit()) {
+            throw new ApiFehler("nicht_eingerichtet", "Für Sicherungsmails das Online-Konto auf der Zentrale verbinden (Seite „Zentrale“).");
+        }
+        List<String> empf;
+        synchronized (this) {
+            empf = empfaengerAus(t);
+            if (empf.isEmpty()) throw new ApiFehler("ungueltig", "Bitte zuerst mindestens einen Empfänger eintragen.");
+            begrenzen("sichern|" + t.id, 3, 600, "Bitte einige Minuten warten, bevor erneut gesichert wird.");
+            sicherungEinreihen(t, "auf Anforderung");
+        }
+        warteschlangeSenden();
+        synchronized (this) {
+            boolean wartend = warteschlange.containsKey(t.id);
+            Map<String, Object> aus = Json.obj("ok", true, "gesendetAn", new ArrayList<Object>(empf), "zeit", iso(jetzt()), "wartend", wartend);
+            if (wartend) {
+                Object f = warteschlange.get(t.id).get("fehler");
+                if (f != null) aus.put("meldung", f);
+            }
+            return aus;
+        }
+    }
+
+    /** Sicherung für den Versand vormerken (eine je Turnier; die neueste zählt). */
+    private synchronized void sicherungEinreihen(Speicher.Turnier t, String anlass) {
+        if (empfaengerAus(t).isEmpty()) return;
+        Map<String, Object> alt = warteschlange.get(t.id);
+        // „Turnier abgeschlossen“ bleibt als Anlass stehen, bis gesendet ist
+        if (alt != null && "Turnier abgeschlossen".equals(alt.get("anlass")) && !"auf Anforderung".equals(anlass)) anlass = "Turnier abgeschlossen";
+        warteschlange.put(t.id, Json.obj("turnier", t.id, "anlass", anlass, "seit", alt == null ? iso(jetzt()) : alt.get("seit"), "fehler", null));
+        speicher.speichereObjekt("warteschlange.json", warteschlange);
+    }
+
+    /** Fällige automatische Sicherungen vormerken (wie der PHP-Server: nur bei Änderungen, im eingestellten Abstand). */
+    private synchronized void sicherungenPruefen() {
+        long j = jetzt();
+        for (Speicher.Turnier t : turniere.values()) {
+            if (wahr(t.kopf.get("abgegeben")) || warteschlange.containsKey(t.id)) continue;
+            long takt = zahl(t.kopf.get("sicherungTakt"), 30);
+            if (takt <= 0 || t.hoechsteSeq() <= zahl(t.kopf.get("sicherungSeq"), 0)) continue;
+            long basis = t.kopf.get("sicherungLetzte") != null ? ausIso(t.kopf.get("sicherungLetzte"), j) : zahl(t.kopf.get("angelegtSek"), j);
+            if (j - basis < takt * 60) continue;
+            sicherungEinreihen(t, "automatisch, alle " + takt + " Minuten");
+        }
+    }
+
+    /** Sicherungsdatei im Format von shared/protokoll.ts (Sicherung) */
+    private synchronized Map<String, Object> sicherungErstellen(Speicher.Turnier t) {
+        List<Object> ev = new ArrayList<>();
+        for (Map<String, Object> e : t.ereignisse) ev.add(ausgabe(e, false));
+        return Json.obj(
+            "format", "tt-turnier-sicherung",
+            "version", 1L,
+            "erstellt", iso(jetzt()),
+            "turnier", Json.obj("id", t.id, "name", t.kopf.get("name"), "datum", t.kopf.get("datum"), "modus", "online"),
+            "ereignisse", ev);
+    }
+
+    /** Vorgemerkte Sicherungen über den Online-Server versenden, wenn möglich. Blockiert die Geräte nicht. */
+    public void warteschlangeSenden() {
+        synchronized (versandSperre) {
+            List<String> ids;
+            synchronized (this) {
+                if (!verbunden() || warteschlange.isEmpty()) return;
+                ids = new ArrayList<>(warteschlange.keySet());
+            }
+            for (String id : ids) {
+                Map<String, Object> rumpf;
+                String anlass;
+                long seq;
+                List<String> empf;
+                String token;
+                synchronized (this) {
+                    Map<String, Object> w = warteschlange.get(id);
+                    Speicher.Turnier t = turniere.get(id);
+                    if (w == null) continue;
+                    if (t == null || empfaengerAus(t).isEmpty()) {
+                        warteschlange.remove(id);
+                        speicher.speichereObjekt("warteschlange.json", warteschlange);
+                        continue;
+                    }
+                    anlass = String.valueOf(w.get("anlass"));
+                    seq = t.hoechsteSeq();
+                    empf = empfaengerAus(t);
+                    token = onlineToken();
+                    Object ueb = t.kopf.get("uebersicht");
+                    rumpf = Json.obj(
+                        "turnier", Json.obj("id", t.id, "name", t.kopf.get("name"), "datum", t.kopf.get("datum"), "veranstalter", kontoName()),
+                        "empfaenger", new ArrayList<Object>(empf),
+                        "anlass", anlass + " (Zentrale)",
+                        "uebersicht", ueb == null ? null : Json.obj("text", ueb, "zeit", t.kopf.get("uebersichtZeit")),
+                        "sicherung", sicherungErstellen(t));
+                }
+                if (token == null) return;
+                try {
+                    online.rufe(onlineUrl(), "sicherung.senden", null, rumpf, token);
+                    synchronized (this) {
+                        Speicher.Turnier t = turniere.get(id);
+                        if (t != null) {
+                            t.kopf.put("sicherungLetzte", iso(jetzt()));
+                            t.kopf.put("sicherungSeq", seq);
+                            speicher.kopfSpeichern(t);
+                        }
+                        Map<String, Object> w = warteschlange.get(id);
+                        // Nur entfernen, wenn inzwischen nichts Neues vorgemerkt wurde
+                        if (w != null && anlass.equals(w.get("anlass"))) warteschlange.remove(id);
+                        speicher.speichereObjekt("warteschlange.json", warteschlange);
+                    }
+                    plattform.protokoll("Sicherung gesendet: " + id + " (" + anlass + ")");
+                } catch (Online.Fehler f) {
+                    synchronized (this) {
+                        Map<String, Object> w = warteschlange.get(id);
+                        if (w != null) {
+                            w.put("fehler", f.netzwerk() ? "Wartet auf Internet." : f.getMessage());
+                            speicher.speichereObjekt("warteschlange.json", warteschlange);
+                        }
+                        if ("nicht_angemeldet".equals(f.code) || "gesperrt".equals(f.code)) {
+                            einst.put("onlineFehler", "Die Anmeldung am Online-Konto ist abgelaufen. Bitte neu anmelden.");
+                            einst.remove("onlineToken");
+                            einstSpeichern();
+                        }
+                    }
+                    if (f.netzwerk()) return; // kein Internet: Rest später
+                }
+            }
+        }
+    }
+
+    /**
+     * Regelmäßige Aufgaben (etwa alle 15 Sekunden aufrufen): Sicherungen prüfen und senden,
+     * verbundene Geräte zählen.
+     */
+    public void takt() {
+        try {
+            sicherungenPruefen();
+            if (plattform.internet()) warteschlangeSenden();
+        } catch (RuntimeException x) {
+            plattform.protokoll("Takt: " + x);
+        }
+        int n = geraeteAnzahl();
+        if (n != gemeldeteGeraete) {
+            gemeldeteGeraete = n;
+            plattform.geraeteGeaendert(n);
+        }
+    }
+
+    private int geraeteAnzahl() {
+        long grenze = jetzt() - GERAET_AKTIV;
+        synchronized (geraete) {
+            geraete.values().removeIf(z -> z < grenze);
+            return geraete.size();
+        }
+    }
+
+    /* ---------------- Codes ---------------- */
+
+    private static Map<String, Object> codeAusgabe(Map<String, Object> c) {
+        return Json.obj("rolle", c.get("rolle"), "bezug", c.get("bezug"), "name", c.get("name"), "code", c.get("code"), "gesperrt", wahr(c.get("gesperrt")));
+    }
+
+    private synchronized Map<String, Object> codesListe(Speicher.Turnier t) {
+        List<Map<String, Object>> l = new ArrayList<>(t.codes);
+        // wie PHP: ORDER BY rolle DESC, name
+        l.sort((x, y) -> {
+            int r = String.valueOf(y.get("rolle")).compareTo(String.valueOf(x.get("rolle")));
+            return r != 0 ? r : String.valueOf(x.get("name")).compareTo(String.valueOf(y.get("name")));
+        });
+        List<Object> aus = new ArrayList<>();
+        for (Map<String, Object> c : l) aus.add(codeAusgabe(c));
+        return Json.obj("codes", aus);
+    }
+
+    private String freierCode(Speicher.Turnier t) {
+        for (int i = 0; i < 1000; i++) {
+            String code = String.format("%06d", zufall.nextInt(1_000_000));
+            if (!codeGueltig(code) || code.equals(t.kopf.get("leitungCode"))) continue;
+            boolean belegt = false;
+            for (Map<String, Object> c : t.codes) if (code.equals(c.get("code"))) { belegt = true; break; }
+            if (!belegt) return code;
+        }
+        throw new ApiFehler("serverfehler", "Es konnte kein freier Code erzeugt werden.");
+    }
+
+    private static String[] codeZiel(Anf a) {
+        Object rolle = a.rumpf.get("rolle");
+        String bezug = Json.alsText(a.rumpf.get("bezug"));
+        if (!("spieler".equals(rolle) || "helfer".equals(rolle)) || bezug == null || !P_BEZUG.matcher(bezug).matches()) {
+            throw new ApiFehler("ungueltig", "Rolle oder Bezug ungültig.");
+        }
+        return new String[] {(String) rolle, bezug};
+    }
+
+    private static Map<String, Object> codeSuchen(Speicher.Turnier t, String rolle, String bezug) {
+        for (Map<String, Object> c : t.codes) if (rolle.equals(c.get("rolle")) && bezug.equals(c.get("bezug"))) return c;
+        return null;
+    }
+
+    private Map<String, Object> codes(Anf a) {
+        Speicher.Turnier t = turnierLaden(a.q("turnier"));
+        leitungPruefen(a, t);
+        return codesListe(t);
+    }
+
+    private Map<String, Object> codesAnlegen(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        leitungPruefen(a, t);
+        List<Object> liste = Json.alsListe(a.rumpf.get("eintraege"));
+        if (liste == null || liste.size() > MAX_CODES) throw new ApiFehler("ungueltig", "Feld „eintraege“ muss eine Liste sein.");
+        synchronized (this) {
+            beschreibbar(t);
+            List<Map<String, Object>> sicherung = new ArrayList<>();
+            for (Map<String, Object> c : t.codes) sicherung.add(new LinkedHashMap<>(c));
+            try {
+                for (Object o : liste) {
+                    Map<String, Object> e = Json.alsObjekt(o);
+                    Object rolle = e == null ? null : e.get("rolle");
+                    String bezug = e == null ? null : Json.alsText(e.get("bezug"));
+                    String name = e == null || Json.alsText(e.get("name")) == null ? "" : kuerzen(Json.alsText(e.get("name")).trim(), 160);
+                    if (!("spieler".equals(rolle) || "helfer".equals(rolle)) || bezug == null || !P_BEZUG.matcher(bezug).matches() || name.isEmpty()) {
+                        throw new ApiFehler("ungueltig", "Ungültiger Eintrag für einen Code.");
+                    }
+                    Map<String, Object> alt = codeSuchen(t, (String) rolle, bezug);
+                    if (alt != null) {
+                        if (!name.equals(alt.get("name"))) {
+                            alt.put("name", name);
+                            for (Map<String, Object> s : sitzungen.values()) {
+                                if (t.id.equals(s.get("turnier")) && rolle.equals(s.get("rolle")) && bezug.equals(s.get("bezug"))) s.put("name", name);
+                            }
+                            sitzungenSpeichern();
+                        }
+                        continue;
+                    }
+                    if (t.codes.size() >= MAX_CODES) throw new ApiFehler("ungueltig", "Höchstens " + MAX_CODES + " Codes je Turnier.");
+                    t.codes.add(Json.obj("rolle", rolle, "bezug", bezug, "name", name, "code", freierCode(t), "gesperrt", false, "angelegt", jetzt()));
+                }
+            } catch (RuntimeException x) {
+                t.codes.clear();
+                t.codes.addAll(sicherung);
+                throw x;
+            }
+            speicher.codesSpeichern(t);
+            return codesListe(t);
+        }
+    }
+
+    private Map<String, Object> codeNeu(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        leitungPruefen(a, t);
+        String[] z = codeZiel(a);
+        synchronized (this) {
+            beschreibbar(t);
+            Map<String, Object> c = codeSuchen(t, z[0], z[1]);
+            if (c == null) throw new ApiFehler("nicht_gefunden", "Code nicht gefunden.");
+            c.put("code", freierCode(t));
+            c.put("gesperrt", false);
+            speicher.codesSpeichern(t);
+            sitzungenEntfernen(t.id, z[0], z[1]);
+            return Json.obj("code", codeAusgabe(c));
+        }
+    }
+
+    private Map<String, Object> codeSperren(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        leitungPruefen(a, t);
+        String[] z = codeZiel(a);
+        synchronized (this) {
+            beschreibbar(t);
+            Map<String, Object> c = codeSuchen(t, z[0], z[1]);
+            if (c == null) throw new ApiFehler("nicht_gefunden", "Code nicht gefunden.");
+            boolean gesperrt = wahr(a.rumpf.get("gesperrt"));
+            c.put("gesperrt", gesperrt);
+            speicher.codesSpeichern(t);
+            if (gesperrt) sitzungenEntfernen(t.id, z[0], z[1]);
+            return Json.obj("code", codeAusgabe(c));
+        }
+    }
+
+    private Map<String, Object> codeEntfernen(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        leitungPruefen(a, t);
+        String[] z = codeZiel(a);
+        synchronized (this) {
+            beschreibbar(t);
+            t.codes.removeIf(c -> z[0].equals(c.get("rolle")) && z[1].equals(c.get("bezug")));
+            speicher.codesSpeichern(t);
+            sitzungenEntfernen(t.id, z[0], z[1]);
+            return Json.obj("ok", true);
+        }
+    }
+
+    /* ---------------- Spielerpool ---------------- */
+
+    private static Object[] poolEintrag(Object o) {
+        Map<String, Object> e = Json.alsObjekt(o);
+        if (e == null) throw new ApiFehler("ungueltig", "Spieler muss ein Objekt sein.");
+        String id = Json.alsText(e.get("id"));
+        if (id == null || !P_POOL_ID.matcher(id).matches()) throw new ApiFehler("ungueltig", "Spieler-ID ungültig.");
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("vorname", poolText(e.get("vorname"), 80));
+        d.put("nachname", poolText(e.get("nachname"), 80));
+        d.put("verein", poolText(e.get("verein"), 120));
+        if (((String) d.get("vorname")).isEmpty() && ((String) d.get("nachname")).isEmpty()) {
+            throw new ApiFehler("ungueltig", "Spieler braucht einen Namen.");
+        }
+        Long ttr = Json.alsGanzzahl(e.get("ttr"));
+        d.put("ttr", ttr != null && ttr >= 0 && ttr <= 4000 ? ttr : null);
+        Long jg = Json.alsGanzzahl(e.get("jahrgang"));
+        d.put("jahrgang", jg != null && jg >= 1900 && jg <= 2100 ? jg : null);
+        String k = poolText(e.get("klasse"), 40);
+        d.put("klasse", k.isEmpty() ? null : k);
+        Object g = e.get("geschlecht");
+        d.put("geschlecht", "m".equals(g) || "w".equals(g) || "d".equals(g) ? g : null);
+        return new Object[] {id, d};
+    }
+
+    private static String poolText(Object o, int max) {
+        return o instanceof String ? kuerzen(((String) o).trim(), max) : "";
+    }
+
+    private synchronized Map<String, Object> poolAusgabe() {
+        List<String> ids = new ArrayList<>(pool.keySet());
+        Collections.sort(ids);
+        List<Object> aus = new ArrayList<>();
+        for (String id : ids) {
+            Map<String, Object> d = new LinkedHashMap<>(pool.get(id));
+            d.put("id", id);
+            aus.add(d);
+        }
+        return Json.obj("spieler", aus);
+    }
+
+    private Map<String, Object> poolListe(Anf a) {
+        konto(a);
+        return poolAusgabe();
+    }
+
+    private Map<String, Object> poolSpeichern(Anf a) {
+        konto(a);
+        List<Object> liste = Json.alsListe(a.rumpf.get("spieler"));
+        if (liste == null || liste.size() > 500) throw new ApiFehler("ungueltig", "Feld „spieler“ muss eine Liste mit höchstens 500 Einträgen sein.");
+        List<Object[]> eintraege = new ArrayList<>();
+        for (Object o : liste) eintraege.add(poolEintrag(o));
+        synchronized (this) {
+            int neu = 0;
+            for (Object[] e : eintraege) if (!pool.containsKey((String) e[0])) neu++;
+            if (pool.size() + neu > MAX_POOL) throw new ApiFehler("ungueltig", "Höchstens " + MAX_POOL + " Spieler im Pool.");
+            List<Object> geloescht = poolGeloescht();
+            for (Object[] e : eintraege) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> d = (Map<String, Object>) e[1];
+                d.put("geaendert", iso(jetzt()));
+                pool.put((String) e[0], d);
+                geloescht.remove(e[0]);
+            }
+            speicher.speichereObjekt("pool.json", pool);
+            einstSpeichern();
+        }
+        return poolAusgabe();
+    }
+
+    private List<Object> poolGeloescht() {
+        List<Object> l = Json.alsListe(einst.get("poolGeloescht"));
+        if (l == null) {
+            l = new ArrayList<>();
+            einst.put("poolGeloescht", l);
+        }
+        return l;
+    }
+
+    private Map<String, Object> poolLoeschen(Anf a) {
+        konto(a);
+        List<Object> ids = Json.alsListe(a.rumpf.get("ids"));
+        if (ids == null || ids.size() > MAX_POOL) throw new ApiFehler("ungueltig", "Feld „ids“ muss eine Liste sein.");
+        synchronized (this) {
+            List<Object> geloescht = poolGeloescht();
+            for (Object id : ids) {
+                if (id instanceof String && pool.remove(id) != null && !geloescht.contains(id)) geloescht.add(id);
+            }
+            speicher.speichereObjekt("pool.json", pool);
+            einstSpeichern();
+        }
+        return Json.obj("ok", true);
+    }
+
+    /* ---------------- Übersicht ---------------- */
+
+    private Map<String, Object> uebersichtSetzen(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        leitungPruefen(a, t);
+        String text = Json.alsText(a.rumpf.get("text"));
+        if (text == null || text.codePointCount(0, text.length()) > MAX_UEBERSICHT) throw new ApiFehler("ungueltig", "Übersicht fehlt oder ist zu lang.");
+        synchronized (this) {
+            if (wahr(t.kopf.get("abgegeben"))) return Json.obj("ok", true); // still ignorieren: die App sendet sie nebenbei
+            t.kopf.put("uebersicht", text);
+            t.kopf.put("uebersichtZeit", iso(jetzt()));
+            speicher.kopfSpeichern(t);
+        }
+        return Json.obj("ok", true);
+    }
+
+    /* ======================================================================
+     * Zentrale: Gerät, WLAN, Online-Konto
+     * ==================================================================== */
+
+    private Map<String, Object> zentraleAnmelden(Anf a) {
+        selbst(a);
+        String token = neuesToken(true, null, "veranstalter", kontoName(), null);
+        return Json.obj("token", token, "konto", kontoAusgabe());
+    }
+
+    public synchronized Map<String, Object> zentraleStatus() {
+        List<Object> adressen = new ArrayList<>();
+        for (String ip : plattform.adressen()) adressen.add("http://" + ip + ":" + port + "/");
+        List<Object> warte = new ArrayList<>();
+        for (Map<String, Object> w : warteschlange.values()) {
+            Speicher.Turnier t = turniere.get(String.valueOf(w.get("turnier")));
+            Map<String, Object> m = new LinkedHashMap<>(w);
+            m.put("name", t == null ? null : t.kopf.get("name"));
+            warte.add(m);
+        }
+        Map<String, Object> k = onlineKonto();
+        return Json.obj(
+            "version", VERSION,
+            "id", einst.get("id"),
+            "port", (long) port,
+            "adressen", adressen,
+            "geraete", (long) geraeteAnzahl(),
+            "wlan", Json.obj("ssid", einst.get("wlanSsid"), "passwort", einst.get("wlanPasswort")),
+            "hotspot", plattform.hotspotStatus(),
+            "akkuAusnahme", plattform.akkuAusnahme(),
+            "internet", plattform.internet(),
+            "online", Json.obj(
+                "url", onlineUrl(),
+                "verbunden", verbunden(),
+                "konto", k == null ? null : Json.obj("name", k.get("name"), "email", k.get("email")),
+                "mail", wahr(einst.get("onlineMail")),
+                "fehler", einst.get("onlineFehler")),
+            "warteschlange", warte);
+    }
+
+    private Map<String, Object> zentraleWlan(Anf a) {
+        selbst(a);
+        String ssid = Json.alsText(a.rumpf.get("ssid"));
+        String pw = Json.alsText(a.rumpf.get("passwort"));
+        synchronized (this) {
+            einst.put("wlanSsid", ssid == null || ssid.trim().isEmpty() ? null : kuerzen(ssid.trim(), 64));
+            einst.put("wlanPasswort", pw == null || pw.isEmpty() ? null : kuerzen(pw, 64));
+            einstSpeichern();
+        }
+        return zentraleStatus();
+    }
+
+    private Map<String, Object> zentraleHotspot(Anf a) {
+        selbst(a);
+        Map<String, Object> r = plattform.hotspot(wahr(a.rumpf.get("an")));
+        Map<String, Object> s = zentraleStatus();
+        s.put("meldung", r.get("meldung"));
+        return s;
+    }
+
+    private Map<String, Object> onlineAnmelden(Anf a) {
+        selbst(a);
+        String mail = email(Json.alsText(a.rumpf.get("email")));
+        Object pw = a.rumpf.get("passwort");
+        if (mail == null) throw new ApiFehler("ungueltig", "Die E-Mail-Adresse ist ungültig.");
+        if (!(pw instanceof String) || ((String) pw).isEmpty()) throw new ApiFehler("ungueltig", "Bitte das Passwort eingeben.");
+        String url = Json.alsText(a.rumpf.get("url"));
+        url = url == null || url.trim().isEmpty() ? onlineUrl() : url.trim();
+        if (!url.matches("^https?://[^\\s]+$")) throw new ApiFehler("ungueltig", "Die Adresse des Online-Servers ist ungültig.");
+        if (!url.contains("index.php")) url = url.replaceAll("/+$", "") + (url.endsWith("/api") ? "/index.php" : "/api/index.php");
+        Map<String, Object> info;
+        Map<String, Object> login;
+        try {
+            info = online.rufe(url, "info", null, null, null);
+            if (!"tt-turnier".equals(info.get("app"))) throw new ApiFehler("ungueltig", "Unter dieser Adresse läuft kein Turnier-Server.");
+            if (!wahr(info.get("codes")) || Json.alsObjekt(info.get("zentrale")) != null) {
+                throw new ApiFehler("ungueltig", "Der Online-Server ist zu alt oder ist selbst eine Zentrale.");
+            }
+            login = online.rufe(url, "login", null, Json.obj("email", mail, "passwort", pw), null);
+        } catch (Online.Fehler f) {
+            throw onlineFehler(f);
+        }
+        Map<String, Object> k = Json.alsObjekt(login.get("konto"));
+        synchronized (this) {
+            einst.put("onlineUrl", url);
+            einst.put("onlineToken", login.get("token"));
+            einst.put("onlineKonto", Json.obj("id", k == null ? null : k.get("id"), "name", k == null ? null : k.get("name"), "email", k == null ? mail : k.get("email")));
+            einst.put("onlineMail", wahr(info.get("mail")));
+            einst.remove("onlineFehler");
+            einstSpeichern();
+            // Sicherungen ohne Empfänger bekommen die Konto-Mail
+            for (Speicher.Turnier t : turniere.values()) {
+                if (empfaengerAus(t).isEmpty() && "zentrale".equals(t.kopf.get("herkunft")) && t.kopf.get("sicherungAnGesetzt") == null) {
+                    t.kopf.put("sicherungAn", new ArrayList<Object>(Collections.singletonList(k == null ? mail : k.get("email"))));
+                    speicher.kopfSpeichern(t);
+                }
+            }
+        }
+        warteschlangeSenden();
+        return zentraleStatus();
+    }
+
+    private Map<String, Object> onlineAbmelden(Anf a) {
+        selbst(a);
+        String token;
+        String url;
+        synchronized (this) {
+            token = onlineToken();
+            url = onlineUrl();
+            einst.remove("onlineToken");
+            einst.remove("onlineKonto");
+            einst.remove("onlineFehler");
+            einst.put("onlineMail", false);
+            einstSpeichern();
+        }
+        if (token != null) {
+            try {
+                online.rufe(url, "logout", null, Json.obj(), token);
+            } catch (Online.Fehler ignoriert) {
+                // ohne Internet: Token läuft von selbst ab
+            }
+        }
+        return zentraleStatus();
+    }
+
+    private ApiFehler onlineFehler(Online.Fehler f) {
+        if (f.netzwerk()) return new ApiFehler("serverfehler", "Keine Verbindung zum Online-Server. Hat das Gerät gerade Internet?");
+        if ("nicht_angemeldet".equals(f.code) || "gesperrt".equals(f.code)) {
+            synchronized (this) {
+                if (onlineToken() != null) {
+                    einst.remove("onlineToken");
+                    einst.put("onlineFehler", "Die Anmeldung am Online-Konto ist abgelaufen. Bitte neu anmelden.");
+                    einstSpeichern();
+                }
+            }
+            return new ApiFehler("nicht_angemeldet", "Online: " + f.getMessage() + " Bitte das Online-Konto neu verbinden.");
+        }
+        String code = f.code;
+        if (!Arrays.asList("ungueltig", "falsche_zugangsdaten", "keine_berechtigung", "nicht_gefunden", "konflikt", "zu_viele_versuche", "nicht_eingerichtet").contains(code)) {
+            code = "serverfehler";
+        }
+        return new ApiFehler(code, "Online: " + f.getMessage());
+    }
+
+    private String[] onlineZugang() {
+        synchronized (this) {
+            String token = onlineToken();
+            if (token == null) throw new ApiFehler("nicht_angemeldet", "Bitte zuerst das Online-Konto auf der Zentrale verbinden.");
+            return new String[] {onlineUrl(), token, String.valueOf(einst.get("id"))};
+        }
+    }
+
+    private String zentraleName() {
+        return "Zentrale " + kontoName() + " (" + einst.get("id") + ")";
+    }
+
+    private Map<String, Object> onlineTurniere(Anf a) {
+        selbst(a);
+        String[] z = onlineZugang();
+        Map<String, Object> r;
+        try {
+            r = online.rufe(z[0], "turniere", null, null, z[1]);
+        } catch (Online.Fehler f) {
+            throw onlineFehler(f);
+        }
+        List<Object> aus = new ArrayList<>();
+        List<Object> l = Json.alsListe(r.get("turniere"));
+        synchronized (this) {
+            if (l != null) for (Object o : l) {
+                Map<String, Object> t = Json.alsObjekt(o);
+                if (t == null) continue;
+                Map<String, Object> m = new LinkedHashMap<>(t);
+                Speicher.Turnier hier = turniere.get(Json.alsText(t.get("id")));
+                m.put("aufDieserZentrale", hier != null && !wahr(hier.kopf.get("abgegeben")));
+                m.put("vonDieserZentrale", z[2].equals(t.get("zentraleId")));
+                aus.add(m);
+            }
+        }
+        return Json.obj("turniere", aus);
+    }
+
+    /* ---------------- Übernahme vom Online-Server ---------------- */
+
+    private Map<String, Object> uebernehmen(Anf a) {
+        selbst(a);
+        String id = Json.alsText(a.rumpf.get("turnier"));
+        if (id == null || !P_TURNIER_ID.matcher(id).matches()) throw new ApiFehler("ungueltig", "Turnier fehlt.");
+        String[] z = onlineZugang();
+        synchronized (this) {
+            Speicher.Turnier hier = turniere.get(id);
+            if (hier != null && !"online".equals(hier.kopf.get("herkunft"))) {
+                throw new ApiFehler("konflikt", "Auf der Zentrale gibt es schon ein eigenes Turnier mit dieser Kennung.");
+            }
+            if (hier != null && !wahr(hier.kopf.get("abgegeben"))) {
+                throw new ApiFehler("konflikt", "Dieses Turnier liegt bereits auf der Zentrale.");
+            }
+        }
+        Map<String, Object> r;
+        List<Map<String, Object>> online1 = new ArrayList<>();
+        try {
+            r = online.rufe(z[0], "zentrale.uebernehmen", null,
+                Json.obj("turnier", id, "zentrale", zentraleName(), "zentraleId", z[2], "erzwingen", wahr(a.rumpf.get("erzwingen"))), z[1]);
+            long ab = 0;
+            for (int runde = 0; runde < 10_000; runde++) {
+                Map<String, Object> e = online.rufe(z[0], "events", strMap("turnier", id, "ab", String.valueOf(ab)), null, null);
+                List<Object> l = Json.alsListe(e.get("ereignisse"));
+                if (l != null) for (Object o : l) {
+                    Map<String, Object> m = Json.alsObjekt(o);
+                    if (m != null) {
+                        online1.add(m);
+                        ab = Math.max(ab, zahl(m.get("seq"), ab));
+                    }
+                }
+                if (!wahr(e.get("mehr"))) break;
+            }
+        } catch (Online.Fehler f) {
+            throw onlineFehler(f);
+        }
+        Map<String, Object> info = Json.alsObjekt(r.get("turnier"));
+        Map<String, Object> ein = Json.alsObjekt(r.get("einstellungen"));
+        Map<String, Object> ueb = Json.alsObjekt(r.get("uebersicht"));
+        List<Object> codes = Json.alsListe(r.get("codes"));
+        if (info == null || ein == null) throw new ApiFehler("serverfehler", "Unerwartete Antwort des Online-Servers.");
+        int neu = 0;
+        synchronized (this) {
+            Speicher.Turnier t = turniere.get(id);
+            boolean anlegen = t == null;
+            if (anlegen) {
+                long j = jetzt();
+                t = new Speicher.Turnier(id, Json.obj("angelegt", info.get("angelegt"), "angelegtSek", ausIso(info.get("angelegt"), j)));
+            }
+            t.kopf.put("name", info.get("name"));
+            t.kopf.put("datum", info.get("datum"));
+            t.kopf.put("leitungCode", ein.get("leitungsCode"));
+            t.kopf.put("sicherungAn", empfaengerFeldStill(ein.get("sicherungAn")));
+            t.kopf.put("sicherungTakt", zahl(ein.get("sicherungTakt"), 30));
+            t.kopf.put("sicherungLetzte", ein.get("letzteSicherung"));
+            t.kopf.put("uebersicht", ueb == null ? null : ueb.get("text"));
+            t.kopf.put("uebersichtZeit", ueb == null ? null : ueb.get("zeit"));
+            t.kopf.put("herkunft", "online");
+            t.kopf.put("abgegeben", false);
+            t.kopf.put("rueckgabeLaeuft", false);
+            t.kopf.put("uebernommen", iso(jetzt()));
+            t.codes.clear();
+            if (codes != null) for (Object o : codes) {
+                Map<String, Object> c = Json.alsObjekt(o);
+                if (c == null) continue;
+                t.codes.add(Json.obj("rolle", c.get("rolle"), "bezug", c.get("bezug"), "name", c.get("name"), "code", c.get("code"),
+                    "gesperrt", wahr(c.get("gesperrt")), "angelegt", jetzt()));
+            }
+            if (anlegen) {
+                speicher.turnierAnlegen(t);
+                turniere.put(id, t);
+            } else {
+                speicher.kopfSpeichern(t);
+                speicher.codesSpeichern(t);
+            }
+            List<Map<String, Object>> dazu = new ArrayList<>();
+            long seq = t.hoechsteSeq();
+            for (Map<String, Object> e : online1) {
+                String eid = Json.alsText(e.get("id"));
+                if (eid == null || t.index.containsKey(eid)) continue;
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", eid);
+                m.put("art", e.get("art"));
+                m.put("daten", e.get("daten"));
+                m.put("zeit", e.get("zeit"));
+                m.put("geraet", e.get("geraet"));
+                m.put("seq", ++seq);
+                m.put("empfangen", e.get("empfangen"));
+                m.put("autor", e.get("autor"));
+                m.put("online", true);
+                dazu.add(m);
+                t.aufnehmen(m);
+            }
+            speicher.ereignisseAnhaengen(t, dazu);
+            neu = dazu.size();
+            // Bereits online gesicherter Stand gilt als gesichert
+            t.kopf.put("sicherungSeq", t.hoechsteSeq());
+            speicher.kopfSpeichern(t);
+            return Json.obj("turnier", turnierAusgabe(t), "neu", (long) neu);
+        }
+    }
+
+    private static Map<String, String> strMap(String... kv) {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < kv.length; i += 2) m.put(kv[i], kv[i + 1]);
+        return m;
+    }
+
+    private static List<Object> empfaengerFeldStill(Object o) {
+        try {
+            return empfaengerFeld(o);
+        } catch (ApiFehler x) {
+            return new ArrayList<>();
+        }
+    }
+
+    /* ---------------- Rückgabe an den Online-Server ---------------- */
+
+    private Map<String, Object> rueckgabe(Anf a) {
+        selbst(a);
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        String[] z = onlineZugang();
+        List<Map<String, Object>> offen = new ArrayList<>();
+        Map<String, Object> neu = null;
+        Map<String, Object> abschluss;
+        synchronized (this) {
+            if (wahr(t.kopf.get("abgegeben"))) throw new ApiFehler("konflikt", "Dieses Turnier wurde schon zurückgegeben.");
+            if (wahr(t.kopf.get("rueckgabeLaeuft"))) throw new ApiFehler("konflikt", "Die Rückgabe läuft bereits.");
+            for (Map<String, Object> e : t.ereignisse) if (!wahr(e.get("online"))) offen.add(e);
+            if ("zentrale".equals(t.kopf.get("herkunft"))) {
+                neu = Json.obj("name", t.kopf.get("name"), "datum", t.kopf.get("datum"), "leitungsCode", t.kopf.get("leitungCode"));
+            }
+            List<Object> codes = new ArrayList<>();
+            for (Map<String, Object> c : t.codes) codes.add(codeAusgabe(c));
+            Object ueb = t.kopf.get("uebersicht");
+            abschluss = Json.obj(
+                "turnier", t.id, "zentraleId", z[2], "codes", codes,
+                "einstellungen", Json.obj("leitungsCode", t.kopf.get("leitungCode"), "sicherungAn", new ArrayList<Object>(empfaengerAus(t)),
+                    "sicherungTakt", zahl(t.kopf.get("sicherungTakt"), 30)),
+                "uebersicht", ueb == null ? null : Json.obj("text", ueb));
+            t.kopf.put("rueckgabeLaeuft", true);
+            speicher.kopfSpeichern(t);
+        }
+        Set<String> gesendet = new HashSet<>();
+        try {
+            int i = 0;
+            do {
+                List<Object> block = new ArrayList<>();
+                for (int k = i; k < Math.min(i + MAX_EREIGNISSE, offen.size()); k++) {
+                    Map<String, Object> e = offen.get(k);
+                    block.add(Json.obj("id", e.get("id"), "art", e.get("art"), "daten", e.get("daten"), "zeit", e.get("zeit"),
+                        "geraet", e.get("geraet"), "autor", e.get("autor")));
+                }
+                Map<String, Object> rumpf = Json.obj("turnier", t.id, "zentrale", zentraleName(), "zentraleId", z[2], "ereignisse", block);
+                if (neu != null) rumpf.put("neu", neu);
+                online.rufe(z[0], "zentrale.rueckgabe", null, rumpf, z[1]);
+                for (Object b : block) gesendet.add((String) Json.alsObjekt(b).get("id"));
+                i += MAX_EREIGNISSE;
+            } while (i < offen.size());
+            online.rufe(z[0], "zentrale.freigeben", null, abschluss, z[1]);
+        } catch (Online.Fehler f) {
+            synchronized (this) {
+                for (Map<String, Object> e : t.ereignisse) if (gesendet.contains(e.get("id"))) e.put("online", true);
+                if (!gesendet.isEmpty()) speicher.ereignisseNeuSchreiben(t);
+                if (neu != null && !gesendet.isEmpty()) t.kopf.put("herkunft", "online");
+                t.kopf.put("rueckgabeLaeuft", false);
+                speicher.kopfSpeichern(t);
+            }
+            throw onlineFehler(f);
+        }
+        synchronized (this) {
+            for (Map<String, Object> e : t.ereignisse) e.put("online", true);
+            speicher.ereignisseNeuSchreiben(t);
+            t.kopf.put("herkunft", "online");
+            t.kopf.put("abgegeben", true);
+            t.kopf.put("rueckgabeLaeuft", false);
+            t.kopf.put("zurueckgegeben", iso(jetzt()));
+            speicher.kopfSpeichern(t);
+            warteschlange.remove(t.id);
+            speicher.speichereObjekt("warteschlange.json", warteschlange);
+            return Json.obj("turnier", turnierAusgabe(t), "gesendet", (long) offen.size());
+        }
+    }
+
+    private Map<String, Object> turnierLoeschen(Anf a) {
+        selbst(a);
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        synchronized (this) {
+            boolean ungesichert = false;
+            for (Map<String, Object> e : t.ereignisse) if (!wahr(e.get("online"))) { ungesichert = true; break; }
+            if (ungesichert && !wahr(a.rumpf.get("trotzdem"))) {
+                throw new ApiFehler("konflikt", "Dieses Turnier hat Einträge, die noch nicht beim Online-Server liegen.");
+            }
+            turniere.remove(t.id);
+            speicher.turnierLoeschen(t.id);
+            final String tid = t.id;
+            sitzungen.values().removeIf(s -> tid.equals(s.get("turnier")));
+            sitzungenSpeichern();
+            warteschlange.remove(t.id);
+            speicher.speichereObjekt("warteschlange.json", warteschlange);
+        }
+        return Json.obj("ok", true);
+    }
+
+    /* ---------------- Spielerpool abgleichen ---------------- */
+
+    private Map<String, Object> poolAbgleichen(Anf a) {
+        selbst(a);
+        String[] z = onlineZugang();
+        List<Object> geloescht;
+        Map<String, Map<String, Object>> lokal;
+        synchronized (this) {
+            geloescht = new ArrayList<>(poolGeloescht());
+            lokal = new LinkedHashMap<>();
+            for (Map.Entry<String, Map<String, Object>> e : pool.entrySet()) lokal.put(e.getKey(), new LinkedHashMap<>(e.getValue()));
+        }
+        List<Object> ergebnis;
+        int hoch = 0;
+        try {
+            if (!geloescht.isEmpty()) online.rufe(z[0], "pool.loeschen", null, Json.obj("ids", geloescht), z[1]);
+            Map<String, Object> r = online.rufe(z[0], "pool", null, null, z[1]);
+            Map<String, String> onlineStand = new HashMap<>();
+            List<Object> l = Json.alsListe(r.get("spieler"));
+            if (l != null) for (Object o : l) {
+                Map<String, Object> m = Json.alsObjekt(o);
+                if (m != null) onlineStand.put(String.valueOf(m.get("id")), String.valueOf(m.get("geaendert")));
+            }
+            List<Object> hochladen = new ArrayList<>();
+            for (Map.Entry<String, Map<String, Object>> e : lokal.entrySet()) {
+                String o = onlineStand.get(e.getKey());
+                String g = String.valueOf(e.getValue().get("geaendert"));
+                if (o == null || g.compareTo(o) > 0) {
+                    Map<String, Object> m = new LinkedHashMap<>(e.getValue());
+                    m.put("id", e.getKey());
+                    m.remove("geaendert");
+                    hochladen.add(m);
+                }
+            }
+            hoch = hochladen.size();
+            for (int i = 0; i < hochladen.size(); i += 500) {
+                r = online.rufe(z[0], "pool.speichern", null, Json.obj("spieler", new ArrayList<>(hochladen.subList(i, Math.min(i + 500, hochladen.size())))), z[1]);
+            }
+            ergebnis = Json.alsListe(r.get("spieler"));
+        } catch (Online.Fehler f) {
+            throw onlineFehler(f);
+        }
+        synchronized (this) {
+            pool.clear();
+            if (ergebnis != null) for (Object o : ergebnis) {
+                Map<String, Object> m = Json.alsObjekt(o);
+                if (m == null || !(m.get("id") instanceof String)) continue;
+                Map<String, Object> d = new LinkedHashMap<>(m);
+                String id = (String) d.remove("id");
+                pool.put(id, d);
+            }
+            poolGeloescht().removeAll(geloescht);
+            speicher.speichereObjekt("pool.json", pool);
+            einstSpeichern();
+            return Json.obj("ok", true, "hochgeladen", (long) hoch, "anzahl", (long) pool.size());
+        }
+    }
+
+    /* ---------------- für Tests ---------------- */
+
+    public synchronized int anzahlTurniere() {
+        return turniere.size();
+    }
+
+    public synchronized Iterator<String> turnierIds() {
+        return new ArrayList<>(turniere.keySet()).iterator();
+    }
+}

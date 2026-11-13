@@ -1,0 +1,408 @@
+package de.saschaurban.ttturnier.kern;
+
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Tests der Zentrale ohne Fremdbibliotheken: {@code java -cp … KernTest}.
+ * Mit TT_ONLINE=&lt;URL der PHP-API&gt; (und TT_ONLINE_ADMIN_SETUP) zusätzlich Übernahme,
+ * Rückgabe und Sicherung gegen einen echten PHP-Server; TT_MAILS = Ordner der Datei-Mails.
+ */
+public final class KernTest {
+    private static int anzahl, fehler;
+    private static long uhr = 1_800_000_000L;
+
+    static void pruefe(boolean b, String text) {
+        anzahl++;
+        if (b) {
+            System.out.println("  ok  " + text);
+        } else {
+            fehler++;
+            System.out.println("  FEHLER  " + text);
+        }
+    }
+
+    /** Antwort: [status, daten] */
+    static final class A {
+        final int s;
+        final Map<String, Object> d;
+        A(int s, Map<String, Object> d) { this.s = s; this.d = d; }
+        Object g(String k) { return d.get(k); }
+        String t(String k) { return (String) d.get(k); }
+        @SuppressWarnings("unchecked")
+        List<Object> l(String k) { return (List<Object>) d.get(k); }
+    }
+
+    static A rufe(Zentrale z, String methode, String route, Object rumpf, String token, Map<String, String> query, boolean selbst) {
+        Map<String, String> q = new LinkedHashMap<>();
+        q.put("r", route);
+        if (query != null) q.putAll(query);
+        Map<String, String> kopf = new LinkedHashMap<>();
+        if (token != null) kopf.put("x-tt-token", token);
+        byte[] b = rumpf == null ? new byte[0] : Json.schreiben(rumpf).getBytes(StandardCharsets.UTF_8);
+        HttpServer.Antwort a = z.api(new HttpServer.Anfrage(methode, "/api/index.php", q, kopf, b, selbst ? "127.0.0.1" : "192.168.43.20", selbst));
+        return new A(a.status, Json.objekt(new String(a.inhalt, StandardCharsets.UTF_8)));
+    }
+
+    static A rufe(Zentrale z, String methode, String route, Object rumpf, String token) {
+        return rufe(z, methode, route, rumpf, token, null, false);
+    }
+
+    static Map<String, String> q(String... kv) {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < kv.length; i += 2) m.put(kv[i], kv[i + 1]);
+        return m;
+    }
+
+    static Map<String, Object> ev(String id, String art, Map<String, Object> daten) {
+        return Json.obj("id", id, "art", art, "daten", daten, "zeit", "2026-11-13T10:00:00.000Z", "geraet", "geraet-a");
+    }
+
+    static List<Object> liste(Object... o) {
+        List<Object> l = new ArrayList<>();
+        for (Object x : o) l.add(x);
+        return l;
+    }
+
+    static Path neuerOrdner() throws IOException {
+        return Files.createTempDirectory("tt-zentrale-test");
+    }
+
+    public static void main(String[] args) throws Exception {
+        json();
+        protokoll();
+        http();
+        String online = System.getenv("TT_ONLINE");
+        if (online != null && !online.isEmpty()) zusammenspiel(online);
+        System.out.println();
+        System.out.println(anzahl + " Prüfungen, " + fehler + " Fehler");
+        System.exit(fehler == 0 ? 0 : 1);
+    }
+
+    static void json() {
+        System.out.println("JSON");
+        Object o = Json.lesen("{\"a\":[1,2.5,-3e2,true,null,\"x\\u00e4\\n\"],\"b\":{},\"c\":[]}");
+        pruefe(Json.schreiben(o).equals("{\"a\":[1,2.5,-300,true,null,\"xä\\n\"],\"b\":{},\"c\":[]}"), "lesen und schreiben, leere {} und [] bleiben");
+        boolean geworfen = false;
+        try {
+            Json.lesen("{\"a\":1,}");
+        } catch (Json.Fehler x) {
+            geworfen = true;
+        }
+        pruefe(geworfen, "fehlerhaftes JSON wird abgelehnt");
+        pruefe(Json.schreiben(Json.obj("t", "a\"b\\c\u0001")).equals("{\"t\":\"a\\\"b\\\\c\\u0001\"}"), "Sonderzeichen werden maskiert");
+    }
+
+    @SuppressWarnings("unchecked")
+    static void protokoll() throws Exception {
+        System.out.println("Protokoll wie der PHP-Server");
+        Path ordner = neuerOrdner();
+        Zentrale z = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
+        z.setzePort(8080);
+
+        A a = rufe(z, "GET", "info", null, null);
+        pruefe(a.s == 200 && "tt-turnier".equals(a.g("app")) && Long.valueOf(1).equals(a.g("protokoll")) && Boolean.TRUE.equals(a.g("eingerichtet"))
+            && Json.alsObjekt(a.g("zentrale")) != null && Boolean.FALSE.equals(a.g("registrierung")), "info meldet Zentrale");
+        a = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null);
+        pruefe(a.s == 403, "Konto der Zentrale nur vom Gerät selbst");
+        a = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true);
+        pruefe(a.s == 200 && a.t("token").length() == 64, "Konto der Zentrale am Gerät selbst");
+        String konto = a.t("token");
+        a = rufe(z, "GET", "ich", null, konto);
+        pruefe(a.s == 200 && Json.alsObjekt(a.g("konto")) != null, "ich: Konto");
+        a = rufe(z, "POST", "login", Json.obj("email", "a@b.de", "passwort", "x"), null);
+        pruefe(a.s == 503, "login gibt es auf der Zentrale nicht");
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "X", "leitungsCode", "583920"), konto);
+        pruefe(a.s == 400, "Name zu kurz");
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01", "leitungsCode", "123456"), konto);
+        pruefe(a.s == 400, "zu einfacher Leitungscode");
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01", "leitungsCode", "583920"), null);
+        pruefe(a.s == 401, "Anlegen nur mit Konto");
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01", "leitungsCode", "583920"), konto);
+        pruefe(a.s == 200, "Turnier angelegt");
+        String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
+        String leitA = a.t("token");
+        a = rufe(z, "GET", "turnier", null, null, q("id", tid), false);
+        pruefe(a.s == 200 && "Hallencup".equals(Json.alsObjekt(a.g("turnier")).get("name")), "Turnier öffentlich lesbar");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "000000"), null);
+        pruefe(a.s == 401, "falscher Code");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "583920", "name", "Helga"), null);
+        pruefe(a.s == 200 && "leitung".equals(a.t("rolle")), "Leitungscode");
+        String leitB = a.t("token");
+
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000001", "test.notiz", Json.obj("text", "A")))), null, q("turnier", tid), false);
+        pruefe(a.s == 401, "Senden ohne Anmeldung");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000001", "test.notiz", Json.obj("text", "A")),
+            ev("e-0000002", "test.notiz", Json.obj("leer", Json.obj(), "liste", liste())))), leitA, q("turnier", tid), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 2 && Long.valueOf(2).equals(a.g("hoechsteSeq")), "zwei Ereignisse angenommen");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000001", "test.notiz", Json.obj("text", "A")),
+            ev("e-0000003", "test.notiz", Json.obj("text", "B")))), leitB, q("turnier", tid), false);
+        List<Object> an = a.l("angenommen");
+        pruefe(a.s == 200 && Long.valueOf(1).equals(Json.alsObjekt(an.get(0)).get("seq")) && Long.valueOf(3).equals(Json.alsObjekt(an.get(1)).get("seq")),
+            "Doppelsendung liefert alte Laufnummer");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(Json.obj("id", "kurz", "art", "x", "daten", liste(), "zeit", "nie", "geraet", "g"))), leitA, q("turnier", tid), false);
+        pruefe(a.s == 400, "ungültiges Ereignis");
+        StringBuilder gross = new StringBuilder();
+        for (int i = 0; i < 20000; i++) gross.append('x');
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000009", "test.notiz", Json.obj("text", gross.toString())))), leitA, q("turnier", tid), false);
+        pruefe(a.s == 400, "zu große Daten");
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        List<Object> evs = a.l("ereignisse");
+        Map<String, Object> e2 = Json.alsObjekt(evs.get(1));
+        pruefe(evs.size() == 3 && "Helga".equals(Json.alsObjekt(Json.alsObjekt(evs.get(2)).get("autor")).get("name"))
+            && Json.schreiben(e2.get("daten")).equals("{\"leer\":{},\"liste\":[]}"), "Abholen: Autor gesetzt, leere Objekte bleiben");
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "2"), false);
+        pruefe(a.l("ereignisse").size() == 1, "Abholen ab Laufnummer");
+        List<Object> viele = new ArrayList<>();
+        for (int i = 0; i < 200; i++) viele.add(ev(String.format("v-%07d", i), "test.notiz", Json.obj("i", (long) i)));
+        rufe(z, "POST", "events", Json.obj("ereignisse", viele), leitA, q("turnier", tid), false);
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        pruefe(a.l("ereignisse").size() == 200 && Boolean.TRUE.equals(a.g("mehr")), "Blöcke zu 200 mit „mehr“");
+        viele.add(ev("v-9999999", "test.notiz", Json.obj()));
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", viele), leitA, q("turnier", tid), false);
+        pruefe(a.s == 400, "höchstens 200 je Aufruf");
+
+        System.out.println("Codes");
+        a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(
+            Json.obj("rolle", "spieler", "bezug", "sp1", "name", "Anna"), Json.obj("rolle", "spieler", "bezug", "sp2", "name", "Ben"),
+            Json.obj("rolle", "helfer", "bezug", "h1", "name", "Hilde"))), leitB);
+        pruefe(a.s == 200 && a.l("codes").size() == 3, "Codes angelegt");
+        Map<String, String> codes = new LinkedHashMap<>();
+        for (Object o : a.l("codes")) codes.put((String) Json.alsObjekt(o).get("bezug"), (String) Json.alsObjekt(o).get("code"));
+        pruefe(Zentrale.codeGueltig(codes.get("sp1")) && !codes.get("sp1").equals("583920"), "Code gültig, nicht der Leitungscode");
+        a = rufe(z, "GET", "codes", null, null, q("turnier", tid), false);
+        pruefe(a.s == 401, "Codes nur für die Leitung");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("sp1")), null);
+        pruefe(a.s == 200 && "spieler".equals(a.t("rolle")) && "sp1".equals(a.t("spieler")), "Spieler-Code");
+        String sp = a.t("token");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000001", "test.notiz", Json.obj()))), sp, q("turnier", tid), false);
+        pruefe(a.s == 403, "Spieler: nur Ergebnisse");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000002", "spiel.ergebnis", Json.obj("spiel", "g1-a-b")))), sp, q("turnier", tid), false);
+        pruefe(a.s == 200, "Spieler: Ergebnis");
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "203"), false);
+        Map<String, Object> autor = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor"));
+        pruefe("spieler".equals(autor.get("rolle")) && "sp1".equals(autor.get("spieler")) && "Anna".equals(autor.get("name")), "Autor mit Spieler-ID");
+        a = rufe(z, "POST", "code.neu", Json.obj("turnier", tid, "rolle", "spieler", "bezug", "sp1"), leitB);
+        pruefe(a.s == 200 && !codes.get("sp1").equals(Json.alsObjekt(a.g("code")).get("code")), "neuer Code");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000003", "spiel.ergebnis", Json.obj()))), sp, q("turnier", tid), false);
+        pruefe(a.s == 401, "alter Code: Anmeldung beendet");
+        rufe(z, "POST", "code.sperren", Json.obj("turnier", tid, "rolle", "spieler", "bezug", "sp2", "gesperrt", true), leitB);
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("sp2")), null);
+        pruefe(a.s == 401, "gesperrter Code");
+        a = rufe(z, "POST", "turnier.einstellungen", Json.obj("turnier", tid, "leitungsCode", codes.get("h1")), leitB);
+        pruefe(a.s == 409, "Leitungscode ≠ Spieler-/Helfer-Code");
+        a = rufe(z, "POST", "turnier.einstellungen", Json.obj("turnier", tid, "sicherungTakt", 15L, "sicherungAn", liste("a@example.org")), leitB);
+        pruefe(a.s == 200 && Long.valueOf(15).equals(a.g("sicherungTakt")) && Boolean.FALSE.equals(a.g("mail")), "Einstellungen; ohne Online-Konto keine Mail");
+        a = rufe(z, "POST", "turnier.sichern", Json.obj("turnier", tid), leitB);
+        pruefe(a.s == 503, "Sichern per Mail braucht verbundenes Online-Konto");
+
+        System.out.println("Zugriffsschutz");
+        for (int i = 0; i < 10; i++) rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "999999"), null);
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "583920"), null);
+        pruefe(a.s == 429, "Bremse nach 10 Fehlversuchen");
+        a = rufe(z, "GET", "zentrale.status", null, konto);
+        pruefe(a.s == 403, "Zentrale-Status nicht für andere Geräte");
+        a = rufe(z, "GET", "zentrale.status", null, null, null, true);
+        pruefe(a.s == 200 && a.l("adressen") != null, "Zentrale-Status am Gerät");
+
+        System.out.println("Pool und Übersicht");
+        a = rufe(z, "POST", "pool.speichern", Json.obj("spieler", liste(
+            Json.obj("id", "p1", "vorname", "Anna", "nachname", "A", "verein", "TTC", "ttr", 1500L, "fremd", "x"),
+            Json.obj("id", "p2", "vorname", "Ben", "nachname", "B", "verein", "TSV", "ttr", 99999L))), konto);
+        Map<String, Object> p2 = Json.alsObjekt(a.l("spieler").get(1));
+        pruefe(a.s == 200 && a.l("spieler").size() == 2 && p2.get("ttr") == null && !Json.alsObjekt(a.l("spieler").get(0)).containsKey("fremd"), "Pool speichern, Felder geprüft");
+        rufe(z, "POST", "pool.loeschen", Json.obj("ids", liste("p2")), konto);
+        a = rufe(z, "GET", "pool", null, konto);
+        pruefe(a.l("spieler").size() == 1, "Pool löschen");
+        a = rufe(z, "POST", "turnier.uebersicht", Json.obj("turnier", tid, "text", "Gruppe A"), leitB);
+        pruefe(a.s == 200, "Übersicht");
+
+        System.out.println("Neustart (Daten bleiben)");
+        Zentrale z2 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
+        a = rufe(z2, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        pruefe(a.s == 200 && Long.valueOf(204).equals(a.g("hoechsteSeq")), "Ereignisse nach Neustart");
+        a = rufe(z2, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("h1")), null);
+        pruefe(a.s == 200 && "helfer".equals(a.t("rolle")), "Codes nach Neustart");
+        a = rufe(z2, "GET", "turnier.einstellungen", null, leitB, q("id", tid), false);
+        pruefe(a.s == 200 && Long.valueOf(15).equals(a.g("sicherungTakt")), "Anmeldungen nach Neustart");
+        // halb geschriebene letzte Zeile (Akku leer)
+        Path j = ordner.resolve("turniere").resolve(tid).resolve("ereignisse.jsonl");
+        Files.write(j, "{\"id\":\"kaputt-00".getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
+        Zentrale z3 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
+        a = rufe(z3, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        pruefe(a.s == 200 && Long.valueOf(204).equals(a.g("hoechsteSeq")), "beschädigte letzte Zeile wird übersprungen");
+    }
+
+    static void http() throws Exception {
+        System.out.println("HTTP und App-Dateien");
+        Path app = neuerOrdner();
+        Files.write(app.resolve("index.html"), "<!doctype html><title>TT</title>".getBytes(StandardCharsets.UTF_8));
+        Files.createDirectories(app.resolve("assets"));
+        Files.write(app.resolve("assets/app-1.js"), "console.log(1)".getBytes(StandardCharsets.UTF_8));
+        Zentrale z = new Zentrale(new Speicher(neuerOrdner()), new PlattformJvm(app), new Online(2000), () -> uhr);
+        HttpServer h = new HttpServer(z);
+        int port = h.starten("127.0.0.1", 18_431);
+        z.setzePort(port);
+        try {
+            String[] r = holen("http://127.0.0.1:" + port + "/");
+            pruefe(r[0].equals("200") && r[1].contains("<title>TT") && r[2].startsWith("text/html"), "index.html");
+            r = holen("http://127.0.0.1:" + port + "/assets/app-1.js");
+            pruefe(r[0].equals("200") && r[2].startsWith("text/javascript"), "Skript mit richtigem Typ");
+            r = holen("http://127.0.0.1:" + port + "/../../etc/passwd");
+            pruefe(!r[1].contains("root:"), "kein Zugriff außerhalb des App-Ordners");
+            r = holen("http://127.0.0.1:" + port + "/api/index.php?r=info");
+            pruefe(r[0].equals("200") && r[1].contains("\"zentrale\""), "API über HTTP");
+        } finally {
+            h.stoppen();
+        }
+    }
+
+    static String[] holen(String url) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        int s = c.getResponseCode();
+        java.io.InputStream in = s >= 400 ? c.getErrorStream() : c.getInputStream();
+        String text = in == null ? "" : new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        return new String[] {String.valueOf(s), text, String.valueOf(c.getContentType())};
+    }
+
+    /** Mail-Datei lesbar machen: base64-Teile dekodieren und anhängen. */
+    static String mimeText(String roh) {
+        StringBuilder b = new StringBuilder(roh);
+        String[] teile = roh.split("Content-Transfer-Encoding: base64");
+        for (int i = 1; i < teile.length; i++) {
+            String rest = teile[i].replaceFirst("^[^\\n]*\\n", "");
+            int ende = rest.indexOf("--tt-");
+            String daten = (ende < 0 ? rest : rest.substring(0, ende)).replaceAll("^(?s).*?\\r?\\n\\r?\\n", "").replaceAll("\\s", "");
+            try {
+                b.append('\n').append(new String(java.util.Base64.getDecoder().decode(daten), StandardCharsets.UTF_8));
+            } catch (IllegalArgumentException x) {
+                // kein base64
+            }
+        }
+        return b.toString();
+    }
+
+    /* ---------------- Zusammenspiel mit dem PHP-Server ---------------- */
+
+    static void zusammenspiel(String basis) throws Exception {
+        System.out.println("Zusammenspiel mit dem Online-Server " + basis);
+        Online o = new Online(5000);
+        String zuf = Long.toString(System.nanoTime(), 36);
+        Map<String, Object> info = o.rufe(basis, "info", null, null, null);
+        if (!Boolean.TRUE.equals(info.get("eingerichtet"))) {
+            o.rufe(basis, "setup", null, Json.obj("code", System.getenv().getOrDefault("TT_SETUP_CODE", "einrichtung-123456"),
+                "name", "Admin", "email", "admin-" + zuf + "@example.org", "passwort", "admin-passwort"), null);
+        }
+        String mail = "zentrale-" + zuf + "@example.org";
+        Map<String, Object> reg = o.rufe(basis, "registrieren", null, Json.obj("name", "TTC Zentral", "email", mail, "passwort", "zentral-pw1", "website", ""), null);
+        String vk = (String) reg.get("token");
+        Map<String, Object> t = o.rufe(basis, "turnier.anlegen", null, Json.obj("name", "Online vorbereitet", "datum", "2026-12-12", "leitungsCode", "583920",
+            "sicherungAn", liste(mail)), vk);
+        String tid = (String) Json.alsObjekt(t.get("turnier")).get("id");
+        String leit = (String) t.get("token");
+        o.rufe(basis, "events", q("turnier", tid), Json.obj("ereignisse", liste(ev("o-0000001", "turnier.angelegt", Json.obj("name", "Online vorbereitet")),
+            ev("o-0000002", "test.notiz", Json.obj("text", "online")))), leit);
+        Map<String, Object> cs = o.rufe(basis, "codes.anlegen", null, Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "spieler", "bezug", "sp1", "name", "Anna"))), leit);
+        String annaCode = (String) Json.alsObjekt(Json.alsListe(cs.get("codes")).get(0)).get("code");
+        o.rufe(basis, "pool.speichern", null, Json.obj("spieler", liste(Json.obj("id", "op1", "vorname", "Olga", "nachname", "O", "verein", "TTC"))), vk);
+
+        Zentrale z = new Zentrale(new Speicher(neuerOrdner()), new PlattformJvm(null), o, () -> System.currentTimeMillis() / 1000);
+        z.setzePort(8080);
+        A a = rufe(z, "POST", "zentrale.online.anmelden", Json.obj("email", mail, "passwort", "falsch", "url", basis), null, null, true);
+        pruefe(a.s == 401, "Online-Anmeldung mit falschem Passwort (" + a.s + " " + a.g("meldung") + ")");
+        a = rufe(z, "POST", "zentrale.online.anmelden", Json.obj("email", mail, "passwort", "zentral-pw1", "url", basis), null, null, true);
+        pruefe(a.s == 200 && Boolean.TRUE.equals(Json.alsObjekt(a.g("online")).get("verbunden")), "Online-Konto verbunden");
+        String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
+        a = rufe(z, "GET", "zentrale.online.turniere", null, null, null, true);
+        pruefe(a.s == 200 && a.l("turniere").size() == 1, "Online-Turniere sichtbar");
+        a = rufe(z, "POST", "zentrale.uebernehmen", Json.obj("turnier", tid), null, null, true);
+        pruefe(a.s == 200 && Long.valueOf(2).equals(a.g("neu")), "Übernahme: Ereignisse geladen");
+        Map<String, Object> on = o.rufe(basis, "turnier", q("id", tid), null, null);
+        pruefe(Json.alsObjekt(on.get("turnier")).get("zentrale") != null, "online als „auf Zentrale“ gesperrt");
+        boolean gesperrt = false;
+        try {
+            o.rufe(basis, "events", q("turnier", tid), Json.obj("ereignisse", liste(ev("o-0000003", "test.notiz", Json.obj()))), leit);
+        } catch (Online.Fehler f) {
+            gesperrt = "konflikt".equals(f.code);
+        }
+        pruefe(gesperrt, "online keine Einträge während der Übernahme");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", annaCode), null);
+        pruefe(a.s == 200 && "sp1".equals(a.t("spieler")), "Spieler-Code von online gilt auf der Zentrale");
+        String anna = a.t("token");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "583920", "name", "Halle"), null);
+        String halle = a.t("token");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("h-0000001", "spiel.ergebnis", Json.obj("s", "1")))), anna, q("turnier", tid), false);
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("h-0000002", "turnier.abgeschlossen", Json.obj()))), halle, q("turnier", tid), false);
+        a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "helfer", "bezug", "h1", "name", "Hilde"))), halle);
+        String hildeCode = null;
+        for (Object c : a.l("codes")) if ("h1".equals(Json.alsObjekt(c).get("bezug"))) hildeCode = (String) Json.alsObjekt(c).get("code");
+        rufe(z, "POST", "turnier.uebersicht", Json.obj("turnier", tid, "text", "Sieger: Anna"), halle);
+
+        System.out.println("Sicherung über den Online-Server");
+        z.warteschlangeSenden();
+        a = rufe(z, "GET", "zentrale.status", null, null, null, true);
+        pruefe(a.l("warteschlange").isEmpty(), "Abschluss-Sicherung versendet");
+        String mails = System.getenv("TT_MAILS");
+        if (mails != null) {
+            boolean gefunden = false;
+            try (DirectoryStream<Path> d = Files.newDirectoryStream(Paths.get(mails))) {
+                for (Path p : d) {
+                    String m = mimeText(new String(Files.readAllBytes(p), StandardCharsets.UTF_8));
+                    if (m.contains(mail) && m.contains("Sieger: Anna") && m.contains("Android-Zentrale") && m.contains("h-0000002")) gefunden = true;
+                }
+            }
+            pruefe(gefunden, "Mail mit Übersicht und Anhang liegt vor");
+        }
+
+        System.out.println("Rückgabe");
+        a = rufe(z, "POST", "zentrale.rueckgabe", Json.obj("turnier", tid), null, null, true);
+        pruefe(a.s == 200 && Long.valueOf(2).equals(a.g("gesendet")), "Rückgabe: neue Einträge hochgeladen");
+        Map<String, Object> evs = o.rufe(basis, "events", q("turnier", tid, "ab", "0"), null, null);
+        List<Object> l = Json.alsListe(evs.get("ereignisse"));
+        Map<String, Object> au = Json.alsObjekt(Json.alsObjekt(l.get(2)).get("autor"));
+        pruefe(l.size() == 4 && "spieler".equals(au.get("rolle")) && "sp1".equals(au.get("spieler")), "online: Einträge mit ursprünglichem Autor");
+        Map<String, Object> zug = o.rufe(basis, "turnier.zugang", null, Json.obj("turnier", tid, "code", hildeCode), null);
+        pruefe("helfer".equals(zug.get("rolle")), "auf der Zentrale ausgegebener Helfer-Code gilt online");
+        o.rufe(basis, "events", q("turnier", tid), Json.obj("ereignisse", liste(ev("o-0000003", "test.notiz", Json.obj()))), leit);
+        pruefe(true, "online nach der Rückgabe wieder beschreibbar");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("h-0000003", "test.notiz", Json.obj()))), halle, q("turnier", tid), false);
+        pruefe(a.s == 409, "auf der Zentrale nach der Rückgabe nur lesen");
+
+        System.out.println("Erneute Übernahme und Turnier der Zentrale hochladen");
+        a = rufe(z, "POST", "zentrale.uebernehmen", Json.obj("turnier", tid), null, null, true);
+        pruefe(a.s == 200 && Long.valueOf(1).equals(a.g("neu")), "erneute Übernahme holt nur Neues");
+        rufe(z, "POST", "zentrale.rueckgabe", Json.obj("turnier", tid), null, null, true);
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Nur in der Halle", "leitungsCode", "640219"), konto);
+        String hid = (String) Json.alsObjekt(a.g("turnier")).get("id");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("n-0000001", "turnier.angelegt", Json.obj("name", "Nur in der Halle")))), a.t("token"), q("turnier", hid), false);
+        a = rufe(z, "POST", "zentrale.rueckgabe", Json.obj("turnier", hid), null, null, true);
+        pruefe(a.s == 200, "Turnier der Zentrale online angelegt");
+        Map<String, Object> liste = o.rufe(basis, "turniere", null, null, vk);
+        boolean da = false;
+        for (Object x : Json.alsListe(liste.get("turniere"))) if (hid.equals(Json.alsObjekt(x).get("id")) && Json.alsObjekt(x).get("zentrale") == null) da = true;
+        pruefe(da, "online im Konto, nicht gesperrt");
+        a = rufe(z, "POST", "zentrale.turnier.loeschen", Json.obj("turnier", hid), null, null, true);
+        pruefe(a.s == 200, "zurückgegebenes Turnier von der Zentrale löschen");
+
+        System.out.println("Spielerpool");
+        rufe(z, "POST", "pool.speichern", Json.obj("spieler", liste(Json.obj("id", "zp1", "vorname", "Zora", "nachname", "Z", "verein", "TTC"))), konto);
+        a = rufe(z, "POST", "zentrale.pool.abgleichen", Json.obj(), null, null, true);
+        pruefe(a.s == 200 && Long.valueOf(2).equals(a.g("anzahl")), "Pool abgeglichen (online + Zentrale)");
+        Map<String, Object> op = o.rufe(basis, "pool", null, null, vk);
+        pruefe(Json.alsListe(op.get("spieler")).size() == 2, "Pool online ergänzt");
+        rufe(z, "POST", "pool.loeschen", Json.obj("ids", liste("op1")), konto);
+        rufe(z, "POST", "zentrale.pool.abgleichen", Json.obj(), null, null, true);
+        op = o.rufe(basis, "pool", null, null, vk);
+        pruefe(Json.alsListe(op.get("spieler")).size() == 1, "Löschen auf der Zentrale wirkt online");
+    }
+}

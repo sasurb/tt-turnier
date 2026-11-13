@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.4.0';
+    public const VERSION = '0.5.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_DATEN_BYTES = 16384;
@@ -31,6 +31,7 @@ final class Api
     private const MAX_CODES = 400;
     private const MAX_POOL = 3000;
     private const MAX_UEBERSICHT = 60000;
+    private const MAX_SICHERUNG_BYTES = 6 * 1024 * 1024;
 
     /** @var callable():int */
     private $uhr;
@@ -132,6 +133,10 @@ final class Api
                 'POST turnier.uebersicht' => $this->uebersichtSetzen($a),
                 'GET events' => $this->abholen($a),
                 'POST events' => $this->senden($a),
+                'POST zentrale.uebernehmen' => $this->zentraleUebernehmen($a),
+                'POST zentrale.rueckgabe' => $this->zentraleRueckgabe($a),
+                'POST zentrale.freigeben' => $this->zentraleFreigeben($a),
+                'POST sicherung.senden' => $this->sicherungVonZentrale($a),
                 default => throw new ApiFehler('nicht_gefunden', 'Unbekannte Route: ' . $schluessel),
             };
             return new Antwort(200, $daten);
@@ -356,7 +361,21 @@ final class Api
             'datum' => $z['datum'] === null ? null : (string)$z['datum'],
             'angelegt' => self::iso((int)$z['angelegt']),
             'veranstalter' => (string)($z['veranstalter'] ?? ''),
+            'zentrale' => ($z['zentrale'] ?? null) === null ? null : (string)$z['zentrale'],
+            'zentraleId' => ($z['zentrale_id'] ?? null) === null ? null : (string)$z['zentrale_id'],
         ];
+    }
+
+    /**
+     * Liegt das Turnier gerade auf einer Android-Zentrale, nimmt der Online-Server keine Änderungen an.
+     * Geräte behalten ihre Einträge und senden sie nach der Rückgabe.
+     */
+    private static function nichtAufZentrale(array $t): void
+    {
+        if (($t['zentrale_id'] ?? null) !== null) {
+            throw new ApiFehler('konflikt', 'Dieses Turnier läuft gerade auf der Zentrale „' . (string)$t['zentrale']
+                . '“. Einträge bleiben auf diesem Gerät gespeichert und werden nach der Rückgabe übertragen.');
+        }
     }
 
     private function turnierLaden(string $id): array
@@ -678,6 +697,7 @@ final class Api
         if (!$darf) {
             throw new ApiFehler('keine_berechtigung', 'Keine Berechtigung für dieses Turnier.');
         }
+        self::nichtAufZentrale($t);
         $liste = $a->rumpf['ereignisse'] ?? null;
         if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_EREIGNISSE) {
             throw new ApiFehler('ungueltig', 'Feld „ereignisse“ muss eine Liste mit höchstens ' . self::MAX_EREIGNISSE . ' Einträgen sein.');
@@ -990,6 +1010,7 @@ final class Api
     {
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
         $r = $a->rumpf ?? [];
         if (array_key_exists('leitungsCode', $r)) {
             $code = $this->leitungsCodeFeld($a);
@@ -1015,6 +1036,7 @@ final class Api
     {
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
         if (!$this->mailBereit()) {
             throw new ApiFehler('nicht_eingerichtet', 'Auf diesem Server ist kein Mailversand eingerichtet.');
         }
@@ -1041,7 +1063,7 @@ final class Api
         try {
             $takt = (int)$t['sicherung_takt'];
             $altSeq = (int)$t['sicherung_seq'];
-            if ($takt === 0 || $hoechste <= $altSeq || !$this->mailBereit()) {
+            if ($takt === 0 || $hoechste <= $altSeq || !$this->mailBereit() || ($t['zentrale_id'] ?? null) !== null) {
                 return;
             }
             if (!$abschluss) {
@@ -1075,14 +1097,8 @@ final class Api
     private function sicherungSenden(array $t, array $empf, string $grund): bool
     {
         $zeilen = $this->db->alle('SELECT * FROM ereignisse WHERE turnier_id = ? ORDER BY seq', [$t['id']]);
-        $abgeschlossen = false;
         $ereignisse = [];
         foreach ($zeilen as $z) {
-            if ($z['art'] === self::ART_ABGESCHLOSSEN) {
-                $abgeschlossen = true;
-            } elseif ($z['art'] === 'turnier.wiedereroeffnet') {
-                $abgeschlossen = false;
-            }
             $ereignisse[] = [
                 'id' => (string)$z['event_id'],
                 'art' => (string)$z['art'],
@@ -1102,25 +1118,312 @@ final class Api
             'ereignisse' => $ereignisse,
         ];
         $json = json_encode($sicherung, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        $uebersicht = trim((string)($t['uebersicht'] ?? '')) === '' ? null
+            : ['text' => (string)$t['uebersicht'], 'zeit' => (int)$t['uebersicht_zeit']];
+        return $this->sicherungMailen(
+            ['id' => (string)$t['id'], 'name' => (string)$t['name'], 'datum' => $t['datum'], 'veranstalter' => (string)($t['veranstalter'] ?? '')],
+            $empf, $grund, $uebersicht, $ereignisse, (string)$json, false
+        );
+    }
+
+    /**
+     * Sicherungsmail mit Anhang an alle Empfänger. Gemeinsam für Online-Turniere und Sicherungen,
+     * die eine Android-Zentrale über diesen Server verschickt.
+     * @param array{id:string,name:string,datum:?string,veranstalter:string} $t
+     * @param list<string> $empf
+     * @param array{text:string,zeit:int}|null $uebersicht
+     */
+    private function sicherungMailen(array $t, array $empf, string $grund, ?array $uebersicht, array $ereignisse, string $json, bool $vonZentrale): bool
+    {
+        $abgeschlossen = false;
+        foreach ($ereignisse as $e) {
+            $art = is_array($e) ? ($e['art'] ?? '') : (is_object($e) ? ($e->art ?? '') : '');
+            if ($art === self::ART_ABGESCHLOSSEN) {
+                $abgeschlossen = true;
+            } elseif ($art === 'turnier.wiedereroeffnet') {
+                $abgeschlossen = false;
+            }
+        }
         $stand = gmdate('d.m.Y H:i', $this->jetzt()) . ' UTC';
         $datum = $t['datum'] ? date('d.m.Y', (int)strtotime((string)$t['datum'])) : '–';
         $url = $this->appUrl();
+        $abschnitt = '';
+        if ($uebersicht !== null && trim($uebersicht['text']) !== '') {
+            $zeit = gmdate('d.m.Y H:i', $uebersicht['zeit']) . ' UTC';
+            $abschnitt = "Aktueller Stand (von der App erstellt, {$zeit}):\n"
+                . str_repeat('-', 60) . "\n" . rtrim($uebersicht['text']) . "\n" . str_repeat('-', 60) . "\n\n";
+        }
         $text = "Sicherung des Turniers „{$t['name']}“\n\n"
-            . "Datum:        {$datum}\nVeranstalter: " . ($t['veranstalter'] ?? '') . "\nStand:        {$stand}\n"
+            . "Datum:        {$datum}\nVeranstalter: {$t['veranstalter']}\nStand:        {$stand}\n"
             . "Einträge:     " . count($ereignisse) . "\nStatus:       " . ($abgeschlossen ? 'abgeschlossen' : 'läuft') . "\n"
             . "Anlass:       {$grund}\n\n"
-            . $this->uebersichtAbschnitt($t)
+            . $abschnitt
             . "Im Anhang liegt die Sicherungsdatei. Wiederherstellen: App öffnen → „Neues Turnier“ →\n"
             . "„Aus Sicherung wiederherstellen“ und die Datei auswählen.\n\n"
-            . "Turnier öffnen: {$url}#/t/{$t['id']}\n\n"
+            . ($vonZentrale
+                ? "Das Turnier läuft auf einer Android-Zentrale (ohne Internet in der Halle). Diese Mail hat\n"
+                    . "die Zentrale verschickt, sobald sie Internet hatte.\n\n"
+                : "Turnier öffnen: {$url}#/t/{$t['id']}\n\n")
             . "Warum diese Mail? Die Turnierleitung hat die Sicherung per Mail eingeschaltet. Abstand und\n"
             . "Empfänger ändern: Turnier öffnen → „Einstellungen“ → „Sicherung per Mail“.";
         $datei = 'sicherung-' . $t['id'] . '-' . gmdate('Ymd-Hi', $this->jetzt()) . '.json';
         $alle = true;
         foreach ($empf as $an) {
-            $alle = $this->mail($an, "Sicherung: {$t['name']} ({$stand})", $text, $datei, (string)$json) && $alle;
+            $alle = $this->mail($an, "Sicherung: {$t['name']} ({$stand})", $text, $datei, $json) && $alle;
         }
         return $alle;
+    }
+
+    /* ---------------- Android-Zentrale: Übernahme, Rückgabe, Sicherung ---------------- */
+
+    /** Nur das Eigentümer-Konto (oder der Administrator) darf ein Turnier auf eine Zentrale holen. */
+    private static function eigentuemerPruefen(array $s, array $t): void
+    {
+        if ($s['konto_id'] !== (int)$t['konto_id'] && $s['rolle'] !== 'admin') {
+            throw new ApiFehler('keine_berechtigung', 'Nur das Konto, dem das Turnier gehört, kann es auf eine Zentrale übernehmen.');
+        }
+    }
+
+    private function zentraleIdFeld(Anfrage $a): string
+    {
+        $zid = $a->rumpf['zentraleId'] ?? null;
+        if (!is_string($zid) || !preg_match('/^[A-Za-z0-9_-]{4,40}$/', $zid)) {
+            throw new ApiFehler('ungueltig', 'Kennung der Zentrale fehlt.');
+        }
+        return $zid;
+    }
+
+    private function zentraleUebernehmen(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        self::eigentuemerPruefen($s, $t);
+        $name = $this->text($a, 'zentrale', 2, 160);
+        $zid = $this->zentraleIdFeld($a);
+        if ($t['leitung_code'] === null) {
+            throw new ApiFehler('ungueltig', 'Bitte zuerst in den Turnier-Einstellungen einen Leitungscode (6 Ziffern) festlegen.');
+        }
+        if ($t['zentrale_id'] !== null && $t['zentrale_id'] !== $zid && ($a->rumpf['erzwingen'] ?? false) !== true) {
+            throw new ApiFehler('konflikt', 'Das Turnier liegt schon auf „' . $t['zentrale'] . '“ (seit '
+                . gmdate('d.m.Y H:i', (int)$t['zentrale_seit']) . ' UTC). Erst dort zurückgeben – oder „Trotzdem übernehmen“ wählen.');
+        }
+        $this->db->ausfuehren('UPDATE turniere SET zentrale = ?, zentrale_id = ?, zentrale_seit = ? WHERE id = ?', [$name, $zid, $this->jetzt(), $t['id']]);
+        $t = $this->turnierLaden((string)$t['id']);
+        $codes = $this->codesListe((string)$t['id'])['codes'];
+        return [
+            'turnier' => self::turnierAusgabe($t),
+            'einstellungen' => [
+                'leitungsCode' => (string)$t['leitung_code'],
+                'sicherungAn' => self::empfaengerAus($t),
+                'sicherungTakt' => (int)$t['sicherung_takt'],
+                'letzteSicherung' => self::iso($t['sicherung_letzte'] === null ? null : (int)$t['sicherung_letzte']),
+            ],
+            'codes' => $codes,
+            'uebersicht' => trim((string)($t['uebersicht'] ?? '')) === '' ? null
+                : ['text' => (string)$t['uebersicht'], 'zeit' => self::iso((int)$t['uebersicht_zeit'])],
+        ];
+    }
+
+    private function zentraleRueckgabe(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $zid = $this->zentraleIdFeld($a);
+        $id = (string)($a->rumpf['turnier'] ?? '');
+        if (!preg_match('/^[a-z0-9]{6,16}$/', $id)) {
+            throw new ApiFehler('ungueltig', 'Turnier-Kennung ungültig.');
+        }
+        $roh = $this->db->eine('SELECT id FROM turniere WHERE id = ?', [$id]);
+        if ($roh === null) {
+            // Auf der Zentrale angelegtes Turnier: hier neu anlegen, gleiche Kennung
+            $neu = $a->rumpf['neu'] ?? null;
+            $neu = $neu instanceof \stdClass ? get_object_vars($neu) : $neu;
+            if (!is_array($neu)) {
+                throw new ApiFehler('nicht_gefunden', 'Turnier nicht gefunden.');
+            }
+            $n = new Anfrage('POST', '', [], $neu, null, $a->ip);
+            $name = $this->text($n, 'name', 2, 160);
+            $datum = $neu['datum'] ?? null;
+            if ($datum !== null && (!is_string($datum) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum))) {
+                throw new ApiFehler('ungueltig', 'Datum im Format JJJJ-MM-TT angeben.');
+            }
+            $code = $this->leitungsCodeFeld($n);
+            $konto = $this->db->eine('SELECT email FROM konten WHERE id = ?', [$s['konto_id']]);
+            $this->db->ausfuehren(
+                'INSERT INTO turniere (id, konto_id, name, datum, leitung_hash, leitung_code, sicherung_an, sicherung_takt, angelegt, zentrale, zentrale_id, zentrale_seit)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [$id, $s['konto_id'], $name, $datum, password_hash($code, PASSWORD_DEFAULT), $code,
+                 json_encode([(string)($konto['email'] ?? '')]), 30, $this->jetzt(),
+                 mb_substr(trim((string)($a->rumpf['zentrale'] ?? 'Zentrale')), 0, 160), $zid, $this->jetzt()]
+            );
+        }
+        $t = $this->turnierLaden($id);
+        self::eigentuemerPruefen($s, $t);
+        if ($t['zentrale_id'] !== $zid) {
+            throw new ApiFehler('konflikt', $t['zentrale_id'] === null
+                ? 'Das Turnier ist online nicht (mehr) auf diese Zentrale übernommen. Bitte erneut übernehmen.'
+                : 'Das Turnier wurde inzwischen von „' . $t['zentrale'] . '“ übernommen.');
+        }
+        $liste = $a->rumpf['ereignisse'] ?? null;
+        if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_EREIGNISSE) {
+            throw new ApiFehler('ungueltig', 'Feld „ereignisse“ muss eine Liste mit höchstens ' . self::MAX_EREIGNISSE . ' Einträgen sein.');
+        }
+        $angenommen = [];
+        $this->db->pdo->beginTransaction();
+        try {
+            if ($this->db->treiber === 'mysql') {
+                $this->db->eine('SELECT id FROM turniere WHERE id = ? FOR UPDATE', [$t['id']]);
+            }
+            foreach ($liste as $e) {
+                $e = $e instanceof \stdClass ? get_object_vars($e) : $e;
+                if (!is_array($e)) {
+                    throw new ApiFehler('ungueltig', 'Ereignis muss ein Objekt sein.');
+                }
+                // Autor wie auf der Zentrale festgestellt (dort hat die Zentrale die Codes geprüft)
+                $au = $e['autor'] ?? null;
+                $au = $au instanceof \stdClass ? get_object_vars($au) : (is_array($au) ? $au : []);
+                $rolle = in_array($au['rolle'] ?? null, ['leitung', 'helfer', 'spieler'], true) ? (string)$au['rolle'] : 'leitung';
+                $name = is_string($au['name'] ?? null) && trim($au['name']) !== '' ? mb_substr(trim($au['name']), 0, 120) : 'Zentrale';
+                $bezug = $rolle === 'spieler' && is_string($au['spieler'] ?? null) && preg_match('/^[A-Za-z0-9_-]{1,64}$/', $au['spieler'])
+                    ? $au['spieler'] : null;
+                $seq = $this->einEreignis((string)$t['id'], $e, $rolle, $name, $bezug);
+                $angenommen[] = ['id' => (string)$e['id'], 'seq' => $seq];
+            }
+            $this->db->pdo->commit();
+        } catch (\Throwable $x) {
+            $this->db->pdo->rollBack();
+            throw $x;
+        }
+        $hoechste = (int)($this->db->eine('SELECT MAX(seq) AS m FROM ereignisse WHERE turnier_id = ?', [$t['id']])['m'] ?? 0);
+        return ['angenommen' => $angenommen, 'hoechsteSeq' => $hoechste];
+    }
+
+    private function zentraleFreigeben(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $zid = $this->zentraleIdFeld($a);
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        self::eigentuemerPruefen($s, $t);
+        if ($t['zentrale_id'] !== null && $t['zentrale_id'] !== $zid) {
+            throw new ApiFehler('konflikt', 'Das Turnier wurde inzwischen von „' . $t['zentrale'] . '“ übernommen.');
+        }
+        $r = $a->rumpf ?? [];
+        $this->db->pdo->beginTransaction();
+        try {
+            if (array_key_exists('codes', $r)) {
+                $liste = $r['codes'];
+                if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_CODES) {
+                    throw new ApiFehler('ungueltig', 'Feld „codes“ muss eine Liste sein.');
+                }
+                $alt = [];
+                foreach ($this->db->alle('SELECT * FROM codes WHERE turnier_id = ?', [$t['id']]) as $c) {
+                    $alt[$c['rolle'] . '|' . $c['bezug']] = $c;
+                }
+                $neu = [];
+                $vergeben = [];
+                foreach ($liste as $c) {
+                    $c = $c instanceof \stdClass ? get_object_vars($c) : $c;
+                    $rolle = $c['rolle'] ?? null;
+                    $bezug = $c['bezug'] ?? null;
+                    $code = $c['code'] ?? null;
+                    $name = is_string($c['name'] ?? null) ? mb_substr(trim($c['name']), 0, 160) : '';
+                    if (!in_array($rolle, ['spieler', 'helfer'], true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug)
+                        || !is_string($code) || !preg_match('/^[0-9]{6}$/', $code) || $name === '' || isset($vergeben[$code])) {
+                        continue;
+                    }
+                    $vergeben[$code] = true;
+                    $neu[$rolle . '|' . $bezug] = [$rolle, $bezug, $name, $code, ($c['gesperrt'] ?? false) === true ? 1 : 0];
+                }
+                foreach ($alt as $k => $c) {
+                    if (!isset($neu[$k]) || $neu[$k][3] !== (string)$c['code'] || $neu[$k][4] === 1) {
+                        $this->codeSitzungenBeenden((string)$t['id'], (string)$c['rolle'], (string)$c['bezug']);
+                    }
+                }
+                $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ?', [$t['id']]);
+                foreach ($neu as [$rolle, $bezug, $name, $code, $gesperrt]) {
+                    $this->db->ausfuehren(
+                        'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$t['id'], $rolle, $bezug, $name, $code, $gesperrt, $this->jetzt()]
+                    );
+                }
+            }
+            $ein = $r['einstellungen'] ?? null;
+            $ein = $ein instanceof \stdClass ? get_object_vars($ein) : $ein;
+            if (is_array($ein)) {
+                if (isset($ein['leitungsCode'])) {
+                    $code = $this->leitungsCodeFeld(new Anfrage('POST', '', [], $ein, null, $a->ip));
+                    if ($code !== (string)$t['leitung_code']) {
+                        $this->db->ausfuehren('UPDATE turniere SET leitung_code = ?, leitung_hash = ? WHERE id = ?', [$code, password_hash($code, PASSWORD_DEFAULT), $t['id']]);
+                    }
+                }
+                if (array_key_exists('sicherungAn', $ein)) {
+                    $this->db->ausfuehren('UPDATE turniere SET sicherung_an = ? WHERE id = ?', [json_encode($this->empfaengerFeld($ein['sicherungAn'])), $t['id']]);
+                }
+                if (isset($ein['sicherungTakt']) && is_int($ein['sicherungTakt']) && in_array($ein['sicherungTakt'], self::SICHERUNG_TAKTE, true)) {
+                    $this->db->ausfuehren('UPDATE turniere SET sicherung_takt = ? WHERE id = ?', [$ein['sicherungTakt'], $t['id']]);
+                }
+            }
+            $ueb = $r['uebersicht'] ?? null;
+            $ueb = $ueb instanceof \stdClass ? get_object_vars($ueb) : $ueb;
+            if (is_array($ueb) && is_string($ueb['text'] ?? null) && mb_strlen($ueb['text']) <= self::MAX_UEBERSICHT) {
+                $this->db->ausfuehren('UPDATE turniere SET uebersicht = ?, uebersicht_zeit = ? WHERE id = ?', [$ueb['text'], $this->jetzt(), $t['id']]);
+            }
+            $this->db->ausfuehren('UPDATE turniere SET zentrale = NULL, zentrale_id = NULL, zentrale_seit = NULL WHERE id = ?', [$t['id']]);
+            $this->db->pdo->commit();
+        } catch (\Throwable $x) {
+            $this->db->pdo->rollBack();
+            throw $x;
+        }
+        return ['turnier' => self::turnierAusgabe($this->turnierLaden((string)$t['id']))];
+    }
+
+    /** Sicherungsmail für ein Turnier, das auf einer Zentrale läuft: die Zentrale liefert Datei und Übersicht. */
+    private function sicherungVonZentrale(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        if (!$this->mailBereit()) {
+            throw new ApiFehler('nicht_eingerichtet', 'Auf dem Online-Server ist kein Mailversand eingerichtet.');
+        }
+        $this->begrenzen('sicherung-zentrale|' . $s['konto_id'], 40, 3600, 'Zu viele Sicherungen in kurzer Zeit. Bitte später erneut versuchen.');
+        $tr = $a->rumpf['turnier'] ?? null;
+        $tr = $tr instanceof \stdClass ? get_object_vars($tr) : $tr;
+        if (!is_array($tr) || !is_string($tr['id'] ?? null) || !preg_match('/^[a-z0-9]{6,16}$/', $tr['id'])
+            || !is_string($tr['name'] ?? null) || trim($tr['name']) === '') {
+            throw new ApiFehler('ungueltig', 'Angaben zum Turnier fehlen.');
+        }
+        $datum = $tr['datum'] ?? null;
+        if ($datum !== null && (!is_string($datum) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum))) {
+            $datum = null;
+        }
+        $empf = $this->empfaengerFeld($a->rumpf['empfaenger'] ?? null);
+        if ($empf === []) {
+            throw new ApiFehler('ungueltig', 'Keine Empfänger angegeben.');
+        }
+        $anlass = mb_substr(trim(is_string($a->rumpf['anlass'] ?? null) ? $a->rumpf['anlass'] : 'Zentrale'), 0, 120);
+        $sich = $a->rumpf['sicherung'] ?? null;
+        $sich = $sich instanceof \stdClass ? get_object_vars($sich) : $sich;
+        if (!is_array($sich) || ($sich['format'] ?? '') !== 'tt-turnier-sicherung' || !is_array($sich['ereignisse'] ?? null)) {
+            throw new ApiFehler('ungueltig', 'Die Sicherungsdatei fehlt oder ist ungültig.');
+        }
+        $json = json_encode($sich, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        if ($json === false || strlen($json) > self::MAX_SICHERUNG_BYTES) {
+            throw new ApiFehler('ungueltig', 'Die Sicherungsdatei ist zu groß.');
+        }
+        $ueb = $a->rumpf['uebersicht'] ?? null;
+        $ueb = $ueb instanceof \stdClass ? get_object_vars($ueb) : $ueb;
+        $uebersicht = null;
+        if (is_array($ueb) && is_string($ueb['text'] ?? null) && mb_strlen($ueb['text']) <= self::MAX_UEBERSICHT) {
+            $zeit = is_string($ueb['zeit'] ?? null) ? strtotime($ueb['zeit']) : false;
+            $uebersicht = ['text' => $ueb['text'], 'zeit' => $zeit === false ? $this->jetzt() : $zeit];
+        }
+        $konto = $this->db->eine('SELECT name FROM konten WHERE id = ?', [$s['konto_id']]);
+        $ok = $this->sicherungMailen(
+            ['id' => $tr['id'], 'name' => mb_substr(trim($tr['name']), 0, 160), 'datum' => $datum, 'veranstalter' => (string)($konto['name'] ?? '')],
+            $empf, $anlass, $uebersicht, $sich['ereignisse'], (string)$json, true
+        );
+        if (!$ok) {
+            throw new ApiFehler('serverfehler', 'Die Sicherung konnte nicht gesendet werden.');
+        }
+        return ['ok' => true, 'gesendetAn' => $empf, 'zeit' => self::iso($this->jetzt())];
     }
 
     /* ---------------- Spieler- und Helfer-Codes ---------------- */
@@ -1191,6 +1494,7 @@ final class Api
     {
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
         $liste = $a->rumpf['eintraege'] ?? null;
         if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_CODES) {
             throw new ApiFehler('ungueltig', 'Feld „eintraege“ muss eine Liste sein.');
@@ -1249,6 +1553,7 @@ final class Api
     {
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
         [$rolle, $bezug] = $this->codeZiel($a);
         $this->codeLaden($t, $rolle, $bezug);
         $this->db->ausfuehren('UPDATE codes SET code = ?, gesperrt = 0 WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$this->freierCode($t), $t['id'], $rolle, $bezug]);
@@ -1260,6 +1565,7 @@ final class Api
     {
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
         [$rolle, $bezug] = $this->codeZiel($a);
         $this->codeLaden($t, $rolle, $bezug);
         $gesperrt = ($a->rumpf['gesperrt'] ?? false) === true;
@@ -1274,6 +1580,7 @@ final class Api
     {
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
         [$rolle, $bezug] = $this->codeZiel($a);
         $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
         $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
@@ -1378,23 +1685,13 @@ final class Api
     {
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
         $text = $a->rumpf['text'] ?? null;
         if (!is_string($text) || mb_strlen($text) > self::MAX_UEBERSICHT) {
             throw new ApiFehler('ungueltig', 'Übersicht fehlt oder ist zu lang.');
         }
         $this->db->ausfuehren('UPDATE turniere SET uebersicht = ?, uebersicht_zeit = ? WHERE id = ?', [$text, $this->jetzt(), $t['id']]);
         return ['ok' => true];
-    }
-
-    private function uebersichtAbschnitt(array $t): string
-    {
-        $text = (string)($t['uebersicht'] ?? '');
-        if (trim($text) === '') {
-            return '';
-        }
-        $zeit = gmdate('d.m.Y H:i', (int)$t['uebersicht_zeit']) . ' UTC';
-        return "Aktueller Stand (von der App erstellt, {$zeit}):\n"
-            . str_repeat('-', 60) . "\n" . rtrim($text) . "\n" . str_repeat('-', 60) . "\n\n";
     }
 
     /* ---------------- Wartung (höchstens einmal täglich, bei einem beliebigen Aufruf) ---------------- */

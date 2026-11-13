@@ -125,3 +125,49 @@ jobs:
             e2e/bilder/
             e2e/test-results/
           retention-days: 14
+
+  zentrale:
+    name: Zentrale (Java-Kern, Zusammenspiel, Oberfläche)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            e2e/package-lock.json
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, mbstring
+          coverage: none
+      - name: Kern übersetzen und testen (mit PHP-Server)
+        run: ./zentrale/kern/pruefen.sh --online
+      - run: npm ci && npm run build
+        working-directory: app
+      - name: App-Abgleich über die Zentrale
+        working-directory: app
+        run: |
+          java -jar ../zentrale/kern/build/kern.jar --daten /tmp/zi --app dist --port 8098 > /tmp/zentrale.log 2>&1 &
+          for i in $(seq 1 50); do curl -sf "http://127.0.0.1:8098/api/index.php?r=info" > /dev/null && break; sleep 0.2; done
+          TT_ZENTRALE=http://127.0.0.1:8098/api/index.php npx vitest run zentrale.integration
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: e2e
+      - name: Oberfläche über die Zentrale (Gerät der Zentrale + Gerät im WLAN)
+        working-directory: e2e
+        run: npx playwright test -c zentrale.config.ts
+      - name: Screenshots aufheben
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-zentrale
+          path: |
+            e2e/bilder/
+            e2e/test-results/
+          retention-days: 14

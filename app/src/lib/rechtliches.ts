@@ -57,6 +57,7 @@ export function datenschutz(b: Betreiber): Abschnitt[] {
         'Kontaktformular und Rückmeldungen: Name, E-Mail-Adresse und Nachricht, nur um zu antworten.',
         'Schutz vor Missbrauch: Bei Anmeldeversuchen, Registrierungen und Nachrichten wird die IP-Adresse höchstens 24 Stunden gespeichert, um automatisierte Angriffe zu bremsen (berechtigtes Interesse, Art. 6 Abs. 1 lit. f DSGVO).',
         'Auf deinem Gerät speichert die App die Anmeldung und die Turnierdaten im Browser-Speicher (localStorage, IndexedDB), damit sie auch ohne Internet funktioniert. Es werden keine Cookies zu Werbe- oder Analysezwecken gesetzt.',
+        'Android-Zentrale: Bei Turnieren in Hallen ohne Internet speichert die Android-App der Turnierleitung die Turnierdaten und Codes nur auf diesem Handy; andere Geräte verbinden sich direkt über dessen WLAN. Erst wenn die Leitung ihr Online-Konto verbindet, gehen Turnierdaten an diesen Server (Übernahme, Rückgabe, Sicherungsmails). Für die Daten auf dem Handy ist die Turnierleitung verantwortlich.',
       ],
     },
     {

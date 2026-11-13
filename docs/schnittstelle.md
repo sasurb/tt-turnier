@@ -1,6 +1,6 @@
 # Schnittstelle (Protokoll 1)
 
-Verbindlich für beide Server: den PHP-Server (`server-php/`) und die spätere Android-Zentrale.
+Verbindlich für beide Server: den PHP-Server (`server-php/`) und die Android-Zentrale (`zentrale/kern/`).
 Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 
 ## Grundsätze
@@ -144,3 +144,48 @@ beendet bestehende Leitungs-Anmeldungen nicht.
 - Bremse: 10 Fehlversuche je IP (und je Turnier beim Leitungscode) in 15 Minuten.
 - Mengenbegrenzung je IP und Stunde: 5 Registrierungen, 5 × „Passwort vergessen“ (zusätzlich 3 je Adresse),
   5 Rückmeldungen; „Jetzt sichern“ 3 × je 10 Minuten und Turnier.
+
+## Android-Zentrale (ab 0.5)
+
+Die Zentrale (`zentrale/kern/…/Zentrale.java`) beantwortet alle Turnier-Routen oben genauso wie der
+PHP-Server. Unterschiede:
+
+- `info` liefert zusätzlich `zentrale: {version, adresse, online}`; `registrierung` ist `false`.
+- Konten gibt es nicht (`login`, `registrieren`, `konten` … → 503). Die Zentrale hat genau ein Konto;
+  es wird mit `POST zentrale.anmelden` ohne Passwort angemeldet – **nur vom Gerät der Zentrale selbst**
+  (Verbindung über 127.0.0.1). Andere Geräte nutzen Leitungs-, Helfer- und Spieler-Codes.
+- Speicher: Ordner mit JSON-Dateien und je Turnier einem Ereignis-Journal (`ereignisse.jsonl`, nur
+  angehängt, sofort auf den Datenträger geschrieben). Laufnummern sind je Turnier 1, 2, 3 …
+- Sicherungsmails sendet die Zentrale über den Online-Server (`sicherung.senden`), sobald ein Online-Konto
+  verbunden ist und Internet besteht; bis dahin stehen sie in einer Warteschlange.
+- `turnier.einstellungen` meldet `wartend: true`, `turnier.sichern` ggf. `{wartend: true}`.
+
+Nur vom Gerät der Zentrale (sonst 403):
+
+| Methode | Route | Zweck |
+|---|---|---|
+| POST | `zentrale.anmelden` | Konto der Zentrale → `{token, konto}` |
+| GET | `zentrale.status` | Adressen, Geräte, WLAN, Hotspot, Akku, Internet, Online-Konto, Warteschlange |
+| POST | `zentrale.wlan` | `{ssid, passwort}` des Handy-Hotspots (für den WLAN-QR-Code) |
+| POST | `zentrale.hotspot` | `{an}` – Hotspot durch die App (Android LocalOnlyHotspot) |
+| POST | `zentrale.oeffnen` | `{ziel: hotspot|akku|wlan}` – Systemeinstellungen öffnen |
+| POST | `zentrale.online.anmelden` / `.abmelden` | Online-Konto verbinden (`{email, passwort, url?}`) / trennen |
+| GET | `zentrale.online.turniere` | Turniere des Online-Kontos mit `aufDieserZentrale` |
+| POST | `zentrale.uebernehmen` | `{turnier, erzwingen?}` – Online-Turnier mit Ereignissen, Codes, Einstellungen holen |
+| POST | `zentrale.rueckgabe` | `{turnier}` – neue Einträge, Codes, Einstellungen hochladen; danach nur lesbar |
+| POST | `zentrale.pool.abgleichen` | Spielerpool mit dem Online-Konto abgleichen (neuere Änderung gewinnt) |
+| POST | `zentrale.sicherungen.senden` | Warteschlange jetzt senden |
+| POST | `zentrale.turnier.loeschen` | `{turnier, trotzdem?}` – nur ohne ungesicherte Einträge (sonst `trotzdem`) |
+
+Dafür kennt der **Online-Server** (Schema 4: `turniere.zentrale`, `zentrale_id`, `zentrale_seit`):
+
+| Methode | Route | Zugang | Zweck |
+|---|---|---|---|
+| POST | `zentrale.uebernehmen` | Eigentümer-Konto | `{turnier, zentrale, zentraleId, erzwingen?}` → sperrt das Turnier, liefert `{turnier, einstellungen, codes, uebersicht}`. Ohne Leitungscode (alte Turniere) → 400 |
+| POST | `zentrale.rueckgabe` | Eigentümer-Konto | `{turnier, zentraleId, ereignisse[≤200] mit autor, neu?: {name, datum, leitungsCode}}` – Ereignisse mit dem Autor von der Zentrale übernehmen; mit `neu` wird ein auf der Zentrale angelegtes Turnier mit derselben Kennung angelegt |
+| POST | `zentrale.freigeben` | Eigentümer-Konto | `{turnier, zentraleId, codes?, einstellungen?, uebersicht?}` – Codes ersetzen (Anmeldungen mit geänderten Codes enden), Sperre aufheben |
+| POST | `sicherung.senden` | Konto | `{turnier: {id, name, datum}, empfaenger[≤3], anlass, uebersicht?, sicherung}` → Sicherungsmail mit Anhang (40 je Stunde und Konto) |
+
+Solange ein Turnier gesperrt ist, lehnt der Online-Server Änderungen (`events`, Codes, Einstellungen,
+Übersicht, Sicherung) mit **409** ab. Die Geräte behalten ihre Einträge als „ausstehend“ und senden sie
+nach der Rückgabe; Lesen bleibt möglich. `TurnierInfo.zentrale` nennt die Zentrale.

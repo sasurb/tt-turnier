@@ -1,0 +1,5 @@
+// Android-Hülle der Zentrale. Gebaut wird in GitHub Actions (Workflow „Zentrale (Android)“),
+// lokal mit installiertem Android-SDK: gradle assembleRelease (Gradle 8.10+, JDK 17).
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+}

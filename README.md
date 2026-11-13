@@ -11,6 +11,11 @@ Spieler tragen mit ihrem persönlichen Code (QR-Zettel) ihre Ergebnisse selbst e
 bestätigen oder anfechten, die Leitung entscheidet. Helfer-Codes für Schiedsrichter.
 Sicherungsmails enthalten die aktuellen Tabellen als Text.
 
+**Etappe 4 – Android-Zentrale:** In Hallen ohne Internet wird das Android-Handy der Leitung zur
+Zentrale: eigenes WLAN, Beitritt per QR-Code, alle anderen Geräte (auch iPad) im Browser. Online
+vorbereitete Turniere lassen sich auf die Zentrale holen und danach zurückgeben; Sicherungsmails
+gehen raus, sobald die Zentrale Internet hat. Anleitung: [docs/zentrale.md](docs/zentrale.md).
+
 - Demo (nur Einzelgerät-Modus): https://sasurb.github.io/tt-turnier/
 - Eigene Installation: [docs/strato-einrichtung.md](docs/strato-einrichtung.md) (funktioniert auf jedem PHP-Webspace)
 
@@ -19,7 +24,7 @@ Sicherungsmails enthalten die aktuellen Tabellen als Text.
 | Betriebsart | Wofür | Technik |
 |---|---|---|
 | **Online** | mehrere Geräte, Internet vorhanden | PHP 8.1+ und MySQL/MariaDB auf einem Webspace |
-| **Lokal** *(Etappe 4)* | Halle ohne Internet | Android-Gerät der Leitung als Zentrale mit eigenem WLAN |
+| **Zentrale** | Halle ohne Internet | Android-App der Leitung als lokaler Server mit eigenem WLAN ([Download](https://github.com/Sasurb/tt-turnier/releases/download/zentrale/tt-zentrale.apk)) |
 | **Einzelgerät** | ein Gerät, kein Server | nur der Browser (IndexedDB) |
 
 ## Aufbau
@@ -31,6 +36,9 @@ app/          Svelte + TypeScript (Vite): Oberfläche und Turnier-Engine
   src/lib/ui/       Seiten und Bausteine
   src/lib/texte.ts  alle Texte der Oberfläche
 server-php/   schlanker Ereignis-Server (PHP 8.1+, PDO MySQL/SQLite)
+zentrale/     Android-Zentrale
+  kern/             derselbe Server in reinem Java (ohne Bibliotheken), mit JDK getestet: ./pruefen.sh
+  android/          Android-Hülle: WebView, Vordergrunddienst, Hotspot (Gradle, gebaut in GitHub Actions)
 shared/       Schnittstellen-Vertrag (protokoll.ts), gilt für alle Server
 docs/         Schnittstelle, Strato-Einrichtung
 e2e/          Oberflächentests mit Playwright (Handy, Tablet, PC) gegen den echten PHP-Server

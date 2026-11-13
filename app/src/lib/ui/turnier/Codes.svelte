@@ -7,6 +7,7 @@
   import { spielerName } from '../../engine/modell';
   import type { TurnierZustand } from '../../engine/zustand';
   import QrCode from './QrCode.svelte';
+  import { appBasis } from '../../zentrale.svelte';
 
   let { z, id, token, turnierName }: { z: TurnierZustand; id: string; token: string; turnierName: string } = $props();
 
@@ -17,7 +18,7 @@
   let kopiert = $state<string | null>(null);
   let helferName = $state('');
 
-  const basis = `${location.origin}${location.pathname}`;
+  const basis = appBasis();
   const link = (c: string) => `${basis}#/c/${id}/${c}`;
   const spielerCodes = $derived(z.spielerReihe.map((sid) => ({ sid, c: codes.find((c) => c.rolle === 'spieler' && c.bezug === sid) })));
   const helfer = $derived(codes.filter((c) => c.rolle === 'helfer'));

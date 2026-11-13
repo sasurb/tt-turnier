@@ -5,6 +5,8 @@
   import { api, speicher } from '../dienste';
   import { app, anmeldungAbgelaufen, kontoTurnierOeffnen } from '../app.svelte';
   import { gemerkteTurniere, turnierVergessen, type GemerktesTurnier } from '../einstellungen';
+  import { amGeraetDerZentrale, istZentrale } from '../zentrale.svelte';
+  import type { ZentraleStatus } from '@shared/protokoll';
 
   let geraet = $state<GemerktesTurnier[]>(gemerkteTurniere());
   let konto = $state<TurnierInfo[] | null>(null);
@@ -13,6 +15,16 @@
 
   const angemeldet = $derived(app.sitzung);
   const bereit = $derived(app.server.art === 'bereit');
+  const zentrale = $derived(istZentrale());
+  const zentralGeraet = $derived(amGeraetDerZentrale());
+  let zStatus = $state<ZentraleStatus | null>(null);
+  $effect(() => {
+    if (!zentralGeraet) return;
+    const holen = () => api.zentraleStatus().then((s) => (zStatus = s)).catch(() => undefined);
+    void holen();
+    const t = setInterval(holen, 10_000);
+    return () => clearInterval(t);
+  });
   /** Turniere auf diesem Gerät, die nicht ohnehin in der Konto-Liste stehen */
   const nurGeraet = $derived(konto ? geraet.filter((g) => !konto!.some((k) => k.id === g.id)) : geraet);
 
@@ -47,7 +59,12 @@
   <div class="meldung ok" role="status">{hinweis}</div>
 {/if}
 
-{#if angemeldet}
+{#if zentralGeraet}
+  <a class="karte zentrale" href={linkZu('zentrale')} data-testid="zentrale-karte">
+    <strong>{T.zentrale.startTitel}</strong>
+    <span class="leise">{zStatus ? T.zentrale.startText(zStatus.geraete) : T.app.laden} · {T.zentrale.oeffnen} ›</span>
+  </a>
+{:else if angemeldet}
   <p class="gruss">{T.start.hallo(angemeldet.konto.name)}</p>
 {:else}
   <p class="leise">{T.start.willkommen}</p>
@@ -67,7 +84,7 @@
   <div class="meldung info">{T.start.keinServer}</div>
 {/if}
 
-{#if bereit && !angemeldet}
+{#if bereit && !angemeldet && !zentrale}
   <section class="karte werbung">
     <h2>{T.start.mehrGeraeteTitel}</h2>
     <p class="leise">{T.start.mehrGeraeteText}</p>
@@ -89,7 +106,7 @@
           <li>
             <button class="zeile" onclick={() => kontoTurnierOeffnen(t, true)}>
               <strong>{t.name}</strong>
-              <span class="leise">{datum(t.datum)} <span class="marke online">{T.start.modusOnline}</span></span>
+              <span class="leise">{datum(t.datum)} <span class="marke online">{zentrale ? T.zentrale.modus : T.start.modusOnline}</span></span>
             </button>
           </li>
         {/each}
@@ -112,7 +129,7 @@
               <span class="leise">
                 {datum(t.datum)}
                 <span class="marke" class:online={t.modus === 'online'}>
-                  {t.modus === 'online' ? T.start.modusOnline : T.start.modusLokal}
+                  {t.modus === 'online' ? (zentrale ? T.zentrale.modus : T.start.modusOnline) : T.start.modusLokal}
                 </span>
                 {#if t.modus === 'online' && !t.token}<span class="marke">{T.start.rolleZuschauer}</span>{/if}
               </span>
@@ -136,6 +153,8 @@
 
 <style>
   .gruss { font-size: 1.15rem; font-weight: 600; margin-bottom: 14px; }
+  .zentrale { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: var(--text); border-left: 4px solid var(--blau); }
+  .zentrale:hover strong { color: var(--blau); }
   .knopf.gross {
     width: 100%;
     min-height: 64px;

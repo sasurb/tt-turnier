@@ -1,0 +1,62 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Signatur aus Umgebungsvariablen (in GitHub Actions aus Secrets). Ohne: Debug-Schlüssel des Rechners.
+def schluessel = System.getenv('TT_KEYSTORE')
+
+android {
+    namespace 'de.saschaurban.ttturnier.zentrale'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'de.saschaurban.ttturnier.zentrale'
+        minSdk 26
+        targetSdk 35
+        versionCode((System.getenv('TT_VERSION_CODE') ?: '1').toInteger())
+        versionName System.getenv('TT_VERSION_NAME') ?: '0.5.0'
+    }
+
+    signingConfigs {
+        if (schluessel) {
+            release {
+                storeFile file(schluessel)
+                storePassword System.getenv('TT_KEYSTORE_PASSWORT')
+                keyAlias System.getenv('TT_KEY_ALIAS')
+                keyPassword System.getenv('TT_KEY_PASSWORT')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig schluessel ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        encoding 'UTF-8'
+    }
+
+    sourceSets {
+        // Der Server-Kern ist reines Java und wird mit dem JDK getestet (zentrale/kern/pruefen.sh)
+        main.java.srcDirs += '../../kern/src/main/java'
+    }
+
+    lint {
+        abortOnError false
+    }
+}
+
+// Die App (app/dist) muss vorher nach src/main/assets/www kopiert sein
+tasks.register('appPruefen') {
+    doLast {
+        if (!file('src/main/assets/www/index.html').exists()) {
+            throw new GradleException('App fehlt: (cd app && npm run build) und app/dist nach zentrale/android/app/src/main/assets/www kopieren')
+        }
+    }
+}
+preBuild.dependsOn appPruefen

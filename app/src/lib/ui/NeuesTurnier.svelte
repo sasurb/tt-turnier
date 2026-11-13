@@ -9,6 +9,7 @@
   import { anzeigeName, geraetId, setzeAnzeigeName, turnierMerken } from '../einstellungen';
   import { codeEingabe, codeGueltig, neuerCode } from '../code';
   import Hilfe from './Hilfe.svelte';
+  import { istZentrale } from '../zentrale.svelte';
 
   let name = $state('');
   let datum = $state(new Date().toISOString().slice(0, 10));
@@ -18,6 +19,7 @@
   let laeuft = $state(false);
 
   const onlineMoeglich = $derived(app.server.art === 'bereit' && !!app.sitzung);
+  const zentrale = $derived(istZentrale());
   let wahl = $state<'online' | 'lokal' | null>(null);
   // Vorauswahl: online, sobald möglich – bis jemand selbst wählt
   const modus = $derived(wahl ?? (onlineMoeglich ? 'online' : 'lokal'));
@@ -74,10 +76,12 @@
     <label class="wahl" class:aktiv={modus === 'online'} class:aus={!onlineMoeglich}>
       <input type="radio" name="modus" value="online" checked={modus === 'online'} disabled={!onlineMoeglich} onchange={() => (wahl = 'online')} />
       <span>
-        <strong>{T.neu.online}</strong>
-        <span class="leise">{T.neu.onlineText}</span>
+        <strong>{zentrale ? T.zentrale.neuTitel : T.neu.online}</strong>
+        <span class="leise">{zentrale ? T.zentrale.neuText : T.neu.onlineText}</span>
         {#if app.server.art !== 'bereit'}
           <span class="leise hinweis">{T.neu.onlineKeinServer}</span>
+        {:else if !app.sitzung && zentrale}
+          <span class="leise hinweis">{T.zentrale.nurZentraleGeraet}</span>
         {:else if !app.sitzung}
           <span class="hinweis">
             {T.neu.onlineAnmelden}
@@ -115,7 +119,7 @@
       />
       <button type="button" class="zweit" onclick={() => (code = neuerCode())}>{T.neu.codeNeu}</button>
     </div>
-    {#if app.sitzung}<p class="leise" id="c-info">{T.neu.sicherungInfo(app.sitzung.konto.email)}</p>{/if}
+    {#if app.sitzung && app.sitzung.konto.email}<p class="leise" id="c-info">{T.neu.sicherungInfo(app.sitzung.konto.email)}</p>{/if}
   {:else}
     <div class="label-zeile"><label for="l">{T.neu.leiter}</label><Hilfe text={T.neu.leiterHilfe} /></div>
     <input id="l" bind:value={leiter} autocomplete="name" />

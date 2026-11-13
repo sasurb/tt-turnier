@@ -1,5 +1,6 @@
 import { SICHERUNG_FORMAT, type Sicherung, type SicherungTakt } from '@shared/protokoll';
 import type { LokalesEreignis } from './engine/typen';
+import { nativ } from './nativ';
 
 /**
  * Sicherungsdatei eines Turniers: gleiches Format wie der Mail-Anhang des Servers
@@ -70,6 +71,12 @@ export function dateiname(s: Sicherung): string {
 export async function sicherungAusgeben(s: Sicherung, teilen: boolean): Promise<'geteilt' | 'heruntergeladen' | 'abgebrochen'> {
   const name = dateiname(s);
   const inhalt = JSON.stringify(s, null, 1);
+  // Android-Zentrale (WebView): Teilen-Menü des Systems
+  const n = nativ();
+  if (n) {
+    n.dateiTeilen(name, inhalt, 'application/json');
+    return 'geteilt';
+  }
   const datei = new File([inhalt], name, { type: 'application/json' });
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
   if (teilen && nav.share && nav.canShare?.({ files: [datei] })) {
@@ -93,6 +100,7 @@ export async function sicherungAusgeben(s: Sicherung, teilen: boolean): Promise<
 }
 
 export function kannTeilen(): boolean {
+  if (nativ()) return true;
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
   try {
     return !!nav.share && !!nav.canShare?.({ files: [new File(['{}'], 'x.json', { type: 'application/json' })] });

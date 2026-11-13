@@ -1,5 +1,6 @@
 import type {
   AbholenAntwort,
+  TurnierInfo,
   CodeEintrag,
   CodeRolle,
   CodesAntwort,
@@ -12,6 +13,7 @@ import type {
   KontoAnlegenAnfrage,
   LoginAntwort,
   NeuesEreignis,
+  OnlineTurnier,
   RegistrierenAnfrage,
   RueckmeldungAnfrage,
   Rolle,
@@ -24,6 +26,7 @@ import type {
   TurnierEinstellungen,
   TurnierEinstellungenAnfrage,
   TurnierZugangAntwort,
+  ZentraleStatus,
 } from '@shared/protokoll';
 
 export interface IchAntwort {
@@ -61,6 +64,7 @@ export class Api {
     methode: 'GET' | 'POST',
     route: string,
     opt: { query?: Record<string, string>; rumpf?: unknown; token?: string | null } = {},
+    zeitlimitMs = this.zeitlimitMs,
   ): Promise<T> {
     const params = new URLSearchParams({ r: route, ...(opt.query ?? {}) });
     const headers: Record<string, string> = { Accept: 'application/json' };
@@ -68,7 +72,7 @@ export class Api {
     if (opt.token) headers['X-TT-Token'] = opt.token;
 
     const abbruch = new AbortController();
-    const timer = setTimeout(() => abbruch.abort(), this.zeitlimitMs);
+    const timer = setTimeout(() => abbruch.abort(), zeitlimitMs);
     let antwort: Response;
     try {
       antwort = await this.abruf(`${this.basis}?${params}`, {
@@ -133,7 +137,10 @@ export class Api {
     return this.rufe<TurnierEinstellungen>('POST', 'turnier.einstellungen', { token, rumpf: a });
   }
   sichern(token: string, turnier: string) {
-    return this.rufe<{ ok: true; gesendetAn: string[]; zeit: string }>('POST', 'turnier.sichern', { token, rumpf: { turnier } });
+    return this.rufe<{ ok: true; gesendetAn: string[]; zeit: string; wartend?: boolean; meldung?: string }>('POST', 'turnier.sichern', {
+      token,
+      rumpf: { turnier },
+    });
   }
   passwortAendern(token: string, alt: string, neu: string) {
     return this.rufe<{ ok: true }>('POST', 'passwort.aendern', { token, rumpf: { alt, neu } });
@@ -186,6 +193,47 @@ export class Api {
   uebersicht(token: string, turnier: string, text: string) {
     return this.rufe<{ ok: true }>('POST', 'turnier.uebersicht', { token, rumpf: { turnier, text } });
   }
+  /* ---------- nur Android-Zentrale, nur vom Gerät der Zentrale ---------- */
+  zentraleAnmelden() {
+    return this.rufe<LoginAntwort>('POST', 'zentrale.anmelden', { rumpf: {} });
+  }
+  zentraleStatus() {
+    return this.rufe<ZentraleStatus>('GET', 'zentrale.status');
+  }
+  zentraleWlan(ssid: string, passwort: string) {
+    return this.rufe<ZentraleStatus>('POST', 'zentrale.wlan', { rumpf: { ssid, passwort } });
+  }
+  zentraleHotspot(an: boolean) {
+    return this.rufe<ZentraleStatus>('POST', 'zentrale.hotspot', { rumpf: { an } });
+  }
+  zentraleOeffnen(ziel: 'hotspot' | 'akku' | 'wlan') {
+    return this.rufe<{ ok: boolean }>('POST', 'zentrale.oeffnen', { rumpf: { ziel } });
+  }
+  zentraleOnlineAnmelden(email: string, passwort: string, url?: string) {
+    return this.rufe<ZentraleStatus>('POST', 'zentrale.online.anmelden', { rumpf: { email, passwort, url } }, 30_000);
+  }
+  zentraleOnlineAbmelden() {
+    return this.rufe<ZentraleStatus>('POST', 'zentrale.online.abmelden', { rumpf: {} });
+  }
+  zentraleOnlineTurniere() {
+    return this.rufe<{ turniere: OnlineTurnier[] }>('GET', 'zentrale.online.turniere', {}, 30_000);
+  }
+  zentraleUebernehmen(turnier: string, erzwingen = false) {
+    return this.rufe<{ turnier: TurnierInfo; neu: number }>('POST', 'zentrale.uebernehmen', { rumpf: { turnier, erzwingen } }, 120_000);
+  }
+  zentraleRueckgabe(turnier: string) {
+    return this.rufe<{ turnier: TurnierInfo; gesendet: number }>('POST', 'zentrale.rueckgabe', { rumpf: { turnier } }, 120_000);
+  }
+  zentralePoolAbgleichen() {
+    return this.rufe<{ ok: true; hochgeladen: number; anzahl: number }>('POST', 'zentrale.pool.abgleichen', { rumpf: {} }, 60_000);
+  }
+  zentraleSicherungenSenden() {
+    return this.rufe<ZentraleStatus>('POST', 'zentrale.sicherungen.senden', { rumpf: {} }, 60_000);
+  }
+  zentraleTurnierLoeschen(turnier: string, trotzdem = false) {
+    return this.rufe<{ ok: true }>('POST', 'zentrale.turnier.loeschen', { rumpf: { turnier, trotzdem } });
+  }
+
   abholen(turnier: string, ab: number) {
     return this.rufe<AbholenAntwort>('GET', 'events', { query: { turnier, ab: String(ab) } });
   }

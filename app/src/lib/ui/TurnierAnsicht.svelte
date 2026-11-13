@@ -16,6 +16,8 @@
   import { uebersichtText } from '../engine/uebersicht';
   import { anzeigeName, geraetId, gemerktesTurnier, setzeAnzeigeName, turnierAbmelden, turnierMerken, type GemerktesTurnier } from '../einstellungen';
   import { codeAnzeige } from '../code';
+  import { appBasis } from '../zentrale.svelte';
+  import { nativ } from '../nativ';
   import { erinnerungFaellig, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben, sicherungErstellen } from '../sicherung';
   import StatusAnzeige from './StatusAnzeige.svelte';
   import Hilfe from './Hilfe.svelte';
@@ -52,8 +54,10 @@
   const ich = $derived(rolle === 'spieler' ? (eintrag?.spieler ?? null) : null);
   const darfSchreiben = $derived(lokal || !!eintrag?.token);
   const name = $derived(zustand?.name || eintrag?.name || '');
-  const link = $derived(`${location.origin}${location.pathname}#/t/${id}`);
-  const teilenNativ = typeof navigator !== 'undefined' && !!navigator.share;
+  const link = $derived(`${appBasis()}#/t/${id}`);
+  const teilenNativ = typeof navigator !== 'undefined' && (!!navigator.share || !!nativ());
+  /** Online: Turnier liegt auf einer Zentrale. Zentrale: Turnier wurde zurückgegeben. */
+  let sperre = $state<{ zentrale: string | null; abgegeben: boolean } | null>(null);
   const erinnerung = $derived(
     lokal && zustand !== null && eintrag !== null && erinnerungFaellig(lokaleSicherung(id), zustand.anzahlEreignisse, ereignisse[0]?.zeit ?? eintrag.zuletzt, jetzt),
   );
@@ -181,6 +185,12 @@
       // Reiter festhalten, damit die Seite beim Eintragen nicht springt
       if (!code && !reiter) ersetze(`t/${id}/${standardReiter}`);
       void einstellungenLaden();
+      if (!lokal) {
+        api
+          .turnier(id)
+          .then((a) => (sperre = a.turnier.zentrale || a.turnier.abgegeben ? { zentrale: a.turnier.zentrale ?? null, abgegeben: !!a.turnier.abgegeben } : null))
+          .catch(() => undefined);
+      }
       document.addEventListener('visibilitychange', beiSichtbarkeit);
       addEventListener('online', beiOnline);
     } catch (x) {
@@ -230,6 +240,11 @@
   }
 
   async function linkTeilen() {
+    const n = nativ();
+    if (n) {
+      n.textTeilen(name, `${T.app.titel}: ${name}\n${link}`);
+      return;
+    }
     try {
       await navigator.share({ title: name, text: `${T.app.titel}: ${name}`, url: link });
     } catch {
@@ -304,6 +319,8 @@
   <a class="knopf zweit" href={linkZu('')}>{T.app.zurueck}</a>
 {:else}
   {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
+  {#if sperre?.zentrale}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.gesperrtOnline(sperre.zentrale)}</div>{/if}
+  {#if sperre?.abgegeben}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.abgegebenHinweis}</div>{/if}
 
   <section class="kopf">
     <h1>{name}</h1>

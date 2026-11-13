@@ -204,7 +204,7 @@ $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
-pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.4.0' && $d['codes'] === true, 'info: Registrierung, Mail und Codes bereit');
+pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.5.0' && $d['codes'] === true, 'info: Registrierung, Mail und Codes bereit');
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1'], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
@@ -469,6 +469,94 @@ rufe($api, 'POST', 'konto.loeschen', ['passwort' => 'nordnord1'], $vk);
 [, $d] = rufe($api, 'POST', 'login', ['email' => 'nord@example.org', 'passwort' => 'nordnord1']);
 pruefe(!isset($d['token']), 'Konto mit Pool und Codes gelöscht');
 
+echo "Etappe 4: Android-Zentrale (Übernahme, Rückgabe, Sicherung)\n";
+$mailer4 = new TestMailer();
+$api = neueApi($mailer4);
+rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Zentral', 'email' => 'z@example.org', 'passwort' => 'zentral12']);
+$zk = $d['token'];
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Fremd', 'email' => 'f@example.org', 'passwort' => 'fremd1234']);
+$fk = $d['token'];
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Hallenturnier', 'datum' => '2026-12-12', 'leitungCode' => 'x', 'leitungsCode' => '483920'], $zk);
+$tid = $d['turnier']['id'];
+$zl = $d['token'];
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('z4-000001'), ereignis('z4-000002')]], $zl, ['turnier' => $tid]);
+rufe($api, 'POST', 'codes.anlegen', ['turnier' => $tid, 'eintraege' => [['rolle' => 'spieler', 'bezug' => 'sp1', 'name' => 'Anna'], ['rolle' => 'spieler', 'bezug' => 'sp2', 'name' => 'Ben']]], $zl);
+[, $d] = rufe($api, 'GET', 'codes', null, $zl, ['turnier' => $tid]);
+$c4 = [];
+foreach ($d['codes'] as $c) {
+    $c4[$c['bezug']] = $c['code'];
+}
+$zug = ['turnier' => $tid, 'zentrale' => 'Zentrale TTC (z-abc)', 'zentraleId' => 'z-abcdefghij'];
+[$s] = rufe($api, 'POST', 'zentrale.uebernehmen', $zug, $fk);
+pruefe($s === 403, 'Übernahme nur durch das Eigentümer-Konto');
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => '483920', 'name' => 'Leiter']);
+[$s] = rufe($api, 'POST', 'zentrale.uebernehmen', $zug, $d['token']);
+pruefe($s === 401, 'Übernahme braucht Konto-Anmeldung (Leitungscode reicht nicht)');
+[$s, $d] = rufe($api, 'POST', 'zentrale.uebernehmen', $zug, $zk);
+pruefe($s === 200 && $d['einstellungen']['leitungsCode'] === '483920' && count($d['codes']) === 2 && $d['turnier']['zentrale'] === 'Zentrale TTC (z-abc)', 'Übernahme liefert Code, Codes, Einstellungen');
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('z4-000003')]], $zl, ['turnier' => $tid]);
+pruefe($s === 409 && str_contains($d['meldung'], 'Zentrale'), 'gesperrt: online keine neuen Einträge');
+[$s] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $tid, 'eintraege' => [['rolle' => 'helfer', 'bezug' => 'h1', 'name' => 'Hilde']]], $zl);
+pruefe($s === 409, 'gesperrt: keine Code-Änderungen');
+[$s, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+pruefe($s === 200 && count($d['ereignisse']) === 2, 'gesperrt: Lesen geht weiter');
+[$s] = rufe($api, 'POST', 'zentrale.uebernehmen', ['turnier' => $tid, 'zentrale' => 'Andere', 'zentraleId' => 'z-andere123'], $zk);
+pruefe($s === 409, 'zweite Zentrale: Konflikt');
+[$s] = rufe($api, 'POST', 'zentrale.rueckgabe', ['turnier' => $tid, 'zentraleId' => 'z-andere123', 'ereignisse' => []], $zk);
+pruefe($s === 409, 'Rückgabe nur von der übernehmenden Zentrale');
+$ru = ['turnier' => $tid, 'zentraleId' => 'z-abcdefghij', 'ereignisse' => [
+    ereignis('z4-000002') + ['autor' => ['rolle' => 'leitung', 'name' => 'Max']],
+    ereignis('z4-000010', 'spiel.ergebnis') + ['autor' => ['rolle' => 'spieler', 'name' => 'Anna', 'spieler' => 'sp1']],
+    ereignis('z4-000011') + ['autor' => ['rolle' => 'admin', 'name' => '']],
+]];
+[$s, $d] = rufe($api, 'POST', 'zentrale.rueckgabe', $ru, $zk);
+pruefe($s === 200 && count($d['angenommen']) === 3, 'Rückgabe: Ereignisse angenommen (bekannte doppelt harmlos)');
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+$autoren = array_map(fn($e) => $e['autor']['rolle'] . ':' . $e['autor']['name'] . ':' . ($e['autor']['spieler'] ?? ''), $d['ereignisse']);
+pruefe(count($d['ereignisse']) === 4 && $autoren[2] === 'spieler:Anna:sp1' && $autoren[3] === 'leitung:Zentrale:', 'Rückgabe: Autoren wie auf der Zentrale');
+[$s, $d] = rufe($api, 'POST', 'zentrale.freigeben', ['turnier' => $tid, 'zentraleId' => 'z-abcdefghij',
+    'codes' => [['rolle' => 'spieler', 'bezug' => 'sp1', 'name' => 'Anna', 'code' => $c4['sp1'], 'gesperrt' => false],
+                ['rolle' => 'helfer', 'bezug' => 'h9', 'name' => 'Hanna', 'code' => '739104', 'gesperrt' => false]],
+    'einstellungen' => ['leitungsCode' => '583921', 'sicherungAn' => ['z@example.org'], 'sicherungTakt' => 60],
+    'uebersicht' => ['text' => 'Stand von der Zentrale']], $zk);
+pruefe($s === 200 && $d['turnier']['zentrale'] === null, 'Freigeben hebt die Sperre auf');
+[$s] = rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('z4-000003')]], $zl, ['turnier' => $tid]);
+pruefe($s === 200, 'nach der Rückgabe: online wieder beschreibbar');
+[$s, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => '739104']);
+pruefe($s === 200 && $d['rolle'] === 'helfer' && $d['name'] === 'Hanna', 'Codes von der Zentrale gelten online');
+[$s] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => $c4['sp2']]);
+pruefe($s === 401, 'auf der Zentrale entfernter Code gilt nicht mehr');
+[$s, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => '583921', 'name' => 'L']);
+pruefe($s === 200 && $d['rolle'] === 'leitung', 'Leitungscode von der Zentrale übernommen');
+// Auf der Zentrale angelegtes Turnier hochladen
+$neuId = 'zentral4neu';
+[$s] = rufe($api, 'POST', 'zentrale.rueckgabe', ['turnier' => $neuId, 'zentraleId' => 'z-abcdefghij', 'ereignisse' => []], $zk);
+pruefe($s === 404, 'unbekanntes Turnier ohne Angaben: nicht gefunden');
+[$s, $d] = rufe($api, 'POST', 'zentrale.rueckgabe', ['turnier' => $neuId, 'zentraleId' => 'z-abcdefghij', 'zentrale' => 'Zentrale TTC',
+    'neu' => ['name' => 'Offline-Turnier', 'datum' => '2026-12-13', 'leitungsCode' => '640219'],
+    'ereignisse' => [ereignis('z4-000100', 'turnier.angelegt', ['name' => 'Offline-Turnier']) + ['autor' => ['rolle' => 'leitung', 'name' => 'TTC Zentral']]]], $zk);
+pruefe($s === 200 && $d['hoechsteSeq'] > 0, 'Turnier von der Zentrale online angelegt');
+rufe($api, 'POST', 'zentrale.freigeben', ['turnier' => $neuId, 'zentraleId' => 'z-abcdefghij'], $zk);
+[, $d] = rufe($api, 'GET', 'turniere', null, $zk);
+pruefe(count(array_filter($d['turniere'], fn($t) => $t['id'] === $neuId && $t['zentrale'] === null)) === 1, 'neues Turnier gehört dem Konto, nicht gesperrt');
+[$s] = rufe($api, 'POST', 'zentrale.rueckgabe', ['turnier' => $neuId, 'zentraleId' => 'z-abcdefghij', 'ereignisse' => []], $fk);
+pruefe($s === 403 || $s === 409, 'fremdes Konto kann nicht zurückgeben');
+// Sicherung über den Online-Server
+$sich = ['format' => 'tt-turnier-sicherung', 'version' => 1, 'erstellt' => '2026-12-12T10:00:00Z',
+    'turnier' => ['id' => 'zentral4neu', 'name' => 'Offline-Turnier', 'datum' => null, 'modus' => 'online'],
+    'ereignisse' => [ereignis('z4-000200', 'turnier.abgeschlossen', [])]];
+[$s, $d] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => 'zentral4neu', 'name' => 'Offline-Turnier', 'datum' => '2026-12-13'],
+    'empfaenger' => ['sicherung@example.org'], 'anlass' => 'Turnier abgeschlossen (Zentrale)',
+    'uebersicht' => ['text' => "Sieger: Anna", 'zeit' => '2026-12-12T10:00:00Z'], 'sicherung' => $sich], $zk);
+$m = mailAn($mailer4, 'sicherung@example.org');
+pruefe($s === 200 && $m !== null && str_contains($m->text, 'Sieger: Anna') && str_contains($m->text, 'abgeschlossen') && str_contains($m->text, 'Zentrale')
+    && $m->anhangName !== null && str_contains((string)$m->anhangInhalt, 'z4-000200'), 'Sicherungsmail von der Zentrale mit Anhang');
+[$s] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => 'x'], 'empfaenger' => ['a@example.org'], 'sicherung' => $sich], $zk);
+pruefe($s === 400, 'Sicherung von der Zentrale: Angaben werden geprüft');
+[$s] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => 'zentral4neu', 'name' => 'X'], 'empfaenger' => ['a@example.org'], 'sicherung' => $sich], null);
+pruefe($s === 401, 'Sicherung von der Zentrale nur mit Konto');
+
 echo "Migration von Version 1\n";
 $pdo = new PDO('sqlite::memory:');
 $alt = new Datenbank($pdo);
@@ -482,7 +570,7 @@ $pdo->exec("INSERT INTO konten (name, email, passwort_hash, rolle, gesperrt, ang
 $pdo->exec("INSERT INTO turniere (id, konto_id, name, datum, leitung_hash, angelegt) VALUES ('altturnier', 1, 'Alt', NULL, '" . password_hash('altesPasswort', PASSWORD_DEFAULT) . "', 1000)");
 $apiAlt = new Api($alt, ['setup_code' => 'einrichtung-123456']);
 [$s, $d] = rufe($apiAlt, 'POST', 'login', ['email' => 'alt@example.org', 'passwort' => 'altpass12']);
-pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '3', 'Schema 1 → 3 angehoben, Anmeldung geht');
+pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '4', 'Schema 1 → 4 angehoben, Anmeldung geht');
 [$s, $d] = rufe($apiAlt, 'POST', 'turnier.zugang', ['turnier' => 'altturnier', 'passwort' => 'altesPasswort', 'name' => 'X']);
 pruefe($s === 200, 'alte Turniere: Zugang mit bisherigem Passwort');
 [$s, $d] = rufe($apiAlt, 'GET', 'turnier.einstellungen', null, $d['token'], ['id' => 'altturnier']);

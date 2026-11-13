@@ -1,0 +1,81 @@
+name: Zentrale (Android)
+
+# Baut die Android-App der Zentrale (APK). Auf main mit Signatur-Secrets: als Release
+# „zentrale“ veröffentlichen – feste Download-Adresse:
+#   https://github.com/Sasurb/tt-turnier/releases/download/zentrale/tt-zentrale.apk
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    name: APK bauen
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: App bauen und einbetten
+        env:
+          VITE_BETREIBER_NAME: ${{ vars.BETREIBER_NAME }}
+          VITE_BETREIBER_ANSCHRIFT: ${{ vars.BETREIBER_ANSCHRIFT }}
+          VITE_BETREIBER_MAIL: ${{ vars.BETREIBER_MAIL }}
+          VITE_BETREIBER_TELEFON: ${{ vars.BETREIBER_TELEFON }}
+          VITE_KONTAKT_URL: ${{ vars.WEBSPACE_URL }}
+        run: |
+          (cd app && npm ci && npm run build)
+          rm -rf zentrale/android/app/src/main/assets/www
+          mkdir -p zentrale/android/app/src/main/assets
+          cp -R app/dist zentrale/android/app/src/main/assets/www
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Signaturschlüssel
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/zentrale.jks"
+          echo "TT_KEYSTORE=$RUNNER_TEMP/zentrale.jks" >> "$GITHUB_ENV"
+      - name: APK bauen
+        working-directory: zentrale/android
+        env:
+          TT_KEYSTORE_PASSWORT: ${{ secrets.ANDROID_KEYSTORE_PASSWORT }}
+          TT_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TT_KEY_PASSWORT: ${{ secrets.ANDROID_KEY_PASSWORT }}
+          TT_VERSION_CODE: ${{ github.run_number }}
+          TT_VERSION_NAME: 0.5.0 (${{ github.run_number }})
+        run: |
+          [ -z "${TT_KEYSTORE:-}" ] && echo "::warning::Keine Signatur-Secrets – APK mit Test-Schlüssel (Updates müssen dann neu installiert werden). Siehe docs/zentrale.md."
+          gradle --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk ../../tt-zentrale.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tt-zentrale-apk
+          path: tt-zentrale.apk
+          retention-days: 30
+      - name: Als Release „zentrale“ veröffentlichen
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && env.KEYSTORE_B64 != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete zentrale --yes --cleanup-tag 2>/dev/null || true
+          gh release create zentrale tt-zentrale.apk --target "$GITHUB_SHA" \
+            --title "Zentrale (Android) – Stand ${GITHUB_SHA::7}" \
+            --notes "Android-App der Zentrale, gebaut aus ${GITHUB_SHA::7} (Lauf ${{ github.run_number }}). Installation: docs/zentrale.md"
