@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy } from 'svelte';
   import type { OnlineTurnier, TurnierInfo, ZentraleStatus } from '@shared/protokoll';
   import { T } from '../texte';
   import { gehe, linkZu } from '../router.svelte';
@@ -58,7 +58,11 @@
   }
 
   let timer: ReturnType<typeof setInterval> | undefined;
-  onMount(() => {
+  // Erst entscheiden, wenn der Server bekannt ist (beim direkten Aufruf von #/zentrale läuft die Prüfung noch)
+  let gestartet = false;
+  $effect(() => {
+    if (gestartet || app.server.art === 'pruefe') return;
+    gestartet = true;
     if (!amGeraetDerZentrale()) {
       gehe('');
       return;

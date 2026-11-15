@@ -13,6 +13,24 @@ export type Rueckzug = 'wo' | 'hobby';
 /** Ergebniseingabe: Satzpunkte (z. B. 11:7) oder nur Satzstand (z. B. 3:1) */
 export type Eingabe = 'punkte' | 'saetze';
 export type Setzung = 'ttr' | 'manuell' | 'keine';
+/**
+ * Gruppen nur aus gleicher Leistungsklasse bilden: nach eigenem Klassenbegriff, nach TTR-Bereichen
+ * (Grenzen in `ttrGrenzen`) oder gemischt (keine).
+ */
+export type KlassenTrennung = 'keine' | 'klasse' | 'ttr';
+
+/**
+ * Welche Stände öffentlich zu sehen sind. Einzelne Spielergebnisse sieht man immer; Tabellen,
+ * Platzierungen und der K.-o.-Baum lassen sich bis zum Schluss verdecken („Spannung bis zum Schluss“).
+ */
+export interface Veroeffentlichung {
+  tabellen: boolean;
+  ko: boolean;
+}
+export const ALLES_OEFFENTLICH: Veroeffentlichung = {
+  tabellen: true,
+  ko: true,
+};
 export type BestOf = 3 | 5 | 7;
 export type Geschlecht = 'm' | 'w' | 'd';
 /** Angaben, die die Turnierleitung zusätzlich zu Name und Verein im Turnier führen kann */
@@ -62,6 +80,12 @@ export interface KonkurrenzEinstellungen {
   aufsteiger: number;
   platz3: boolean;
   zulassung: Zulassung;
+  /** Gruppen nur aus gleicher Leistungsklasse (Erläuterung in der App) */
+  klassenTrennung: KlassenTrennung;
+  /** TTR-Grenzen für die Trennung nach TTR, aufsteigend, z. B. [1200, 1500] → bis 1199, 1200–1499, ab 1500 */
+  ttrGrenzen: number[];
+  /** Abweichend vom Turnier: null = wie das Turnier */
+  veroeffentlichung: Veroeffentlichung | null;
 }
 
 export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
@@ -78,13 +102,51 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
     gruppenGroesse: 4,
     aufsteiger: 2,
     platz3: false,
-    zulassung: { ttrMin: null, ttrMax: null, klassen: [], geschlecht: [], jahrgangVon: null, jahrgangBis: null },
+    zulassung: {
+      ttrMin: null,
+      ttrMax: null,
+      klassen: [],
+      geschlecht: [],
+      jahrgangVon: null,
+      jahrgangBis: null,
+    },
+    klassenTrennung: 'keine',
+    ttrGrenzen: [],
+    veroeffentlichung: null,
   };
+}
+
+/** Leistungsklasse eines Spielers für die Gruppenbildung; '' = ohne Klasse */
+export function klasseVon(s: Pick<SpielerDaten, 'ttr' | 'klasse'> | undefined, einst: Pick<KonkurrenzEinstellungen, 'klassenTrennung' | 'ttrGrenzen'>): string {
+  if (!s || einst.klassenTrennung === 'keine') return '';
+  if (einst.klassenTrennung === 'klasse') return (s.klasse ?? '').trim().toLowerCase();
+  if (typeof s.ttr !== 'number') return '';
+  const grenzen = [...einst.ttrGrenzen].sort((a, b) => a - b);
+  let stufe = 0;
+  for (const g of grenzen) if (s.ttr >= g) stufe++;
+  return `ttr${stufe}`;
+}
+
+/** Lesbarer Name eines TTR-Bereichs (Stufe aus klasseVon) */
+export function ttrBereichName(stufe: number, grenzen: number[]): string {
+  const g = [...grenzen].sort((a, b) => a - b);
+  if (g.length === 0) return 'alle';
+  if (stufe === 0) return `bis ${g[0]! - 1}`;
+  if (stufe >= g.length) return `ab ${g[g.length - 1]}`;
+  return `${g[stufe - 1]}–${g[stufe]! - 1}`;
 }
 
 /** Diese Einstellungen lassen sich nach dem Start nicht mehr ändern. */
 export const FEST_NACH_START: readonly (keyof KonkurrenzEinstellungen)[] = [
-  'modus', 'bestOf', 'eingabe', 'setzung', 'gesetzte', 'vereinstrennung', 'gruppenGroesse',
+  'modus',
+  'bestOf',
+  'eingabe',
+  'setzung',
+  'gesetzte',
+  'vereinstrennung',
+  'gruppenGroesse',
+  'klassenTrennung',
+  'ttrGrenzen',
 ];
 
 export type PhaseArt = 'gruppen' | 'ko';

@@ -8,13 +8,11 @@
   import { TurnierSitzung } from '../engine/turnier';
   import { anzeigeName, geraetId, turnierMerken } from '../einstellungen';
   import { sicherungLesen } from '../sicherung';
-  import { codeEingabe, codeGueltig, neuerCode } from '../code';
 
   // raw: die Daten gehen unverändert in IndexedDB (Proxys lassen sich dort nicht speichern)
   let sicherung = $state.raw<Sicherung | null>(null);
   let fehler = $state('');
   let laeuft = $state(false);
-  let code = $state(neuerCode());
   const onlineMoeglich = $derived(app.server.art === 'bereit' && !!app.sitzung);
   let wahl = $state<'online' | 'lokal' | null>(null);
   const ziel = $derived(wahl ?? (onlineMoeglich ? 'online' : 'lokal'));
@@ -34,20 +32,18 @@
   async function wiederherstellen() {
     if (!sicherung) return;
     fehler = '';
-    if (ziel === 'online' && !codeGueltig(code)) {
-      fehler = T.neu.codeUngueltig;
-      return;
-    }
     laeuft = true;
     try {
       const s = sicherung;
       const name = anzeigeName() || app.sitzung?.konto.name || 'Leitung';
       let id: string;
       let sitzung: TurnierSitzung;
+      let einmalToken: string | null = null;
       if (ziel === 'online' && app.sitzung) {
-        const a = await api.turnierAnlegen(app.sitzung.token, { name: s.turnier.name, datum: s.turnier.datum, leitungsCode: code });
+        const a = await api.turnierAnlegen(app.sitzung.token, { name: s.turnier.name, datum: s.turnier.datum });
+        einmalToken = a.token;
         id = a.turnier.id;
-        turnierMerken({ id, name: a.turnier.name, datum: a.turnier.datum, modus: 'online', rolle: 'leitung', token: a.token });
+        turnierMerken({ id, name: a.turnier.name, datum: a.turnier.datum, modus: 'online', rolle: 'zuschauer', token: null, konto: true });
         sitzung = new TurnierSitzung({ speicher, turnier: id, modus: 'online', geraet: geraetId(), autor: { rolle: 'leitung', name }, api, token: () => a.token });
       } else {
         id = lokaleTurnierId();
@@ -56,6 +52,7 @@
       }
       const n = await sitzung.importieren(s.ereignisse);
       await sitzung.eintragen(ART.turnierWiederhergestellt, { quelle: s.turnier.id, erstellt: s.erstellt, anzahl: n });
+      if (einmalToken) void api.logout(einmalToken).catch(() => undefined); // Hilfs-Token des Hochladens beenden
       app.hinweis = T.turnier.wiederhergestellt(n);
       gehe('t/' + id);
     } catch (x) {
@@ -88,29 +85,16 @@
       <legend>{T.wiederherstellen.ziel}</legend>
       <label class="wahl" class:aktiv={ziel === 'online'} class:aus={!onlineMoeglich}>
         <input type="radio" name="ziel" checked={ziel === 'online'} disabled={!onlineMoeglich} onchange={() => (wahl = 'online')} />
-        <span><strong>{T.neu.online}</strong>
+        <span><strong>{T.wiederherstellen.zielOnline}</strong>
           {#if !onlineMoeglich}<span class="leise">{T.neu.onlineAnmelden}</span>{/if}</span>
       </label>
       <label class="wahl" class:aktiv={ziel === 'lokal'}>
         <input type="radio" name="ziel" checked={ziel === 'lokal'} onchange={() => (wahl = 'lokal')} />
-        <span><strong>{T.neu.lokal}</strong></span>
+        <span><strong>{T.wiederherstellen.zielLokal}</strong></span>
       </label>
     </fieldset>
 
     {#if ziel === 'online'}
-      <label for="wc">{T.neu.code}</label>
-      <input
-        id="wc"
-        class="code"
-        value={code}
-        oninput={(e) => {
-          code = codeEingabe(e.currentTarget.value);
-          e.currentTarget.value = code;
-        }}
-        inputmode="numeric"
-        maxlength="6"
-        autocomplete="off"
-      />
       <p class="leise">{T.wiederherstellen.autorHinweis}</p>
     {/if}
   {/if}

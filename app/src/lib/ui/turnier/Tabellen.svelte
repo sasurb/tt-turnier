@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ART } from '@shared/protokoll';
   import { T } from '../../texte';
-  import { name, platzierungen, tabelle } from '../../engine/abfragen';
+  import { gruppenKlassen, name, platzierungen, sichtbar, tabelle } from '../../engine/abfragen';
   import { gruppenName, type Spiel } from '../../engine/modell';
   import { mischen, neuerZufallswert, zufallAus } from '../../engine/zufall';
   import type { TurnierZustand } from '../../engine/zustand';
@@ -20,6 +20,9 @@
   let wahl = $state('');
   const kid = $derived(gestartete.includes(wahl) ? wahl : (gestartete[0] ?? ''));
   const k = $derived(kid ? z.konkurrenzen[kid] : undefined);
+  /** Was Spieler und Zuschauer sehen; die Leitung sieht immer alles */
+  const zeige = $derived(k ? (leitung ? { tabellen: true, ko: true } : sichtbar(z, k)) : { tabellen: true, ko: true });
+  const klassen = $derived(k?.auslosungGruppen ? gruppenKlassen(z, k, k.auslosungGruppen.gruppen) : []);
 
   async function los(nr: number, gruppen: string[][]) {
     if (!k || !confirm(T.tab.losFrage)) return;
@@ -41,9 +44,12 @@
 
   <section class="karte">
     <h2>{k.einst.name} <span class="marke">{T.konk.status[k.status]}</span></h2>
-    {#each k.gruppen as g (g.nr)}
+    {#if !zeige.tabellen && k.gruppen.length}
+      <p class="meldung info" data-testid="verdeckt">{T.tab.verdeckt}</p>
+    {/if}
+    {#each zeige.tabellen ? k.gruppen : [] as g (g.nr)}
       {@const t = tabelle(k, g.nr)}
-      <h3>{k.gruppen.length > 1 ? T.konk.gruppe(gruppenName(g.nr)) : T.konk.modi.jgj}<Hilfe text={T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
+      <h3>{k.gruppen.length > 1 ? T.konk.gruppe(gruppenName(g.nr)) : T.konk.modi.jgj}{#if klassen[g.nr]}<span class="marke klasse">{klassen[g.nr]}</span>{/if}<Hilfe text={T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
       <div class="rollen">
         <table data-testid="tabelle-{gruppenName(g.nr)}">
           <thead>
@@ -83,15 +89,17 @@
         </div>
       {/if}
     {/each}
-    {#if k.gruppen.length}<WertungInfo aktiv={k.einst.wertung} />{/if}
+    {#if k.gruppen.length && zeige.tabellen}<WertungInfo aktiv={k.einst.wertung} />{/if}
 
     {#if k.einst.modus === 'gruppen_ko' && !k.gestartet.ko}
       <p class="meldung info">{T.tab.endrundeWartet}</p>
     {/if}
-    {#if k.gestartet.ko}
+    {#if k.gestartet.ko && !zeige.ko}
+      <p class="meldung info" data-testid="verdeckt-ko">{T.tab.verdecktKo}</p>
+    {:else if k.gestartet.ko}
       <h3>{k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko}</h3>
       <KoBaum {z} {k} {oeffnen} />
-      {@const p = platzierungen(k)}
+      {@const p = zeige.tabellen ? platzierungen(k) : []}
       {#if p.length}
         <h3>{T.tab.platzierungen}</h3>
         <ol class="plaetze">
@@ -108,7 +116,8 @@
   .wahl-konk { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; }
   .wahl-konk button { min-height: 40px; background: var(--flaeche); color: var(--text); border: 1px solid var(--linie); white-space: nowrap; }
   .wahl-konk button.aktiv { background: var(--blau); color: #fff; border-color: var(--blau); }
-  h3 { margin-top: 16px; display: flex; align-items: center; }
+  h3 { margin-top: 16px; display: flex; align-items: center; gap: 8px; }
+  .klasse { font-weight: 500; }
   .rollen { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
   th, td { padding: 8px 6px; border-bottom: 1px solid var(--linie); text-align: left; vertical-align: top; }

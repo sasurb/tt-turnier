@@ -25,6 +25,7 @@
 </script>
 
 <h1>{T.anmelden.titel}</h1>
+<p class="leise">{T.anmelden.einleitung}</p>
 {#if app.server.art === 'keiner'}
   <div class="meldung info">{T.app.keinServer}</div>
 {/if}
@@ -42,6 +43,10 @@
 <section class="karte neu">
   <span>{T.anmelden.keinKonto}</span>
   <a class="knopf zweit" href={linkZu('registrieren')}>{T.anmelden.kontoAnlegen}</a>
+</section>
+<section class="karte neu">
+  <span>{T.anmelden.beitreten}</span>
+  <a class="knopf zweit" href={linkZu('beitreten')}>{T.anmelden.beitretenLink}</a>
 </section>
 
 <style>

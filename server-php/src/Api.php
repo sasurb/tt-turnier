@@ -10,14 +10,23 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.5.0';
+    public const VERSION = '0.6.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_DATEN_BYTES = 16384;
     private const SITZUNG_DAUER = 60 * 60 * 24 * 30;      // 30 Tage
     private const VERSUCHE_FENSTER = 15 * 60;             // 15 Minuten
     private const VERSUCHE_MAX = 10;
-    private const TURNIER_ID_ZEICHEN = 'abcdefghijkmnpqrstuvwxyz23456789';
+    /** Turnierkennung: 8 Ziffern (ab 0.6); ältere Kennungen (10 Zeichen) bleiben gültig */
+    private const TURNIER_ID_MUSTER = '/^([0-9]{8}|[a-z0-9]{6,16})$/';
+    /** Unbekannte Turnierkennungen je Anschluss und Viertelstunde, bevor gebremst wird (gegen Durchprobieren) */
+    private const SUCHE_MAX = 30;
+    /** Fehlversuche je Turnier (über alle Anschlüsse) in 15 Minuten, danach werden nur noch richtige Kennungen angenommen */
+    private const ZUGANG_TURNIER_MAX = 200;
+    /** Ab so vielen Fehlversuchen je Anschluss und Turnier wird jede weitere Anmeldung verzögert (statt alle auszusperren) */
+    private const ZUGANG_VERZOEGERN_AB = 5;
+    private const CODE_ROLLEN = ['leitung', 'helfer', 'spieler'];
+    private const MAX_KLASSEN = 40;
     private const TAG = 86400;
     private const KONTO_LOESCHEN_NACH = 365 * self::TAG;   // shared/protokoll.ts KONTO_LOESCHEN_NACH_TAGEN
     private const KONTO_ERINNERUNG_VORHER = 30 * self::TAG;
@@ -35,10 +44,12 @@ final class Api
 
     /** @var callable():int */
     private $uhr;
+    /** Anschluss der laufenden Anfrage (für Bremsen) */
+    private string $ip = '';
     private readonly Mailer $mailer;
 
     /**
-     * @param array{setup_code?:string,app_url?:string,mail?:array{absender?:string,admin?:string}} $config
+     * @param array{setup_code?:string,app_url?:string,mail?:array{absender?:string,admin?:string},ohne_warten?:bool} $config
      * @param callable():int|null $uhr
      */
     public function __construct(
@@ -94,6 +105,7 @@ final class Api
     public function bearbeiten(Anfrage $a): Antwort
     {
         try {
+            $this->ip = $a->ip;
             $this->db->migrieren();
             $this->wartung();
             if (is_array($a->rumpf) && isset($a->rumpf['__ungueltig'])) {
@@ -111,6 +123,7 @@ final class Api
                 'POST passwort.vergessen' => $this->passwortVergessen($a),
                 'POST passwort.zuruecksetzen' => $this->passwortZuruecksetzen($a),
                 'POST konto.loeschen' => $this->kontoLoeschen($a),
+                'POST turnier.loeschen' => $this->turnierLoeschen($a),
                 'POST rueckmeldung' => $this->rueckmeldung($a),
                 'GET konten' => $this->konten($a),
                 'POST konto.anlegen' => $this->kontoAnlegen($a),
@@ -127,6 +140,9 @@ final class Api
                 'POST code.neu' => $this->codeNeu($a),
                 'POST code.sperren' => $this->codeSperren($a),
                 'POST code.entfernen' => $this->codeEntfernen($a),
+                'POST code.helfer' => $this->codeHelfer($a),
+                'GET konto.einstellungen' => $this->kontoEinstellungen($a),
+                'POST konto.einstellungen' => $this->kontoEinstellungenSetzen($a),
                 'GET pool' => $this->pool($a),
                 'POST pool.speichern' => $this->poolSpeichern($a),
                 'POST pool.loeschen' => $this->poolLoeschen($a),
@@ -213,30 +229,21 @@ final class Api
         }
     }
 
+    /** Kennung: 8 Ziffern, nicht alle gleich, keine Ziffernfolge (12345678, 87654321) */
     private static function codeGueltig(string $code): bool
     {
-        if (!preg_match('/^[0-9]{6}$/', $code)) {
+        if (!preg_match('/^[0-9]{8}$/', $code)) {
             return false;
         }
         if (count(array_unique(str_split($code))) === 1) {
-            return false; // 000000, 111111 …
+            return false; // 00000000, 11111111 …
         }
         $auf = $ab = true;
-        for ($i = 1; $i < 6; $i++) {
+        for ($i = 1; $i < 8; $i++) {
             $auf = $auf && (int)$code[$i] === ((int)$code[$i - 1] + 1) % 10;
             $ab = $ab && (int)$code[$i] === ((int)$code[$i - 1] + 9) % 10;
         }
-        return !$auf && !$ab; // 123456, 654321 …
-    }
-
-    private function leitungsCodeFeld(Anfrage $a, string $feld = 'leitungsCode'): string
-    {
-        $code = $a->rumpf[$feld] ?? null;
-        $code = is_string($code) ? trim($code) : '';
-        if (!self::codeGueltig($code)) {
-            throw new ApiFehler('ungueltig', 'Der Leitungscode muss aus 6 Ziffern bestehen und darf nicht zu einfach sein (z. B. nicht 123456).');
-        }
-        return $code;
+        return !$auf && !$ab; // 12345678, 87654321 …
     }
 
     /** @return list<string> */
@@ -266,6 +273,14 @@ final class Api
         return is_array($l) ? array_values(array_filter($l, 'is_string')) : [];
     }
 
+    /** Wartezeit in Mikrosekunden (in Tests abschaltbar) */
+    private function warten(int $mikros): void
+    {
+        if (empty($this->config['ohne_warten'])) {
+            usleep($mikros);
+        }
+    }
+
     private function fehlversuch(string $schluessel): void
     {
         $this->db->ausfuehren('INSERT INTO versuche (schluessel, zeit) VALUES (?, ?)', [$schluessel, $this->jetzt()]);
@@ -276,17 +291,17 @@ final class Api
         $this->db->ausfuehren('DELETE FROM versuche WHERE schluessel = ?', [$schluessel]);
     }
 
-    private function neuesToken(?int $kontoId, ?string $turnierId, string $rolle, string $name, ?string $bezug = null): string
+    private function neuesToken(?int $kontoId, ?string $turnierId, string $rolle, string $name, ?string $bezug = null, bool $helfer = false): string
     {
         $token = bin2hex(random_bytes(32));
         $this->db->ausfuehren(
-            'INSERT INTO sitzungen (token_hash, konto_id, turnier_id, rolle, name, ablauf, bezug) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [hash('sha256', $token), $kontoId, $turnierId, $rolle, $name, $this->jetzt() + self::SITZUNG_DAUER, $bezug]
+            'INSERT INTO sitzungen (token_hash, konto_id, turnier_id, rolle, name, ablauf, bezug, helfer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [hash('sha256', $token), $kontoId, $turnierId, $rolle, $name, $this->jetzt() + self::SITZUNG_DAUER, $bezug, $helfer ? 1 : 0]
         );
         return $token;
     }
 
-    /** @return array{konto_id:?int,turnier_id:?string,rolle:string,name:string,bezug:?string}|null */
+    /** @return array{konto_id:?int,turnier_id:?string,rolle:string,name:string,bezug:?string,helfer:bool}|null */
     private function sitzung(Anfrage $a): ?array
     {
         if ($a->token === null || !preg_match('/^[a-f0-9]{64}$/', $a->token)) {
@@ -312,6 +327,7 @@ final class Api
             'rolle' => (string)$s['rolle'],
             'name' => (string)$s['name'],
             'bezug' => $s['bezug'] === null ? null : (string)$s['bezug'],
+            'helfer' => (int)($s['helfer'] ?? 0) === 1,
         ];
     }
 
@@ -378,31 +394,41 @@ final class Api
         }
     }
 
+    /**
+     * Turnier zur Kennung. Unbekannte Kennungen werden je Anschluss gezählt: Wer viele durchprobiert,
+     * wird für eine Viertelstunde gebremst (Kennungen sind 8 Ziffern, Turniere sollen nicht auffindbar sein).
+     */
     private function turnierLaden(string $id): array
     {
-        if (!preg_match('/^[a-z0-9]{6,16}$/', $id)) {
-            throw new ApiFehler('nicht_gefunden', 'Turnier nicht gefunden.');
-        }
-        $t = $this->db->eine(
-            'SELECT t.*, k.name AS veranstalter FROM turniere t JOIN konten k ON k.id = t.konto_id WHERE t.id = ?',
-            [$id]
-        );
+        $t = preg_match(self::TURNIER_ID_MUSTER, $id)
+            ? $this->db->eine('SELECT t.*, k.name AS veranstalter FROM turniere t JOIN konten k ON k.id = t.konto_id WHERE t.id = ?', [$id])
+            : null;
         if ($t === null) {
+            // Bekannte Turniere bleiben immer erreichbar (Hallen-WLAN teilt sich eine Adresse);
+            // gebremst wird nur, wer unbekannte Kennungen durchprobiert.
+            $schluessel = 'turnier-suche|' . $this->ip;
+            if ($this->anzahlVersuche($schluessel, self::VERSUCHE_FENSTER) >= self::SUCHE_MAX) {
+                throw new ApiFehler('zu_viele_versuche', 'Zu viele unbekannte Turnierkennungen. Bitte in 15 Minuten erneut versuchen.');
+            }
+            $this->fehlversuch($schluessel);
             throw new ApiFehler('nicht_gefunden', 'Turnier nicht gefunden.');
         }
         return $t;
     }
 
+    /** Neue Turnierkennung: 8 Ziffern, nicht zu einfach, noch nicht vergeben */
     private function neueTurnierId(): string
     {
-        $zeichen = self::TURNIER_ID_ZEICHEN;
         do {
-            $id = '';
-            for ($i = 0; $i < 10; $i++) {
-                $id .= $zeichen[random_int(0, strlen($zeichen) - 1)];
-            }
-        } while ($this->db->eine('SELECT id FROM turniere WHERE id = ?', [$id]) !== null);
+            $id = (string)random_int(10000000, 99999999);
+        } while (!self::codeGueltig($id) || $this->db->eine('SELECT id FROM turniere WHERE id = ?', [$id]) !== null);
         return $id;
+    }
+
+    /** Kennung für Leitung/Helfer, die der Server selbst vergibt (Bezug) */
+    private static function neuerBezug(string $vorsilbe): string
+    {
+        return $vorsilbe . '-' . bin2hex(random_bytes(5));
     }
 
     /* ---------------- Endpunkte ---------------- */
@@ -418,6 +444,7 @@ final class Api
             'registrierung' => true,
             'mail' => $this->mailBereit(),
             'codes' => true,
+            'kennungen' => true,
         ];
     }
 
@@ -498,6 +525,9 @@ final class Api
         $antwort = ['rolle' => $s['rolle'], 'name' => $s['name'], 'turnier' => $s['turnier_id']];
         if ($s['rolle'] === 'spieler' && $s['bezug'] !== null) {
             $antwort['spieler'] = $s['bezug'];
+            if ($s['helfer']) {
+                $antwort['helfer'] = true;
+            }
         }
         if ($s['konto_id'] !== null) {
             $k = $this->db->eine('SELECT * FROM konten WHERE id = ?', [$s['konto_id']]);
@@ -597,14 +627,6 @@ final class Api
         if ($datum !== null && (!is_string($datum) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum))) {
             throw new ApiFehler('ungueltig', 'Datum im Format JJJJ-MM-TT angeben.');
         }
-        if (isset($a->rumpf['leitungsCode'])) {
-            $code = $this->leitungsCodeFeld($a);
-            $geheim = $code;
-        } else {
-            // Ältere App-Versionen senden ein freies Leitungspasswort
-            $code = null;
-            $geheim = $this->passwortFeld($a, 'leitungsPasswort', 6);
-        }
         $konto = $this->db->eine('SELECT email FROM konten WHERE id = ?', [$s['konto_id']]);
         $empfaenger = array_key_exists('sicherungAn', $a->rumpf ?? [])
             ? $this->empfaengerFeld($a->rumpf['sicherungAn'])
@@ -613,44 +635,74 @@ final class Api
         $this->db->ausfuehren(
             'INSERT INTO turniere (id, konto_id, name, datum, leitung_hash, leitung_code, sicherung_an, sicherung_takt, angelegt)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [$id, $s['konto_id'], $name, $datum, password_hash($geheim, PASSWORD_DEFAULT), $code,
+            [$id, $s['konto_id'], $name, $datum, password_hash(bin2hex(random_bytes(16)), PASSWORD_DEFAULT), null,
              json_encode(array_values(array_filter($empfaenger))), 30, $this->jetzt()]
         );
+        $t = $this->turnierLaden($id);
+        // Leitungskennung für die anlegende Person (weitere legt die Leitung unter „Zugänge“ an)
+        $leitung = $this->codeAnlegen($t, 'leitung', self::neuerBezug('l'), $s['name']);
         $token = $this->neuesToken($s['konto_id'], $id, 'leitung', $s['name']);
-        return ['turnier' => self::turnierAusgabe($this->turnierLaden($id)), 'token' => $token];
+        return ['turnier' => self::turnierAusgabe($t), 'token' => $token, 'leitung' => self::codeAusgabe($leitung)];
     }
 
+    /** Öffentlich. Mit Anmeldung steht in `rechte`, was diese Anmeldung im Turnier darf. */
     private function turnier(Anfrage $a): array
     {
-        return ['turnier' => self::turnierAusgabe($this->turnierLaden((string)($a->query['id'] ?? '')))];
+        $t = $this->turnierLaden((string)($a->query['id'] ?? ''));
+        $aus = self::turnierAusgabe($t);
+        if ($a->token !== null) {
+            $s = $this->sitzung($a);
+            $aus['rechte'] = $s === null ? null : $this->rechte($s, $t);
+        }
+        return ['turnier' => $aus];
+    }
+
+    /** Was darf eine Sitzung in diesem Turnier? */
+    private function rechte(array $s, array $t): ?string
+    {
+        if ($this->leitungsRecht($s, $t)) {
+            return 'leitung';
+        }
+        if ($s['turnier_id'] === $t['id'] && in_array($s['rolle'], ['helfer', 'spieler'], true)) {
+            return (string)$s['rolle'];
+        }
+        return null;
     }
 
     private function turnierZugang(Anfrage $a): array
     {
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        // Zwei Bremsen, ohne richtige Kennungen auszusperren (im Hallen-WLAN teilen sich alle eine Adresse):
+        // je Anschluss und Turnier wächst ab dem 5. Fehlversuch eine Wartezeit, ab 30 gibt es für falsche
+        // Kennungen 429; je Turnier insgesamt sind nach 200 Fehlversuchen nur noch richtige Kennungen möglich.
         $schluessel = 'zugang|' . $t['id'] . '|' . $a->ip;
-        $this->bremse($schluessel);
-        $pw = trim((string)($a->rumpf['code'] ?? $a->rumpf['passwort'] ?? ''));
-        if ($pw !== '' && password_verify($pw, (string)$t['leitung_hash'])) {
-            $this->versucheLoeschen($schluessel);
-            $name = trim((string)($a->rumpf['name'] ?? ''));
-            $name = $name === '' ? 'Leitung' : mb_substr($name, 0, 120);
-            return ['token' => $this->neuesToken(null, (string)$t['id'], 'leitung', $name), 'rolle' => 'leitung', 'name' => $name];
+        $schluesselTurnier = 'zugang-turnier|' . $t['id'];
+        $fehl = $this->anzahlVersuche($schluessel, self::VERSUCHE_FENSTER);
+        if ($fehl >= self::ZUGANG_VERZOEGERN_AB) {
+            $this->warten(min(2_000_000, 250_000 * ($fehl - self::ZUGANG_VERZOEGERN_AB + 1)));
         }
-        // Spieler- oder Helfer-Code
-        $c = preg_match('/^[0-9]{6}$/', $pw)
-            ? $this->db->eine('SELECT * FROM codes WHERE turnier_id = ? AND code = ? AND gesperrt = 0', [$t['id'], $pw])
+        $code = preg_replace('/\s+/', '', (string)($a->rumpf['code'] ?? ''));
+        $c = preg_match('/^[0-9]{8}$/', $code)
+            ? $this->db->eine('SELECT * FROM codes WHERE turnier_id = ? AND code = ? AND gesperrt = 0', [$t['id'], $code])
             : null;
         if ($c === null) {
             $this->fehlversuch($schluessel);
-            throw new ApiFehler('falsche_zugangsdaten', 'Dieser Code passt nicht zu diesem Turnier.');
+            $this->fehlversuch($schluesselTurnier);
+            if ($fehl + 1 >= self::VERSUCHE_MAX * 3 || $this->anzahlVersuche($schluesselTurnier, self::VERSUCHE_FENSTER) > self::ZUGANG_TURNIER_MAX) {
+                throw new ApiFehler('zu_viele_versuche', 'Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.');
+            }
+            throw new ApiFehler('falsche_zugangsdaten', 'Diese Kennung passt nicht zu diesem Turnier.');
         }
         $this->versucheLoeschen($schluessel);
         $rolle = (string)$c['rolle'];
-        $token = $this->neuesToken(null, (string)$t['id'], $rolle, (string)$c['name'], (string)$c['bezug']);
+        $helfer = $rolle === 'spieler' && (int)$c['helfer'] === 1;
+        $token = $this->neuesToken(null, (string)$t['id'], $rolle, (string)$c['name'], (string)$c['bezug'], $helfer);
         $antwort = ['token' => $token, 'rolle' => $rolle, 'name' => (string)$c['name']];
         if ($rolle === 'spieler') {
             $antwort['spieler'] = (string)$c['bezug'];
+            if ($helfer) {
+                $antwort['helfer'] = true;
+            }
         }
         return $antwort;
     }
@@ -717,6 +769,7 @@ final class Api
             }
         }
         $bezug = $rolle === 'spieler' ? $s['bezug'] : null;
+        $helfer = $rolle === 'spieler' && $s['helfer'];
 
         $angenommen = [];
         $this->db->pdo->beginTransaction();
@@ -729,7 +782,7 @@ final class Api
             }
             foreach ($liste as $e) {
                 $e = $e instanceof \stdClass ? get_object_vars($e) : $e;
-                $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug);
+                $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug, $helfer);
                 $angenommen[] = ['id' => (string)$e['id'], 'seq' => $seq];
             }
             $this->db->pdo->commit();
@@ -747,7 +800,7 @@ final class Api
         return ['angenommen' => $angenommen, 'hoechsteSeq' => $hoechste];
     }
 
-    private function einEreignis(string $turnierId, mixed $e, string $rolle, string $name, ?string $bezug = null): int
+    private function einEreignis(string $turnierId, mixed $e, string $rolle, string $name, ?string $bezug = null, bool $helfer = false): int
     {
         if ($e instanceof \stdClass) {
             $e = get_object_vars($e);
@@ -788,9 +841,9 @@ final class Api
             return (int)$vorhanden['seq'];
         }
         $this->db->ausfuehren(
-            'INSERT INTO ereignisse (turnier_id, event_id, art, daten, zeit, geraet, autor_rolle, autor_name, empfangen, autor_bezug)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [$turnierId, $id, $art, $json, $zeit, $geraet, $rolle, $name, $this->jetzt(), $bezug]
+            'INSERT INTO ereignisse (turnier_id, event_id, art, daten, zeit, geraet, autor_rolle, autor_name, empfangen, autor_bezug, autor_helfer)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [$turnierId, $id, $art, $json, $zeit, $geraet, $rolle, $name, $this->jetzt(), $bezug, $helfer ? 1 : 0]
         );
         return (int)$this->db->pdo->lastInsertId();
     }
@@ -906,6 +959,43 @@ final class Api
         return ['ok' => true];
     }
 
+    /**
+     * Turnier endgültig löschen (Eigentümer-Konto oder Administrator, mit Passwort): Ereignisse, Kennungen,
+     * Sitzungen, Rückstellungen. Für die Speicherbegrenzung nach DSGVO (Jugendturniere!).
+     */
+    private function turnierLoeschen(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        if ($s['rolle'] !== 'admin' && (int)$t['konto_id'] !== (int)$s['konto_id']) {
+            throw new ApiFehler('keine_berechtigung', 'Nur die Turnierleitung (Konto) oder der Administrator darf ein Turnier löschen.');
+        }
+        $bremse = 'loeschen|' . $a->ip;
+        $this->bremse($bremse);
+        $k = $this->db->eine('SELECT passwort_hash FROM konten WHERE id = ?', [$s['konto_id']]);
+        if ($k === null || !password_verify((string)($a->rumpf['passwort'] ?? ''), (string)$k['passwort_hash'])) {
+            $this->fehlversuch($bremse);
+            throw new ApiFehler('falsche_zugangsdaten', 'Das Passwort ist falsch.');
+        }
+        $this->db->pdo->beginTransaction();
+        try {
+            $this->turnierEntfernen((string)$t['id']);
+            $this->db->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->db->pdo->rollBack();
+            throw $e;
+        }
+        return ['ok' => true];
+    }
+
+    private function turnierEntfernen(string $id): void
+    {
+        $this->db->ausfuehren('DELETE FROM ereignisse WHERE turnier_id = ?', [$id]);
+        $this->db->ausfuehren('DELETE FROM sitzungen WHERE turnier_id = ?', [$id]);
+        $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ?', [$id]);
+        $this->db->ausfuehren('DELETE FROM turniere WHERE id = ?', [$id]);
+    }
+
     /** Konto mit allen Turnieren, Ereignissen und Sitzungen endgültig löschen. */
     private function kontoEntfernen(int $kontoId): void
     {
@@ -998,7 +1088,6 @@ final class Api
     {
         $this->leitungPruefen($a, $t);
         return [
-            'leitungsCode' => $t['leitung_code'] === null ? null : (string)$t['leitung_code'],
             'sicherungAn' => self::empfaengerAus($t),
             'sicherungTakt' => (int)$t['sicherung_takt'],
             'letzteSicherung' => self::iso($t['sicherung_letzte'] === null ? null : (int)$t['sicherung_letzte']),
@@ -1012,13 +1101,6 @@ final class Api
         $this->leitungPruefen($a, $t);
         self::nichtAufZentrale($t);
         $r = $a->rumpf ?? [];
-        if (array_key_exists('leitungsCode', $r)) {
-            $code = $this->leitungsCodeFeld($a);
-            if ($this->db->eine('SELECT bezug FROM codes WHERE turnier_id = ? AND code = ?', [$t['id'], $code]) !== null) {
-                throw new ApiFehler('konflikt', 'Diesen Code hat schon ein Spieler oder Helfer. Bitte einen anderen wählen.');
-            }
-            $this->db->ausfuehren('UPDATE turniere SET leitung_code = ?, leitung_hash = ? WHERE id = ?', [$code, password_hash($code, PASSWORD_DEFAULT), $t['id']]);
-        }
         if (array_key_exists('sicherungAn', $r)) {
             $this->db->ausfuehren('UPDATE turniere SET sicherung_an = ? WHERE id = ?', [json_encode($this->empfaengerFeld($r['sicherungAn'])), $t['id']]);
         }
@@ -1200,9 +1282,6 @@ final class Api
         self::eigentuemerPruefen($s, $t);
         $name = $this->text($a, 'zentrale', 2, 160);
         $zid = $this->zentraleIdFeld($a);
-        if ($t['leitung_code'] === null) {
-            throw new ApiFehler('ungueltig', 'Bitte zuerst in den Turnier-Einstellungen einen Leitungscode (6 Ziffern) festlegen.');
-        }
         if ($t['zentrale_id'] !== null && $t['zentrale_id'] !== $zid && ($a->rumpf['erzwingen'] ?? false) !== true) {
             throw new ApiFehler('konflikt', 'Das Turnier liegt schon auf „' . $t['zentrale'] . '“ (seit '
                 . gmdate('d.m.Y H:i', (int)$t['zentrale_seit']) . ' UTC). Erst dort zurückgeben – oder „Trotzdem übernehmen“ wählen.');
@@ -1213,7 +1292,6 @@ final class Api
         return [
             'turnier' => self::turnierAusgabe($t),
             'einstellungen' => [
-                'leitungsCode' => (string)$t['leitung_code'],
                 'sicherungAn' => self::empfaengerAus($t),
                 'sicherungTakt' => (int)$t['sicherung_takt'],
                 'letzteSicherung' => self::iso($t['sicherung_letzte'] === null ? null : (int)$t['sicherung_letzte']),
@@ -1229,7 +1307,7 @@ final class Api
         $s = $this->konto($a);
         $zid = $this->zentraleIdFeld($a);
         $id = (string)($a->rumpf['turnier'] ?? '');
-        if (!preg_match('/^[a-z0-9]{6,16}$/', $id)) {
+        if (!preg_match(self::TURNIER_ID_MUSTER, $id)) {
             throw new ApiFehler('ungueltig', 'Turnier-Kennung ungültig.');
         }
         $roh = $this->db->eine('SELECT id FROM turniere WHERE id = ?', [$id]);
@@ -1246,12 +1324,11 @@ final class Api
             if ($datum !== null && (!is_string($datum) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum))) {
                 throw new ApiFehler('ungueltig', 'Datum im Format JJJJ-MM-TT angeben.');
             }
-            $code = $this->leitungsCodeFeld($n);
             $konto = $this->db->eine('SELECT email FROM konten WHERE id = ?', [$s['konto_id']]);
             $this->db->ausfuehren(
                 'INSERT INTO turniere (id, konto_id, name, datum, leitung_hash, leitung_code, sicherung_an, sicherung_takt, angelegt, zentrale, zentrale_id, zentrale_seit)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [$id, $s['konto_id'], $name, $datum, password_hash($code, PASSWORD_DEFAULT), $code,
+                [$id, $s['konto_id'], $name, $datum, password_hash(bin2hex(random_bytes(16)), PASSWORD_DEFAULT), null,
                  json_encode([(string)($konto['email'] ?? '')]), 30, $this->jetzt(),
                  mb_substr(trim((string)($a->rumpf['zentrale'] ?? 'Zentrale')), 0, 160), $zid, $this->jetzt()]
             );
@@ -1285,7 +1362,7 @@ final class Api
                 $name = is_string($au['name'] ?? null) && trim($au['name']) !== '' ? mb_substr(trim($au['name']), 0, 120) : 'Zentrale';
                 $bezug = $rolle === 'spieler' && is_string($au['spieler'] ?? null) && preg_match('/^[A-Za-z0-9_-]{1,64}$/', $au['spieler'])
                     ? $au['spieler'] : null;
-                $seq = $this->einEreignis((string)$t['id'], $e, $rolle, $name, $bezug);
+                $seq = $this->einEreignis((string)$t['id'], $e, $rolle, $name, $bezug, $rolle === 'spieler' && ($au['helfer'] ?? false) === true);
                 $angenommen[] = ['id' => (string)$e['id'], 'seq' => $seq];
             }
             $this->db->pdo->commit();
@@ -1326,35 +1403,30 @@ final class Api
                     $bezug = $c['bezug'] ?? null;
                     $code = $c['code'] ?? null;
                     $name = is_string($c['name'] ?? null) ? mb_substr(trim($c['name']), 0, 160) : '';
-                    if (!in_array($rolle, ['spieler', 'helfer'], true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug)
-                        || !is_string($code) || !preg_match('/^[0-9]{6}$/', $code) || $name === '' || isset($vergeben[$code])) {
+                    if (!in_array($rolle, self::CODE_ROLLEN, true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug)
+                        || !is_string($code) || !self::codeGueltig($code) || $code === (string)$t['id'] || $name === '' || isset($vergeben[$code])) {
                         continue;
                     }
                     $vergeben[$code] = true;
-                    $neu[$rolle . '|' . $bezug] = [$rolle, $bezug, $name, $code, ($c['gesperrt'] ?? false) === true ? 1 : 0];
+                    $helfer = $rolle === 'spieler' && ($c['helfer'] ?? false) === true ? 1 : 0;
+                    $neu[$rolle . '|' . $bezug] = [$rolle, $bezug, $name, $code, ($c['gesperrt'] ?? false) === true ? 1 : 0, $helfer];
                 }
                 foreach ($alt as $k => $c) {
-                    if (!isset($neu[$k]) || $neu[$k][3] !== (string)$c['code'] || $neu[$k][4] === 1) {
+                    if (!isset($neu[$k]) || $neu[$k][3] !== (string)$c['code'] || $neu[$k][4] === 1 || $neu[$k][5] !== (int)$c['helfer']) {
                         $this->codeSitzungenBeenden((string)$t['id'], (string)$c['rolle'], (string)$c['bezug']);
                     }
                 }
                 $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ?', [$t['id']]);
-                foreach ($neu as [$rolle, $bezug, $name, $code, $gesperrt]) {
+                foreach ($neu as [$rolle, $bezug, $name, $code, $gesperrt, $helfer]) {
                     $this->db->ausfuehren(
-                        'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                        [$t['id'], $rolle, $bezug, $name, $code, $gesperrt, $this->jetzt()]
+                        'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt, helfer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        [$t['id'], $rolle, $bezug, $name, $code, $gesperrt, $this->jetzt(), $helfer]
                     );
                 }
             }
             $ein = $r['einstellungen'] ?? null;
             $ein = $ein instanceof \stdClass ? get_object_vars($ein) : $ein;
             if (is_array($ein)) {
-                if (isset($ein['leitungsCode'])) {
-                    $code = $this->leitungsCodeFeld(new Anfrage('POST', '', [], $ein, null, $a->ip));
-                    if ($code !== (string)$t['leitung_code']) {
-                        $this->db->ausfuehren('UPDATE turniere SET leitung_code = ?, leitung_hash = ? WHERE id = ?', [$code, password_hash($code, PASSWORD_DEFAULT), $t['id']]);
-                    }
-                }
                 if (array_key_exists('sicherungAn', $ein)) {
                     $this->db->ausfuehren('UPDATE turniere SET sicherung_an = ? WHERE id = ?', [json_encode($this->empfaengerFeld($ein['sicherungAn'])), $t['id']]);
                 }
@@ -1386,7 +1458,7 @@ final class Api
         $this->begrenzen('sicherung-zentrale|' . $s['konto_id'], 40, 3600, 'Zu viele Sicherungen in kurzer Zeit. Bitte später erneut versuchen.');
         $tr = $a->rumpf['turnier'] ?? null;
         $tr = $tr instanceof \stdClass ? get_object_vars($tr) : $tr;
-        if (!is_array($tr) || !is_string($tr['id'] ?? null) || !preg_match('/^[a-z0-9]{6,16}$/', $tr['id'])
+        if (!is_array($tr) || !is_string($tr['id'] ?? null) || !preg_match(self::TURNIER_ID_MUSTER, $tr['id'])
             || !is_string($tr['name'] ?? null) || trim($tr['name']) === '') {
             throw new ApiFehler('ungueltig', 'Angaben zum Turnier fehlen.');
         }
@@ -1433,37 +1505,41 @@ final class Api
         $a = ['rolle' => (string)$z['autor_rolle'], 'name' => (string)$z['autor_name']];
         if ($z['autor_rolle'] === 'spieler' && ($z['autor_bezug'] ?? null) !== null) {
             $a['spieler'] = (string)$z['autor_bezug'];
+            if ((int)($z['autor_helfer'] ?? 0) === 1) {
+                $a['helfer'] = true;
+            }
         }
         return $a;
     }
 
     private static function codeAusgabe(array $z): array
     {
-        return [
+        $aus = [
             'rolle' => (string)$z['rolle'],
             'bezug' => (string)$z['bezug'],
             'name' => (string)$z['name'],
             'code' => (string)$z['code'],
             'gesperrt' => (int)$z['gesperrt'] === 1,
         ];
+        if ($z['rolle'] === 'spieler') {
+            $aus['helfer'] = (int)($z['helfer'] ?? 0) === 1;
+        }
+        return $aus;
     }
 
-    /** Zufälliger gültiger Code, im Turnier noch nicht vergeben und nicht der Leitungscode */
+    /** Zufällige gültige Kennung (8 Ziffern), im Turnier noch nicht vergeben */
     private function freierCode(array $t): string
     {
         for ($i = 0; $i < 1000; $i++) {
-            $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-            if (!self::codeGueltig($code) || $code === (string)($t['leitung_code'] ?? '')) {
-                continue;
-            }
-            if ($t['leitung_code'] === null && password_verify($code, (string)$t['leitung_hash'])) {
+            $code = (string)random_int(10000000, 99999999);
+            if (!self::codeGueltig($code) || $code === (string)$t['id']) {
                 continue;
             }
             if ($this->db->eine('SELECT bezug FROM codes WHERE turnier_id = ? AND code = ?', [$t['id'], $code]) === null) {
                 return $code;
             }
         }
-        throw new ApiFehler('serverfehler', 'Es konnte kein freier Code erzeugt werden.');
+        throw new ApiFehler('serverfehler', 'Es konnte keine freie Kennung erzeugt werden.');
     }
 
     /** @return array{0:string,1:string} Rolle und Bezug aus der Anfrage */
@@ -1471,16 +1547,49 @@ final class Api
     {
         $rolle = $a->rumpf['rolle'] ?? null;
         $bezug = $a->rumpf['bezug'] ?? null;
-        if (!in_array($rolle, ['spieler', 'helfer'], true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug)) {
+        if (!in_array($rolle, self::CODE_ROLLEN, true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug)) {
             throw new ApiFehler('ungueltig', 'Rolle oder Bezug ungültig.');
         }
         return [$rolle, $bezug];
     }
 
+    /** Reihenfolge: Leitung, Helfer, Spieler – je Rolle nach Name */
     private function codesListe(string $turnierId): array
     {
-        $zeilen = $this->db->alle('SELECT * FROM codes WHERE turnier_id = ? ORDER BY rolle DESC, name', [$turnierId]);
+        $zeilen = $this->db->alle(
+            "SELECT * FROM codes WHERE turnier_id = ? ORDER BY CASE rolle WHEN 'leitung' THEN 0 WHEN 'helfer' THEN 1 ELSE 2 END, name",
+            [$turnierId]
+        );
         return ['codes' => array_map([self::class, 'codeAusgabe'], $zeilen)];
+    }
+
+    /** Eine Kennung anlegen (Zeile aus der Datenbank zurück) */
+    private function codeAnlegen(array $t, string $rolle, string $bezug, string $name): array
+    {
+        $anzahl = (int)($this->db->eine('SELECT COUNT(*) AS n FROM codes WHERE turnier_id = ?', [$t['id']])['n'] ?? 0);
+        if ($anzahl >= self::MAX_CODES) {
+            throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_CODES . ' Kennungen je Turnier.');
+        }
+        $this->db->ausfuehren(
+            'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt, helfer) VALUES (?, ?, ?, ?, ?, 0, ?, 0)',
+            [$t['id'], $rolle, $bezug, $name, $this->freierCode($t), $this->jetzt()]
+        );
+        return $this->codeLaden($t, $rolle, $bezug);
+    }
+
+    /** Mindestens eine Leitungskennung muss nutzbar bleiben, sonst sperrt sich die Leitung aus */
+    private function letzteLeitungPruefen(array $t, string $rolle, string $bezug): void
+    {
+        if ($rolle !== 'leitung') {
+            return;
+        }
+        $n = (int)($this->db->eine(
+            "SELECT COUNT(*) AS n FROM codes WHERE turnier_id = ? AND rolle = 'leitung' AND gesperrt = 0 AND bezug <> ?",
+            [$t['id'], $bezug]
+        )['n'] ?? 0);
+        if ($n === 0) {
+            throw new ApiFehler('konflikt', 'Das ist die letzte gültige Leitungskennung. Bitte zuerst eine weitere anlegen.');
+        }
     }
 
     private function codes(Anfrage $a): array
@@ -1506,8 +1615,8 @@ final class Api
                 $rolle = $e['rolle'] ?? null;
                 $bezug = $e['bezug'] ?? null;
                 $name = is_string($e['name'] ?? null) ? mb_substr(trim($e['name']), 0, 160) : '';
-                if (!in_array($rolle, ['spieler', 'helfer'], true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug) || $name === '') {
-                    throw new ApiFehler('ungueltig', 'Ungültiger Eintrag für einen Code.');
+                if (!in_array($rolle, self::CODE_ROLLEN, true) || !is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug) || $name === '') {
+                    throw new ApiFehler('ungueltig', 'Ungültiger Eintrag für eine Kennung.');
                 }
                 $alt = $this->db->eine('SELECT name FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
                 if ($alt !== null) {
@@ -1517,14 +1626,7 @@ final class Api
                     }
                     continue;
                 }
-                $anzahl = (int)($this->db->eine('SELECT COUNT(*) AS n FROM codes WHERE turnier_id = ?', [$t['id']])['n'] ?? 0);
-                if ($anzahl >= self::MAX_CODES) {
-                    throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_CODES . ' Codes je Turnier.');
-                }
-                $this->db->ausfuehren(
-                    'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt) VALUES (?, ?, ?, ?, ?, 0, ?)',
-                    [$t['id'], $rolle, $bezug, $name, $this->freierCode($t), $this->jetzt()]
-                );
+                $this->codeAnlegen($t, $rolle, $bezug, $name);
             }
             $this->db->pdo->commit();
         } catch (\Throwable $x) {
@@ -1569,6 +1671,9 @@ final class Api
         [$rolle, $bezug] = $this->codeZiel($a);
         $this->codeLaden($t, $rolle, $bezug);
         $gesperrt = ($a->rumpf['gesperrt'] ?? false) === true;
+        if ($gesperrt) {
+            $this->letzteLeitungPruefen($t, $rolle, $bezug);
+        }
         $this->db->ausfuehren('UPDATE codes SET gesperrt = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$gesperrt ? 1 : 0, $t['id'], $rolle, $bezug]);
         if ($gesperrt) {
             $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
@@ -1582,9 +1687,56 @@ final class Api
         $this->leitungPruefen($a, $t);
         self::nichtAufZentrale($t);
         [$rolle, $bezug] = $this->codeZiel($a);
+        $this->letzteLeitungPruefen($t, $rolle, $bezug);
         $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
         $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
         return ['ok' => true];
+    }
+
+    /** Spielerkennung zusätzlich Helfer-Recht geben oder nehmen. Laufende Anmeldungen enden (neu anmelden). */
+    private function codeHelfer(Anfrage $a): array
+    {
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
+        $bezug = $a->rumpf['bezug'] ?? null;
+        if (!is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug)) {
+            throw new ApiFehler('ungueltig', 'Bezug ungültig.');
+        }
+        $this->codeLaden($t, 'spieler', $bezug);
+        $helfer = ($a->rumpf['helfer'] ?? false) === true;
+        $this->db->ausfuehren('UPDATE codes SET helfer = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$helfer ? 1 : 0, $t['id'], 'spieler', $bezug]);
+        $this->codeSitzungenBeenden((string)$t['id'], 'spieler', $bezug);
+        return ['code' => self::codeAusgabe($this->codeLaden($t, 'spieler', $bezug))];
+    }
+
+    /* ---------------- Einstellungen des Kontos ---------------- */
+
+    private function kontoEinstellungen(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $k = $this->db->eine('SELECT daten FROM konten WHERE id = ?', [$s['konto_id']]);
+        $d = json_decode((string)($k['daten'] ?? ''), true);
+        $klassen = is_array($d) && is_array($d['klassen'] ?? null) ? array_values(array_filter($d['klassen'], 'is_string')) : [];
+        return ['klassen' => $klassen];
+    }
+
+    private function kontoEinstellungenSetzen(Anfrage $a): array
+    {
+        $s = $this->konto($a);
+        $liste = $a->rumpf['klassen'] ?? null;
+        if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_KLASSEN) {
+            throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_KLASSEN . ' Leistungsklassen.');
+        }
+        $klassen = [];
+        foreach ($liste as $k) {
+            $k = is_string($k) ? mb_substr(trim($k), 0, 40) : '';
+            if ($k !== '' && !in_array($k, $klassen, true)) {
+                $klassen[] = $k;
+            }
+        }
+        $this->db->ausfuehren('UPDATE konten SET daten = ? WHERE id = ?', [json_encode(['klassen' => $klassen], JSON_UNESCAPED_UNICODE), $s['konto_id']]);
+        return ['klassen' => $klassen];
     }
 
     /* ---------------- Spielerpool des Kontos ---------------- */

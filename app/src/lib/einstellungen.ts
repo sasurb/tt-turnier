@@ -11,13 +11,19 @@ export interface GemerktesTurnier {
   name: string;
   datum: string | null;
   modus: 'online' | 'lokal';
+  /** Rolle der Kennungs-Anmeldung (token); ohne Kennung „zuschauer“ */
   rolle: Rolle;
+  /** Token einer Kennungs-Anmeldung (Leitung, Helfer, Spieler). Konto-Tokens werden hier nie abgelegt. */
   token: string | null;
   zuletzt: string;
-  /** Mit Spieler-Code angemeldet: eigene Spieler-ID */
+  /** Mit Spielerkennung angemeldet: eigene Spieler-ID */
   spieler?: string | null;
-  /** Name, unter dem dieses Gerät einträgt (bei Spieler/Helfer vom Code) */
+  /** Spielerkennung mit Helfer-Recht */
+  helfer?: boolean | null;
+  /** Name, unter dem dieses Gerät einträgt (von der Kennung) */
   wer?: string | null;
+  /** Über das eigene Konto geöffnet: Rechte kommen vom Konto (solange es angemeldet ist) */
+  konto?: boolean | null;
 }
 
 export interface KontoSitzung {
@@ -85,15 +91,20 @@ export function turnierMerken(t: Omit<GemerktesTurnier, 'zuletzt'>) {
   liste.push({
     ...t,
     token: t.token ?? alt?.token ?? null,
-    spieler: t.spieler !== undefined ? t.spieler : alt?.spieler ?? null,
-    wer: t.wer !== undefined ? t.wer : alt?.wer ?? null,
+    spieler: t.spieler !== undefined ? t.spieler : (alt?.spieler ?? null),
+    helfer: t.helfer !== undefined ? t.helfer : (alt?.helfer ?? null),
+    wer: t.wer !== undefined ? t.wer : (alt?.wer ?? null),
+    konto: t.konto !== undefined ? t.konto : (alt?.konto ?? null),
     zuletzt: new Date().toISOString(),
   });
   schreiben('tt.turniere', liste);
 }
 
 export function turnierVergessen(id: string) {
-  schreiben('tt.turniere', gemerkteTurniere().filter((t) => t.id !== id));
+  schreiben(
+    'tt.turniere',
+    gemerkteTurniere().filter((t) => t.id !== id),
+  );
 }
 
 /** Kleiner Zwischenspeicher für größere Daten (Spielerpool) */
@@ -104,8 +115,27 @@ export function ablageSchreiben(schluessel: string, wert: unknown) {
   schreiben(schluessel, wert);
 }
 
-/** Mit Code angemeldetes Gerät abmelden: wieder Zuschauer */
+/** Mit Kennung angemeldetes Gerät abmelden: wieder Zuschauer (bzw. Rechte nur noch vom Konto) */
 export function turnierAbmelden(id: string) {
-  const liste = gemerkteTurniere().map((t) => (t.id === id ? { ...t, rolle: 'zuschauer' as Rolle, token: null, spieler: null, wer: null } : t));
+  const liste = gemerkteTurniere().map((t) =>
+    t.id === id
+      ? {
+          ...t,
+          rolle: 'zuschauer' as Rolle,
+          token: null,
+          spieler: null,
+          helfer: null,
+          wer: null,
+        }
+      : t,
+  );
   schreiben('tt.turniere', liste);
+}
+
+/** Begriffe für Leistungsklassen auf diesem Gerät (ohne Konto) */
+export function geraetKlassen(): string[] {
+  return lesen<string[]>('tt.klassen', []);
+}
+export function setzeGeraetKlassen(l: string[]) {
+  schreiben('tt.klassen', l);
 }

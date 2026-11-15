@@ -14,11 +14,12 @@
   import { ergebnisText } from '../engine/ergebnis';
   import type { Spiel } from '../engine/modell';
   import { uebersichtText } from '../engine/uebersicht';
-  import { anzeigeName, geraetId, gemerktesTurnier, setzeAnzeigeName, turnierAbmelden, turnierMerken, type GemerktesTurnier } from '../einstellungen';
+  import { anzeigeName, geraetId, gemerktesTurnier, turnierAbmelden, turnierMerken, type GemerktesTurnier } from '../einstellungen';
   import { codeAnzeige } from '../code';
   import { appBasis } from '../zentrale.svelte';
   import { nativ } from '../nativ';
   import { erinnerungFaellig, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben, sicherungErstellen } from '../sicherung';
+  import { etwasVerdeckt } from '../engine/abfragen';
   import StatusAnzeige from './StatusAnzeige.svelte';
   import Hilfe from './Hilfe.svelte';
   import TurnierEinstellungen from './TurnierEinstellungen.svelte';
@@ -26,9 +27,10 @@
   import Tabellen from './turnier/Tabellen.svelte';
   import SpielerTab from './turnier/SpielerTab.svelte';
   import KonkurrenzenTab from './turnier/KonkurrenzenTab.svelte';
-  import Codes from './turnier/Codes.svelte';
+  import Zugaenge from './turnier/Zugaenge.svelte';
   import Mitmachen from './turnier/Mitmachen.svelte';
   import ErgebnisDialog from './turnier/ErgebnisDialog.svelte';
+  import QrCode from './turnier/QrCode.svelte';
 
   let { id, reiter = null, code = null }: { id: string; reiter?: string | null; code?: string | null } = $props();
 
@@ -46,30 +48,86 @@
 
   let zugangFehler = $state('');
   let kopiert = $state<'' | 'link' | 'code'>('');
+  let qrOffen = $state(false);
   let jetzt = $state(Date.now());
   let offen = $state<{ k: string; s: string } | null>(null);
 
-  const rolle = $derived<Rolle>(lokal ? 'leitung' : eintrag?.token ? eintrag.rolle : 'zuschauer');
+  /**
+   * Rechte des Kontos für dieses Turnier (Eigentümer oder Administrator → „leitung“). Der Server
+   * prüft das beim Öffnen; nach „Abmelden“ fällt es sofort weg, weil das Konto-Token nie am
+   * Turnier gespeichert wird.
+   */
+  let kontoRechte = $state<Rolle | null>(null);
+  let rechteFuer = ''; // Token, für das kontoRechte gilt
+  const kontoToken = $derived(kontoRechte && app.sitzung ? app.sitzung.token : null);
+  /** Turnierinfo vom Server holen; mit Konto-Token auch die Rechte dieses Kontos */
+  async function infoLaden() {
+    const s = app.sitzung;
+    const kennung = gemerktesTurnier(id)?.token ?? null;
+    try {
+      // Mit Kennung: prüfen, ob sie noch gilt (gesperrt/neu ausgegeben → Gerät wird Zuschauer)
+      const a = await api.turnier(id, kennung ?? s?.token ?? null);
+      sperre = a.turnier.zentrale || a.turnier.abgegeben ? { zentrale: a.turnier.zentrale ?? null, abgegeben: !!a.turnier.abgegeben } : null;
+      if (kennung) {
+        if (a.turnier.rechte === null || a.turnier.rechte === undefined) {
+          turnierAbmelden(id);
+          eintrag = gemerktesTurnier(id) ?? null;
+          zugangFehler = T.zugang.kennungUngueltig;
+        }
+        if (s) {
+          const k = await api.turnier(id, s.token);
+          kontoRechte = k.turnier.rechte ?? null;
+        } else kontoRechte = null;
+      } else {
+        kontoRechte = s ? (a.turnier.rechte ?? null) : null;
+      }
+      rechteFuer = s?.token ?? '';
+    } catch (x) {
+      if (kennung && x instanceof ApiFehler && x.code === 'nicht_angemeldet') {
+        turnierAbmelden(id);
+        eintrag = gemerktesTurnier(id) ?? null;
+        zugangFehler = T.zugang.kennungUngueltig;
+      }
+      kontoRechte = null;
+      rechteFuer = s?.token ?? '';
+    }
+  }
+  $effect(() => {
+    const s = app.sitzung;
+    if (lokal || laedt) return;
+    if (!s) {
+      kontoRechte = null;
+      rechteFuer = '';
+      return;
+    }
+    if (s.token !== rechteFuer) void infoLaden();
+  });
+
+  const rolle = $derived<Rolle>(lokal ? 'leitung' : eintrag?.token ? eintrag.rolle : (kontoRechte ?? 'zuschauer'));
   const leitung = $derived(lokal || rolle === 'leitung' || rolle === 'admin' || rolle === 'veranstalter');
   const ich = $derived(rolle === 'spieler' ? (eintrag?.spieler ?? null) : null);
-  const darfSchreiben = $derived(lokal || !!eintrag?.token);
+  const helferRecht = $derived(rolle === 'helfer' || (rolle === 'spieler' && !!eintrag?.helfer));
+  /** Token, mit dem dieses Gerät sendet: Kennung vor Konto */
+  const schreibToken = $derived(eintrag?.token ?? kontoToken);
+  const darfSchreiben = $derived(lokal || !!schreibToken);
   const name = $derived(zustand?.name || eintrag?.name || '');
   const link = $derived(`${appBasis()}#/t/${id}`);
   const teilenNativ = typeof navigator !== 'undefined' && (!!navigator.share || !!nativ());
+  const verdeckt = $derived(!!zustand && etwasVerdeckt(zustand));
   /** Online: Turnier liegt auf einer Zentrale. Zentrale: Turnier wurde zurückgegeben. */
   let sperre = $state<{ zentrale: string | null; abgegeben: boolean } | null>(null);
   const erinnerung = $derived(
     lokal && zustand !== null && eintrag !== null && erinnerungFaellig(lokaleSicherung(id), zustand.anzahlEreignisse, ereignisse[0]?.zeit ?? eintrag.zuletzt, jetzt),
   );
 
-  type Reiter = 'meine' | 'spiele' | 'tabellen' | 'spieler' | 'konkurrenzen' | 'zugaenge' | 'einstellungen' | 'protokoll';
+  type Reiter = 'meine' | 'spiele' | 'tabellen' | 'spieler' | 'konkurrenzen' | 'zugaenge' | 'einstellungen';
   const reiterListe = $derived<Reiter[]>(
     leitung
-      ? ['spiele', 'tabellen', 'spieler', 'konkurrenzen', ...(lokal ? [] : ['zugaenge' as const]), 'einstellungen', 'protokoll']
+      ? ['spiele', 'tabellen', 'spieler', 'konkurrenzen', ...(lokal ? [] : ['zugaenge' as const]), 'einstellungen']
       : rolle === 'spieler'
         ? ['meine', 'spiele', 'tabellen']
         : rolle === 'helfer'
-          ? ['spiele', 'tabellen', 'protokoll']
+          ? ['spiele', 'tabellen']
           : ['tabellen', 'spiele'],
   );
   const standardReiter = $derived<Reiter>(
@@ -85,7 +143,7 @@
   }
 
   async function einstellungenLaden() {
-    const token = eintrag?.token;
+    const token = schreibToken;
     if (lokal || !token || !leitung) return;
     try {
       einst = await api.einstellungen(token, id);
@@ -104,21 +162,26 @@
 
   function autor() {
     const g = gemerktesTurnier(id);
-    return {
-      rolle: lokal ? ('leitung' as Rolle) : (g?.token ? g.rolle : 'zuschauer'),
-      name: g?.wer || anzeigeName() || app.sitzung?.konto.name || 'Leitung',
-      ...(g?.spieler ? { spieler: g.spieler } : {}),
-    };
+    if (lokal) return { rolle: 'leitung' as Rolle, name: g?.wer || anzeigeName() || 'Leitung' };
+    if (g?.token) {
+      return {
+        rolle: g.rolle,
+        name: g.wer || anzeigeName() || 'Leitung',
+        ...(g.spieler ? { spieler: g.spieler } : {}),
+        ...(g.helfer ? { helfer: true } : {}),
+      };
+    }
+    return { rolle: (kontoRechte ?? 'zuschauer') as Rolle, name: app.sitzung?.konto.name || anzeigeName() || 'Leitung' };
   }
 
-  async function mitCodeAnmelden(c: string, n: string) {
+  async function mitCodeAnmelden(c: string) {
     zugangFehler = '';
     try {
-      const a = await api.turnierZugang(id, c, n || undefined);
-      if (a.rolle === 'leitung' && n) setzeAnzeigeName(n);
-      turnierMerken({ ...eintrag!, rolle: a.rolle, token: a.token, spieler: a.spieler ?? null, wer: a.rolle === 'leitung' ? n || null : (a.name ?? null) });
+      const a = await api.turnierZugang(id, c);
+      turnierMerken({ ...eintrag!, rolle: a.rolle, token: a.token, spieler: a.spieler ?? null, helfer: a.helfer ?? false, wer: a.name ?? null });
       eintrag = gemerktesTurnier(id) ?? null;
-      if (a.rolle === 'spieler' && a.name) hinweis = T.zugang.willkommen(a.name);
+      const n = a.name ?? '';
+      hinweis = a.rolle === 'spieler' && !a.helfer ? T.zugang.willkommen(n) : a.rolle === 'leitung' ? T.zugang.willkommenLeitung(n) : T.zugang.willkommenHelfer(n);
       void sitzung?.abgleich?.anstossen();
       void einstellungenLaden();
       ersetze(`t/${id}/${standardReiter}`);
@@ -128,13 +191,13 @@
     }
   }
 
-  /** Persönlicher Link …/#/c/<turnier>/<code>: gleich anmelden */
+  /** Persönlicher Link …/#/c/<turnier>/<kennung>: gleich anmelden */
   let verwendet = '';
   async function codeVerwenden(c: string) {
     if (verwendet === c) return;
     verwendet = c;
     try {
-      await mitCodeAnmelden(c, '');
+      await mitCodeAnmelden(c);
     } catch {
       zugangFehler = T.zugang.linkFehler;
       ersetze(`t/${id}/${standardReiter}`);
@@ -147,6 +210,8 @@
 
   function codeAbmelden() {
     if (!confirm(T.zugang.abmeldenFrage)) return;
+    const alt = eintrag?.token;
+    if (alt) void api.logout(alt).catch(() => undefined); // Sitzung auch auf dem Server beenden
     turnierAbmelden(id);
     eintrag = gemerktesTurnier(id) ?? null;
     ersetze(`t/${id}/${standardReiter}`);
@@ -176,21 +241,16 @@
         geraet: geraetId(),
         autor,
         api,
-        token: () => gemerktesTurnier(id)?.token ?? null,
+        token: () => gemerktesTurnier(id)?.token ?? (kontoRechte && app.sitzung ? app.sitzung.token : null),
         beiAenderung: () => void aktualisieren(),
       });
       await aktualisieren();
+      if (!lokal) await infoLaden(); // Rechte des Kontos vor der Reiterwahl kennen
       sitzung.start();
       if (code && !lokal) await codeVerwenden(code);
       // Reiter festhalten, damit die Seite beim Eintragen nicht springt
       if (!code && !reiter) ersetze(`t/${id}/${standardReiter}`);
       void einstellungenLaden();
-      if (!lokal) {
-        api
-          .turnier(id)
-          .then((a) => (sperre = a.turnier.zentrale || a.turnier.abgegeben ? { zentrale: a.turnier.zentrale ?? null, abgegeben: !!a.turnier.abgegeben } : null))
-          .catch(() => undefined);
-      }
       document.addEventListener('visibilitychange', beiSichtbarkeit);
       addEventListener('online', beiOnline);
     } catch (x) {
@@ -213,12 +273,20 @@
     await sitzung.eintragen(art, daten);
   }
 
+  // Sobald das Konto Rechte hat: Einstellungen laden und ausstehende Einträge senden
+  $effect(() => {
+    if (kontoRechte && !laedt) {
+      void einstellungenLaden();
+      void sitzung?.abgleich?.anstossen();
+    }
+  });
+
   /* Lesbaren Stand für die Sicherungsmail hochladen (nur Leitung, online, höchstens alle 20 s) */
   let uebersichtTimer: ReturnType<typeof setTimeout> | undefined;
   let letzteUebersicht = '';
   $effect(() => {
     const z = zustand;
-    const token = eintrag?.token;
+    const token = schreibToken;
     if (!z || lokal || !leitung || !token || app.server.art !== 'bereit' || !app.server.info.codes) return;
     void z.anzahlEreignisse;
     clearTimeout(uebersichtTimer);
@@ -228,6 +296,11 @@
       api.uebersicht(token, id, text).then(() => (letzteUebersicht = text)).catch(() => undefined);
     }, 20_000);
   });
+
+  function sichtbarMachen() {
+    if (!confirm(T.einstellungen.veroeffentlichenFrage)) return;
+    void eintragen(ART.turnierDaten, { veroeffentlichung: { tabellen: true, ko: true }, alleKonkurrenzen: true }).then(() => (hinweis = T.einstellungen.veroeffentlicht));
+  }
 
   async function kopieren(was: 'link' | 'code', text: string) {
     try {
@@ -278,7 +351,8 @@
       case ART.testNotiz:
         return String(d.text ?? '');
       case ART.turnierAngelegt:
-        return `Turnier angelegt: ${String(d.name ?? '')}`;
+      case ART.turnierUmbenannt:
+        return `${art}: ${String(d.name ?? '')}`;
       case ART.turnierAbgeschlossen:
         return 'Turnier abgeschlossen';
       case ART.turnierWiedereroeffnet:
@@ -327,12 +401,16 @@
     <div class="reihe">
       <StatusAnzeige {status} {lokal} />
       {#if zustand?.abgeschlossen}<span class="marke">{T.turnier.abgeschlossen}</span>{/if}
-      {#if !lokal && eintrag?.token && !leitung}
-        <span class="leise">{T.zugang.angemeldet(eintrag.wer ?? '', T.rollen[rolle])}</span>
+      {#if !lokal && eintrag?.token}
+        <span class="leise" data-testid="angemeldet-als">{T.zugang.angemeldet(eintrag.wer ?? '', rolle === 'spieler' && eintrag.helfer ? T.zugang.spielerHelfer : T.rollen[rolle])}</span>
         <button class="zweit klein" onclick={codeAbmelden}>{T.zugang.abmelden}</button>
       {/if}
     </div>
   </section>
+
+  {#if !lokal && !darfSchreiben && eintrag?.konto && !app.sitzung}
+    <div class="meldung info" role="status">{T.zugang.kontoAbgemeldet} <a href={linkZu('anmelden')}>{T.kopf.anmelden}</a></div>
+  {/if}
 
   {#if erinnerung}
     <div class="meldung info erinnerung" role="status">
@@ -344,7 +422,7 @@
   {#if !lokal && !darfSchreiben}
     <details class="karte mitmachen" open={!!zugangFehler}>
       <summary>{T.zugang.titel}</summary>
-      <Mitmachen anmelden={mitCodeAnmelden} fehler={zugangFehler} standardName={anzeigeName()} />
+      <Mitmachen anmelden={mitCodeAnmelden} fehler={zugangFehler} />
     </details>
   {/if}
 
@@ -358,8 +436,14 @@
     {#if aktiv === 'meine'}
       <SpieleListe z={zustand} leitung={false} {ich} nurMeine {oeffnen} />
     {:else if aktiv === 'spiele'}
-      <SpieleListe z={zustand} {leitung} {ich} {oeffnen} />
+      <SpieleListe z={zustand} leitung={leitung || helferRecht} {ich} {oeffnen} />
     {:else if aktiv === 'tabellen'}
+      {#if leitung && verdeckt}
+        <div class="meldung info reihe" role="status">
+          <span class="wachsen">{T.tab.verdecktLeitung}</span>
+          <button class="klein" onclick={sichtbarMachen} data-testid="veroeffentlichen">{T.einstellungen.veroeffentlichen}</button>
+        </div>
+      {/if}
       <Tabellen z={zustand} {leitung} {eintragen} {oeffnen} />
     {:else if aktiv === 'spieler'}
       <SpielerTab z={zustand} {eintragen} />
@@ -369,73 +453,68 @@
       <section class="karte">
         <h2>{T.turnier.teilen}</h2>
         <p class="leise">{T.turnier.teilenHinweis}</p>
-        {#if einst}
-          {#if einst.leitungsCode}
-            <div class="code-zeile">
-              <span>{T.turnier.code}<Hilfe text={T.turnier.codeHilfe} /></span>
-              <strong class="code-gross" data-testid="leitungscode">{codeAnzeige(einst.leitungsCode)}</strong>
-              <button class="zweit klein" onclick={() => kopieren('code', einst!.leitungsCode!)}>{kopiert === 'code' ? T.turnier.kopiert : T.turnier.codeKopieren}</button>
-            </div>
-          {:else}
-            <div class="meldung info">{T.turnier.codeUnbekannt}</div>
-          {/if}
-        {/if}
-        <p>{T.turnier.kennung}: <strong class="kennung">{id}</strong></p>
+        <div class="code-zeile">
+          <span>{T.turnier.kennung}<Hilfe text={T.turnier.kennungHilfe} /></span>
+          <strong class="code-gross" data-testid="turnierkennung">{codeAnzeige(id)}</strong>
+          <button class="zweit klein" onclick={() => kopieren('code', id)}>{kopiert === 'code' ? T.turnier.kopiert : T.turnier.kennungKopieren}</button>
+          <button class="zweit klein" aria-expanded={qrOffen} onclick={() => (qrOffen = !qrOffen)}>{T.turnier.qr}</button>
+        </div>
+        {#if qrOffen}<div class="qr-gross"><QrCode text={link} groesse={220} label="{name}: {codeAnzeige(id)}" /></div>{/if}
         <div class="reihe">
           <input class="wachsen" readonly value={link} aria-label="Link" onfocus={(e) => (e.currentTarget as HTMLInputElement).select()} />
           {#if teilenNativ}<button onclick={linkTeilen}>{T.turnier.linkTeilen}</button>{/if}
           <button class="zweit" onclick={() => kopieren('link', link)}>{kopiert === 'link' ? T.turnier.kopiert : T.turnier.linkKopieren}</button>
         </div>
       </section>
-      {#if eintrag?.token}
-        <Codes z={zustand} {id} token={eintrag.token} turnierName={name} />
+      {#if schreibToken}
+        <Zugaenge z={zustand} {id} token={schreibToken} turnierName={name} />
       {/if}
     {:else if aktiv === 'einstellungen'}
       <TurnierEinstellungen
         {id}
         {lokal}
-        token={eintrag?.token ?? null}
+        token={schreibToken}
         bind:einst
+        z={zustand}
         abgeschlossen={zustand.abgeschlossen}
         anzahl={zustand.anzahlEreignisse}
-        eintragen={(art) => sitzung!.eintragen(art, {})}
+        eintragen={(art, daten) => sitzung!.eintragen(art, daten ?? {})}
         sicherung={sicherungBauen}
-      />
-    {:else if aktiv === 'protokoll'}
-      {#if leitung && zustand.warnungen.length}
-        <details class="karte">
-          <summary>{T.warn.titel} <span class="leise">({zustand.warnungen.length})</span></summary>
-          <p class="leise">{T.warn.text}</p>
-          <ul class="liste">
-            {#each [...zustand.warnungen].reverse() as w (w.ereignis)}
-              <li><div>{w.text}</div><div class="leise">{zeit(w.zeit)} · {T.turnier.von} {w.von || '–'}</div></li>
-            {/each}
-          </ul>
-        </details>
-      {/if}
-      <section class="karte">
-        <h2>{T.turnier.protokoll} <span class="leise">({ereignisse.length})</span></h2>
-        {#if ereignisse.length === 0}
-          <p class="leise">{T.turnier.leer}</p>
-        {:else}
-          <ul class="liste">
-            {#each [...ereignisse].reverse() as e (e.id)}
-              <li class="eintrag" class:wartet={e.status === 'ausstehend'}>
-                <div>{beschreibung(e)}</div>
-                <div class="leise">
-                  {#if e.seq !== null && e.status === 'bestaetigt'}#{e.seq} · {/if}
-                  {zeit(e.zeit)} · {T.turnier.von} {e.autor?.name ?? '–'}{e.autor && e.autor.rolle !== 'leitung' ? ` (${T.rollen[e.autor.rolle]})` : ''}
-                  {#if e.status === 'ausstehend'}<span class="marke">{T.turnier.ausstehend}</span>{/if}
-                </div>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </section>
+      >
+        {#snippet protokoll()}
+          {#if zustand && zustand.warnungen.length}
+            <details class="warnungen">
+              <summary>{T.warn.titel} <span class="leise">({zustand.warnungen.length})</span></summary>
+              <p class="leise">{T.warn.text}</p>
+              <ul class="liste">
+                {#each [...zustand.warnungen].reverse() as w (w.ereignis)}
+                  <li><div>{w.text}</div><div class="leise">{zeit(w.zeit)} · {T.turnier.von} {w.von || '–'}</div></li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if ereignisse.length === 0}
+            <p class="leise">{T.turnier.leer}</p>
+          {:else}
+            <ul class="liste" data-testid="protokoll">
+              {#each [...ereignisse].reverse() as e (e.id)}
+                <li class="eintrag" class:wartet={e.status === 'ausstehend'}>
+                  <div>{beschreibung(e)}</div>
+                  <div class="leise">
+                    {#if e.seq !== null && e.status === 'bestaetigt'}#{e.seq} · {/if}
+                    {zeit(e.zeit)} · {T.turnier.von} {e.autor?.name ?? '–'}{e.autor && e.autor.rolle !== 'leitung' ? ` (${e.autor.rolle === 'spieler' && e.autor.helfer ? T.zugang.spielerHelfer : T.rollen[e.autor.rolle]})` : ''}
+                    {#if e.status === 'ausstehend'}<span class="marke">{T.turnier.ausstehend}</span>{/if}
+                  </div>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        {/snippet}
+      </TurnierEinstellungen>
     {/if}
 
     {#if offenesSpiel}
-      <ErgebnisDialog z={zustand} k={offenesSpiel.k} spiel={offenesSpiel.s} {rolle} {ich} {eintragen} schliessen={() => (offen = null)} />
+      <ErgebnisDialog z={zustand} k={offenesSpiel.k} spiel={offenesSpiel.s} {rolle} {ich} helfer={helferRecht} {eintragen} schliessen={() => (offen = null)} />
     {/if}
   {/if}
 {/if}
@@ -443,7 +522,6 @@
 <style>
   .kopf { margin-bottom: 12px; }
   .kopf h1 { margin-bottom: 4px; overflow-wrap: anywhere; }
-  .kennung { font-family: ui-monospace, monospace; font-size: 1.1rem; letter-spacing: 0.05em; }
   .eintrag.wartet { opacity: 0.75; }
   .erinnerung { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: var(--text); border-color: var(--orange); }
   .mitmachen > :global(form) { border: 0; box-shadow: none; padding: 0; margin: 8px 0 0; }
@@ -484,4 +562,6 @@
     background: var(--grund);
   }
   .code-gross { font-family: ui-monospace, monospace; font-size: 1.8rem; letter-spacing: 0.12em; color: var(--blau); }
+  .qr-gross { margin: 6px 0 12px; }
+  .warnungen { margin-bottom: 12px; }
 </style>

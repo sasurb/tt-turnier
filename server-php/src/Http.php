@@ -53,7 +53,23 @@ final class Anfrage
             }
         }
 
-        return new self($methode, $route, $query, $rumpf, $token ?: null, $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+        return new self($methode, $route, $query, $rumpf, $token ?: null, self::ipNormalisieren($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
+    }
+
+    /**
+     * Anschluss für die Bremsen: IPv6-Adressen auf ihr /64-Netz zusammenfassen, damit ein Angreifer
+     * nicht mit jeder neuen Adresse aus demselben Netz von vorn zählt.
+     */
+    public static function ipNormalisieren(string $ip): string
+    {
+        if (!str_contains($ip, ':')) {
+            return $ip;
+        }
+        $bin = @inet_pton($ip);
+        if ($bin === false || strlen($bin) !== 16) {
+            return $ip;
+        }
+        return (inet_ntop(substr($bin, 0, 8) . str_repeat("\0", 8)) ?: $ip) . '/64';
     }
 }
 

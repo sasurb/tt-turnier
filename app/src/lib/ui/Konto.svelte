@@ -5,6 +5,7 @@
   import { api } from '../dienste';
   import { abmelden, anmeldungAbgelaufen, app, fehlerText, setzeSitzung } from '../app.svelte';
   import PasswortFeld from './PasswortFeld.svelte';
+  import { klassen, klassenLaden, klassenSpeichern } from '../klassen.svelte';
 
   const sitzung = $derived(app.sitzung);
 
@@ -16,7 +17,29 @@
 
   onMount(() => {
     if (!app.sitzung) gehe('anmelden');
+    else void klassenLaden();
   });
+
+  let neueKlasse = $state('');
+  let klassenMeldung = $state('');
+  async function klasseHinzu(e: SubmitEvent) {
+    e.preventDefault();
+    if (!neueKlasse.trim()) return;
+    try {
+      await klassenSpeichern([...klassen.liste, neueKlasse]);
+      neueKlasse = '';
+      klassenMeldung = '';
+    } catch (x) {
+      klassenMeldung = fehlerText(x, T.app.fehlerAllgemein);
+    }
+  }
+  async function klasseWeg(k: string) {
+    try {
+      await klassenSpeichern(klassen.liste.filter((x) => x !== k));
+    } catch (x) {
+      klassenMeldung = fehlerText(x, T.app.fehlerAllgemein);
+    }
+  }
 
   async function passwortAendern(e: SubmitEvent) {
     e.preventDefault();
@@ -59,6 +82,29 @@
   </section>
 
   <section class="karte">
+    <a class="knopf zweit breit" href={linkZu('turniere')}>{T.konto.turniere}</a>
+  </section>
+
+  <details class="karte">
+    <summary>{T.konto.klassenTitel}</summary>
+    <p class="leise">{T.konto.klassenText}</p>
+    {#if klassen.liste.length === 0}
+      <p class="leise">{T.konto.klassenLeer}</p>
+    {:else}
+      <ul class="klassen">
+        {#each klassen.liste as k (k)}
+          <li><span>{k}</span><button class="zweit klein" aria-label="{k}: {T.app.entfernen}" onclick={() => klasseWeg(k)}>✕</button></li>
+        {/each}
+      </ul>
+    {/if}
+    <form class="reihe" onsubmit={klasseHinzu}>
+      <input class="wachsen" bind:value={neueKlasse} placeholder={T.konto.klassenPlatzhalter} aria-label={T.konto.klassenNeu} maxlength="40" autocomplete="off" />
+      <button type="submit" class="zweit" disabled={!neueKlasse.trim()}>{T.konto.klassenNeu}</button>
+    </form>
+    {#if klassenMeldung}<div class="meldung fehler" role="alert">{klassenMeldung}</div>{/if}
+  </details>
+
+  <section class="karte">
     <button class="zweit breit" onclick={abmelden}>{T.konto.abmelden}</button>
     <p class="leise unten">{T.konto.abmeldenHinweis}</p>
   </section>
@@ -97,5 +143,7 @@
 
 <style>
   .unten { margin: 10px 0 0; }
+  .klassen { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .klassen li { display: inline-flex; align-items: center; gap: 6px; padding: 4px 4px 4px 12px; border: 1px solid var(--linie); border-radius: 999px; }
   .gefahrzone summary { color: var(--rot); }
 </style>

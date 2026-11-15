@@ -43,23 +43,27 @@ Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 | POST | `konto.loeschen` | Konto | `{passwort}`; löscht Konto, Turniere, Ereignisse, Sitzungen (nicht Admin) |
 | POST | `rueckmeldung` | offen | `{art, text, name?, email?, website}` → Mail an den Betreiber; ohne Anmeldung sind `name`/`email` Pflicht |
 | GET | `konten` | Admin | alle Konten mit letzter Anmeldung und Turnierzahl |
-| POST | `konto.anlegen` | Admin | Veranstalter anlegen `{name, email, passwort}` |
+| POST | `konto.anlegen` | Admin | Turnierleitungs-Konto anlegen `{name, email, passwort}` (Rolle technisch `veranstalter`) |
 | POST | `konto.sperren` | Admin | `{id, gesperrt}`; Sperre beendet alle Sitzungen des Kontos |
 | GET | `turniere` | Konto | eigene Turniere; Admin mit `&alle=1` alle |
-| POST | `turnier.anlegen` | Konto | `{name, datum, leitungsCode, sicherungAn?}` → `{turnier, token}` (Leitungs-Token) |
-| GET | `turnier&id=…` | offen | Name, Datum, Veranstalter |
-| POST | `turnier.zugang` | offen | `{turnier, code, name?}` → `{token, rolle, name, spieler?}`. `code` ist der Leitungscode (ältere Turniere: Passwort) oder ein Spieler-/Helfer-Code. `name` nur beim Leitungscode (Standard „Leitung“) |
-| GET | `codes&turnier=…` | Leitung | `{codes: [{rolle, bezug, name, code, gesperrt}]}` |
-| POST | `codes.anlegen` | Leitung | `{turnier, eintraege: [{rolle, bezug, name}]}` – fehlende Codes erzeugen, Namen nachziehen; vorhandene Codes bleiben |
-| POST | `code.neu` | Leitung | `{turnier, rolle, bezug}` → neuer Code; Anmeldungen mit dem alten enden |
-| POST | `code.sperren` | Leitung | `{turnier, rolle, bezug, gesperrt}`; Sperre beendet Anmeldungen |
-| POST | `code.entfernen` | Leitung | `{turnier, rolle, bezug}` (z. B. Helfer streichen) |
+| POST | `turnier.anlegen` | Konto | `{name, datum, sicherungAn?}` → `{turnier, token, leitung}`; `turnier.id` ist die 8-stellige Turnierkennung, `leitung` die erste Leitungskennung (auf den Kontonamen) |
+| GET | `turnier&id=…` | offen | Name, Datum, Turnierleitung (`veranstalter`); mit Token zusätzlich `rechte` (`leitung`/`helfer`/`spieler`/null) und `spieler` |
+| POST | `turnier.zugang` | offen | `{turnier, code}` → `{token, rolle, name, spieler?, helfer?}`. `code` ist eine Leitungs-, Helfer- oder Spielerkennung (8 Ziffern); der Name steht an der Kennung |
+| GET | `codes&turnier=…` | Leitung | `{codes: [{rolle, bezug, name, code, gesperrt, helfer?}]}` – Rollen `leitung`, `helfer`, `spieler` |
+| POST | `codes.anlegen` | Leitung | `{turnier, eintraege: [{rolle, bezug, name}]}` – fehlende Kennungen erzeugen, Namen nachziehen; vorhandene bleiben |
+| POST | `code.neu` | Leitung | `{turnier, rolle, bezug}` → neue Kennung; Anmeldungen mit der alten enden |
+| POST | `code.sperren` | Leitung | `{turnier, rolle, bezug, gesperrt}`; Sperre beendet Anmeldungen. Die letzte gültige Leitungskennung lässt sich nicht sperren |
+| POST | `code.entfernen` | Leitung | `{turnier, rolle, bezug}` (z. B. Helfer streichen; die letzte Leitungskennung bleibt) |
+| POST | `code.helfer` | Leitung | `{turnier, bezug, helfer}` – Spielerkennung zusätzlich mit Helferrecht (eine Kennung, beide Rechte) |
+| POST | `turnier.loeschen` | Eigentümer-Konto/Admin | `{turnier, passwort}` – löscht Turnier, Ereignisse, Kennungen, Sitzungen endgültig (DSGVO-Speicherbegrenzung) |
+| GET | `konto.einstellungen` | Konto | `{klassen}` – Begriffe für Leistungsklassen |
+| POST | `konto.einstellungen` | Konto | `{klassen?}` (max. 40 Begriffe) |
 | GET | `pool` | Konto | Spielerpool des eigenen Kontos |
 | POST | `pool.speichern` | Konto | `{spieler: [...]}` (max. 500 je Aufruf, 3000 je Konto) – anlegen/ändern je `id` |
 | POST | `pool.loeschen` | Konto | `{ids: [...]}` |
 | POST | `turnier.uebersicht` | Leitung | `{turnier, text}` (max. 60 000 Zeichen) – lesbarer Stand, den die App erzeugt; steht in der Sicherungsmail |
-| GET | `turnier.einstellungen&id=…` | Leitung | `{leitungsCode, sicherungAn, sicherungTakt, letzteSicherung, mail}` |
-| POST | `turnier.einstellungen` | Leitung | `{turnier, leitungsCode?, sicherungAn?, sicherungTakt?}` – nur übergebene Felder |
+| GET | `turnier.einstellungen&id=…` | Leitung | `{sicherungAn, sicherungTakt, letzteSicherung, mail}` |
+| POST | `turnier.einstellungen` | Leitung | `{turnier, sicherungAn?, sicherungTakt?}` – nur übergebene Felder |
 | POST | `turnier.sichern` | Leitung | `{turnier}` → Sicherung sofort an alle Empfänger |
 | GET | `events&turnier=…&ab=N` | offen | bis zu 200 Ereignisse mit `seq > N`, `mehr` wenn weitere vorliegen |
 | POST | `events&turnier=…` | Schreibrecht | `{ereignisse: [...]}` (max. 200) → `{angenommen: [{id, seq}], hoechsteSeq}` |
@@ -68,7 +72,7 @@ Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 Eigentümer-Konto oder der Administrator.
 
 **Schreibrecht für ein Turnier** haben Tokens mit Rolle `leitung`, `helfer` oder `spieler` für dieses
-Turnier sowie das Veranstalter-Konto, dem das Turnier gehört. Ab Server 0.4 dürfen Spieler nur
+Turnier sowie das Konto (Turnierleitung), dem das Turnier gehört. Ab Server 0.4 dürfen Spieler nur
 `spiel.ergebnis`, `spiel.bestaetigt` und `spiel.angefochten` senden, Helfer nur `spiel.ergebnis`
 (`ARTEN_SPIELER`/`ARTEN_HELFER` in `shared/protokoll.ts`); alles andere lehnt der Server mit 403 ab.
 Bei Spielern setzt der Server `autor.spieler` (Spieler-ID aus dem Code). Ob ein Spieler zu einem Spiel
@@ -102,18 +106,37 @@ Spieler: `spieler.angelegt|geaendert|entfernt`. Konkurrenzen: `konkurrenz.angele
 Die Auslosung wird mit ihrem Ergebnis gespeichert (nicht nur mit dem Zufallswert), damit spätere
 App-Versionen mit geänderten Verfahren alte Turniere unverändert anzeigen.
 
-## Spieler- und Helfer-Codes
+## Kennungen (ab 0.6)
 
-6 Ziffern wie der Leitungscode, je Turnier eindeutig und nie gleich dem Leitungscode. Sie stehen nur in
-der Tabelle `codes`, nicht in den (öffentlich lesbaren) Ereignissen. Die Leitung kann sie einsehen,
-sperren und neu ausgeben. Persönlicher Link: `…/#/c/<turnier>/<code>` (meldet direkt an).
-Fehlversuche je IP und Turnier werden gebremst (10 in 15 Minuten).
+Alle Kennungen haben 8 Ziffern, geschrieben als zwei Viererblöcke („4839 2017“).
 
-## Leitungscode
+- **Turnierkennung** = `turnier.id`, öffentlich, aber nicht auflistbar. Der Server bremst das
+  Durchprobieren: höchstens 30 Abfragen *unbekannter* Kennungen je Anschluss in 15 Minuten; bekannte
+  Turniere bleiben immer erreichbar (im Hallen-WLAN teilen sich alle Geräte eine Adresse). IPv6 wird
+  je /64-Netz gezählt. Ältere Turniere behalten ihre 10-stellige Kennung.
+- **Leitungs-, Helfer- und Spielerkennungen** liegen nur in der Tabelle `codes` (je Person eine, mit
+  Namen), nicht in den öffentlich lesbaren Ereignissen; nicht alle Ziffern gleich, keine Ziffernfolge,
+  je Turnier eindeutig. Die Leitung sieht sie, sperrt sie einzeln und gibt sie neu aus. Beim Anlegen eines
+  Turniers entsteht die erste Leitungskennung auf den Namen des Kontos; weitere Leitungspersonen
+  legt jede Leitung an. Ein Spieler kann zusätzlich Helferrecht bekommen (`code.helfer`): seine Einträge
+  in fremden Spielen gelten wie vom Helfer (`autor.helfer = true`), die in eigenen wie vom Spieler.
+- Persönlicher Link: `…/#/c/<turnier>/<kennung>` (meldet direkt an). Bremsen bei `turnier.zugang`,
+  ohne richtige Kennungen auszusperren: ab dem 5. Fehlversuch je Anschluss und Turnier wächst eine
+  Wartezeit (bis 2 s), ab 30 bekommen *falsche* Kennungen 429; je Turnier insgesamt werden nach 200
+  Fehlversuchen in 15 Minuten nur noch richtige Kennungen angenommen. Richtige Kennungen setzen den
+  Zähler des Anschlusses zurück.
+- Das Konto-Token wird in der App nie am Turnier gespeichert; die Rechte des Kontos liefert
+  `GET turnier` mit Token (`rechte`). Nach „Abmelden“ ist das Gerät sofort Zuschauer.
 
-Genau 6 Ziffern, nicht alle gleich und keine Ziffernfolge (123456, 654321). Der Server speichert ihn
-lesbar (damit die Leitung ihn unter „Teilen“ sieht) und zusätzlich als Hash zur Prüfung. Ein neuer Code
-beendet bestehende Leitungs-Anmeldungen nicht.
+## Veröffentlichung und Leistungsklassen (App-Ereignisse)
+
+- `turnier.daten` kann `veroeffentlichung: {tabellen, ko}` tragen (Standard beides `true`) und mit
+  `alleKonkurrenzen: true` abweichende Einstellungen der Konkurrenzen aufheben. Je Konkurrenz steht in
+  `einst.veroeffentlichung` `null` (wie Turnier) oder ein eigenes Paar. Verdeckt wird nur die Anzeige für
+  Zuschauer, Spieler und Helfer; die Ereignisse selbst bleiben lesbar.
+- `einst.klassenTrennung`: `keine` | `klasse` | `ttr` (mit `einst.ttrGrenzen`): Gruppen werden je
+  Leistungsklasse getrennt ausgelost, die Endrunde ist gemischt. Getrennte Konkurrenzen je Klasse legt die
+  App mit dem Assistenten an (normale `konkurrenz.angelegt`-Ereignisse mit passender Zulassung).
 
 ## Sicherung per Mail
 
@@ -141,11 +164,20 @@ beendet bestehende Leitungs-Anmeldungen nicht.
 
 - Tokens: 64 Hex-Zeichen, Gültigkeit 30 Tage, serverseitig nur als SHA-256 gespeichert.
 - Passwörter: `password_hash` (bcrypt/argon2, je nach PHP).
-- Bremse: 10 Fehlversuche je IP (und je Turnier beim Leitungscode) in 15 Minuten.
+- Bremsen: Anmeldung 10 Fehlversuche je Anschluss in 15 Minuten; Kennungen und Turnierkennungen siehe „Kennungen“ (IPv6 je /64).
+- Sicherheits-Header: `scripts/paket-bauen.sh` legt `public/.htaccess` mit Content-Security-Policy (`script-src 'self'`,
+  kein Inline-Skript – deshalb liegt die Pfadkorrektur in `pfad.js`), `frame-ancestors 'none'`, `Referrer-Policy`,
+  `Permissions-Policy`, HSTS an. Die Zentrale setzt dieselbe CSP auf HTML-Antworten.
 - Mengenbegrenzung je IP und Stunde: 5 Registrierungen, 5 × „Passwort vergessen“ (zusätzlich 3 je Adresse),
   5 Rückmeldungen; „Jetzt sichern“ 3 × je 10 Minuten und Turnier.
 
 ## Android-Zentrale (ab 0.5)
+
+Geräte-Routen (`zentrale.*`, Konto der Zentrale ohne Passwort) nimmt die Zentrale nur vom Gerät selbst an:
+Loopback-Verbindung **und** Kopfzeile `X-TT-Zentrale` mit dem Geheimnis dieses Laufs, das die Hülle beim Öffnen
+der App als `?zentrale=<32 Hex>` übergibt (`Zentrale.startAdresse()`; am PC gibt `Start.java` die Adresse aus,
+`--geheimnis` setzt es fest für Tests). Ein mitgeschickter `Origin`/`Referer` muss auf 127.0.0.1/localhost mit
+dem eigenen Port zeigen – so kann keine fremde Webseite im Browser des Handys die Zentrale fernsteuern.
 
 Die Zentrale (`zentrale/kern/…/Zentrale.java`) beantwortet alle Turnier-Routen oben genauso wie der
 PHP-Server. Unterschiede:

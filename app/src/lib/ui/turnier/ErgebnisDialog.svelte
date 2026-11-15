@@ -12,6 +12,7 @@
     spiel,
     rolle,
     ich,
+    helfer = false,
     eintragen,
     schliessen,
   }: {
@@ -20,13 +21,15 @@
     spiel: Spiel;
     rolle: Rolle;
     ich: string | null;
+    /** Spieler mit Helfer-Recht: fremde Spiele amtlich, eigene wie ein Spieler */
+    helfer?: boolean;
     eintragen: (art: string, daten: Record<string, unknown>) => Promise<unknown>;
     schliessen: () => void;
   } = $props();
 
   const leitung = $derived(rolle === 'leitung' || rolle === 'admin' || rolle === 'veranstalter');
-  const amtlich = $derived(leitung || rolle === 'helfer');
   const meineSeite = $derived<Seite | null>(rolle === 'spieler' && ich ? (spiel.a === ich ? 'a' : spiel.b === ich ? 'b' : null) : null);
+  const amtlich = $derived(leitung || rolle === 'helfer' || (helfer && meineSeite === null));
   const darf = $derived(amtlich || meineSeite !== null);
   const nurSaetze = $derived(k.einst.eingabe === 'saetze');
   const gewinn = $derived(gewinnSaetze(k.einst.bestOf));

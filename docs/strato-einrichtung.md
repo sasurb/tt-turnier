@@ -130,9 +130,9 @@ Wenn der Schritt rot ist: siehe [Probleme lösen](#probleme-lösen).
 ## Schritt 8 – Abgleich mit zwei Geräten testen
 
 1. Startseite → **Neues Turnier**: Name eingeben, „Mehrere Geräte (online)“ ist vorausgewählt, der
-   Leitungscode ist vorgeschlagen → **Turnier anlegen**.
+   → **Turnier anlegen**. Unter *Zugänge* stehen die Turnierkennung und deine Leitungskennung.
 2. Unter **Teilen** den Link auf ein zweites Gerät schicken (z. B. per Messenger).
-3. Auf dem zweiten Gerät den Link öffnen → bei **Mitleiten** den Leitungscode und einen Namen eingeben.
+3. Auf dem zweiten Gerät **Turnier beitreten** → Turnierkennung, dann eine Leitungskennung eingeben (unter *Zugänge* eine weitere Person anlegen).
 4. Auf einem Gerät einen **Testeintrag** machen: Er erscheint nach wenigen Sekunden auf dem anderen.
 5. Gegenprobe: Auf dem zweiten Gerät WLAN und mobile Daten ausschalten, etwas eintragen
    („wird gesendet“), wieder einschalten: Der Eintrag kommt beim ersten Gerät an.

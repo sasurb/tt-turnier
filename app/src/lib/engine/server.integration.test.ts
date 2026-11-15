@@ -22,16 +22,35 @@ describe.skipIf(!basis)('Integration mit echtem Server', () => {
     expect(info.protokoll).toBe(1);
     const zufall = Math.random().toString(36).slice(2, 8);
     if (!info.eingerichtet) {
-      await api.setup({ code, name: 'Admin', email: `admin-${zufall}@example.org`, passwort: 'admin-passwort' });
+      await api.setup({
+        code,
+        name: 'Admin',
+        email: `admin-${zufall}@example.org`,
+        passwort: 'admin-passwort',
+      });
     }
     // Admin anmelden: bei bereits eingerichtetem Server über Umgebungsvariablen
     const adminMail = env.TT_ADMIN_EMAIL ?? `admin-${zufall}@example.org`;
     const adminPw = env.TT_ADMIN_PASSWORT ?? 'admin-passwort';
     const admin = await api.login(adminMail, adminPw);
-    await api.kontoAnlegen(admin.token, { name: 'TTC Test', email: `v-${zufall}@example.org`, passwort: 'veranst-pw' });
+    await api.kontoAnlegen(admin.token, {
+      name: 'TTC Test',
+      email: `v-${zufall}@example.org`,
+      passwort: 'veranst-pw',
+    });
     const v = await api.login(`v-${zufall}@example.org`, 'veranst-pw');
-    const t = await api.turnierAnlegen(v.token, { name: 'Integrationstest', datum: '2026-12-01', leitungsCode: '583920' });
-    const zugangB = await api.turnierZugang(t.turnier.id, '583920', 'Helferin B');
+    const t = await api.turnierAnlegen(v.token, {
+      name: 'Integrationstest',
+      datum: '2026-12-01',
+    });
+    expect(t.turnier.id).toMatch(/^[0-9]{8}$/);
+    expect(t.leitung.code).toMatch(/^[0-9]{8}$/);
+    const leitungB = await api.codesAnlegen(t.token, t.turnier.id, [{ rolle: 'leitung', bezug: 'l-b', name: 'Helferin B' }]);
+    const zugangB = await api.turnierZugang(t.turnier.id, leitungB.codes.find((c) => c.bezug === 'l-b')!.code);
+    expect(zugangB.rolle).toBe('leitung');
+    // Rechte des Kontos sind am Turnier ablesbar
+    expect((await api.turnier(t.turnier.id, v.token)).turnier.rechte).toBe('leitung');
+    expect((await api.turnier(t.turnier.id)).turnier.rechte).toBeUndefined();
 
     const geraet = (name: string, token: string | null) =>
       new TurnierSitzung({

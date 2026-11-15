@@ -6,6 +6,8 @@
  */
 
 export const PROTOKOLL_VERSION = 1;
+/** Server-Version, ab der 8-stellige Kennungen gelten (InfoAntwort.kennungen) */
+export const KENNUNGEN_AB = '0.6.0';
 
 /** Höchstzahl Ereignisse je Sende-Aufruf und je Abhol-Antwort. */
 export const MAX_EREIGNISSE_JE_AUFRUF = 200;
@@ -13,15 +15,38 @@ export const MAX_EREIGNISSE_JE_AUFRUF = 200;
 /** Höchstgröße des Inhalts (`daten`) eines Ereignisses in Bytes (JSON). */
 export const MAX_DATEN_BYTES = 16_384;
 
+/**
+ * Rollen (ab 0.6):
+ * - admin: Administrator des Servers
+ * - veranstalter: Konto einer Turnierleitung (in der Oberfläche „Turnierleitung“); legt Turniere an
+ * - leitung: mit Leitungskennung in einem Turnier angemeldet (oder Eigentümer-Konto)
+ * - helfer: trägt alle Ergebnisse ein
+ * - spieler: trägt eigene Ergebnisse ein (mit Helfer-Recht auch alle)
+ * - zuschauer: ohne Kennung, nur lesen
+ */
 export type Rolle = 'admin' | 'veranstalter' | 'leitung' | 'helfer' | 'spieler' | 'zuschauer';
 
 /** Wer ein Ereignis erzeugt hat. Setzt immer der Server anhand der Anmeldung. */
 export interface Autor {
   rolle: Rolle;
   name: string;
-  /** Bei Rolle „spieler“: ID des Spielers im Turnier (setzt der Server anhand des Spieler-Codes). */
+  /** Bei Rolle „spieler“: ID des Spielers im Turnier (setzt der Server anhand der Spielerkennung). */
   spieler?: string;
+  /** Spieler, der zusätzlich Helfer ist: darf alle Ergebnisse eintragen (fremde gelten amtlich, eigene wie bei Spielern). */
+  helfer?: boolean;
 }
+
+/**
+ * Kennungen (ab 0.6): Turnier, Leitung, Helfer und Spieler haben 8-stellige Ziffernkennungen,
+ * geschrieben als zwei Viererblöcke („4839 2017“). Turnierkennungen vergibt der Server beim Anlegen,
+ * alle anderen Kennungen gelten nur innerhalb ihres Turniers. Weder Leitungs- noch Spielerkennungen
+ * stehen in den öffentlich lesbaren Ereignissen.
+ */
+export const KENNUNG_MUSTER = /^[0-9]{8}$/;
+/** Turnierkennung: 8 Ziffern (ältere Turniere: 10 Zeichen a–z/0–9; Links darauf gelten weiter). */
+export const TURNIER_KENNUNG_MUSTER = /^([0-9]{8}|[a-z0-9]{6,16})$/;
+/** Lokale Turniere (nur dieses Gerät) beginnen mit „l“ und liegen nie auf einem Server. */
+export const LOKALE_KENNUNG_MUSTER = /^l[a-z0-9]{6,16}$/;
 
 /** Ereignis, wie die App es erzeugt und an den Server schickt. */
 export interface NeuesEreignis {
@@ -65,11 +90,15 @@ export const KONTO_LOESCHEN_NACH_TAGEN = 365;
 export const KONTO_ERINNERUNG_TAGE_VORHER = 30;
 
 export interface TurnierInfo {
+  /** Turnierkennung (8 Ziffern) */
   id: string;
   name: string;
   datum: string | null;
   angelegt: string;
+  /** Name des Kontos, dem das Turnier gehört (Turnierleitung) */
   veranstalter: string;
+  /** Mit Anmeldung abgefragt (ab 0.6): Rechte dieser Anmeldung für das Turnier; null = nur lesen */
+  rechte?: 'leitung' | 'helfer' | 'spieler' | null;
   /** Online-Server (ab 0.5): Name der Zentrale, auf der das Turnier gerade läuft – dann online nur lesbar */
   zentrale?: string | null;
   zentraleId?: string | null;
@@ -86,16 +115,16 @@ export interface TurnierInfo {
  */
 
 export type FehlerCode =
-  | 'ungueltig'          // 400 Anfrage fehlerhaft
-  | 'nicht_angemeldet'   // 401 Token fehlt oder abgelaufen
+  | 'ungueltig' // 400 Anfrage fehlerhaft
+  | 'nicht_angemeldet' // 401 Token fehlt oder abgelaufen
   | 'falsche_zugangsdaten' // 401
-  | 'gesperrt'           // 403 Konto gesperrt
+  | 'gesperrt' // 403 Konto gesperrt
   | 'keine_berechtigung' // 403
-  | 'nicht_gefunden'     // 404
-  | 'konflikt'           // 409 z. B. E-Mail schon vergeben
-  | 'zu_viele_versuche'  // 429
+  | 'nicht_gefunden' // 404
+  | 'konflikt' // 409 z. B. E-Mail schon vergeben
+  | 'zu_viele_versuche' // 429
   | 'nicht_eingerichtet' // 503 Einrichtung fehlt
-  | 'serverfehler';      // 500
+  | 'serverfehler'; // 500
 
 export interface FehlerAntwort {
   fehler: FehlerCode;
@@ -115,6 +144,8 @@ export interface InfoAntwort {
   mail?: boolean;
   /** Spieler-/Helfer-Codes, Spielerpool und Übersicht in der Sicherungsmail (ab Server 0.4) */
   codes?: boolean;
+  /** 8-stellige Kennungen, Leitungskennungen je Person, Konto-Einstellungen (ab Server 0.6) */
+  kennungen?: boolean;
   /** Nur bei der Android-Zentrale (ab 0.5) */
   zentrale?: {
     version: string;
@@ -203,35 +234,30 @@ export interface PasswortAendernAnfrage {
 export interface TurniereAntwort {
   turniere: TurnierInfo[];
 }
-/** POST turnier.anlegen (Veranstalter/Admin) */
+/** POST turnier.anlegen (Turnierleitungs-Konto/Admin). Der Server legt eine Leitungskennung für die anlegende Person an. */
 export interface TurnierAnlegenAnfrage {
   name: string;
   datum: string | null;
-  /** 6 Ziffern. (Ältere Apps senden stattdessen `leitungsPasswort`.) */
-  leitungsCode: string;
   /** Empfänger der Sicherungsmails; Standard: E-Mail des Kontos. */
   sicherungAn?: string[];
 }
 export interface TurnierAnlegenAntwort {
   turnier: TurnierInfo;
-  /** Leitungs-Token für dieses Turnier, damit der Veranstalter sofort leiten kann. */
+  /** Leitungs-Token für dieses Turnier, damit das Konto sofort leiten kann. */
   token: string;
+  /** Leitungskennung der anlegenden Person (ab 0.6) */
+  leitung: CodeEintrag;
 }
-/** GET turnier&id=… – öffentlich */
+/** GET turnier&id=… – öffentlich; mit Token zusätzlich `turnier.rechte` */
 export interface TurnierAntwort {
   turnier: TurnierInfo;
 }
-/** POST turnier.zugang – mit Leitungspasswort anmelden */
+/** POST turnier.zugang – mit einer Kennung (Leitung, Helfer oder Spieler) anmelden */
 export interface TurnierZugangAnfrage {
   turnier: string;
-  /** Leitungscode (6 Ziffern); bei älteren Turnieren das Leitungspasswort. */
+  /** Kennung, 8 Ziffern */
   code: string;
-  /** Anzeigename im Protokoll. Nur beim Leitungscode nötig; Spieler und Helfer haben ihren Namen am Code. */
-  name?: string;
 }
-
-/** Leitungscode: genau 6 Ziffern. */
-export const LEITUNGSCODE_MUSTER = /^[0-9]{6}$/;
 
 /**
  * Sicherung per Mail: Abstand in Minuten. 0 = aus, -1 = nur beim Abschließen des Turniers.
@@ -245,8 +271,6 @@ export const SICHERUNG_MAX_EMPFAENGER = 3;
 
 /** GET turnier.einstellungen&id=… – nur Leitung, Eigentümer-Konto oder Administrator */
 export interface TurnierEinstellungen {
-  /** null bei älteren Turnieren, die noch ein Passwort statt eines Codes haben */
-  leitungsCode: string | null;
   sicherungAn: string[];
   sicherungTakt: SicherungTakt;
   letzteSicherung: string | null;
@@ -258,7 +282,6 @@ export interface TurnierEinstellungen {
 /** POST turnier.einstellungen – nur übergebene Felder werden geändert */
 export interface TurnierEinstellungenAnfrage {
   turnier: string;
-  leitungsCode?: string;
   sicherungAn?: string[];
   sicherungTakt?: SicherungTakt;
 }
@@ -276,7 +299,12 @@ export interface Sicherung {
   format: typeof SICHERUNG_FORMAT;
   version: 1;
   erstellt: string;
-  turnier: { id: string; name: string; datum: string | null; modus: 'online' | 'lokal' };
+  turnier: {
+    id: string;
+    name: string;
+    datum: string | null;
+    modus: 'online' | 'lokal';
+  };
   ereignisse: {
     id: string;
     art: string;
@@ -291,35 +319,40 @@ export interface Sicherung {
 export interface TurnierZugangAntwort {
   token: string;
   rolle: Rolle;
-  /** Name, unter dem Einträge erscheinen */
+  /** Name, unter dem Einträge erscheinen (steht an der Kennung) */
   name?: string;
-  /** Bei Spieler-Codes: ID des Spielers im Turnier */
+  /** Bei Spielerkennungen: ID des Spielers im Turnier */
   spieler?: string;
+  /** Spielerkennung mit Helfer-Recht */
+  helfer?: boolean;
 }
 
-/* ---------- Spieler- und Helfer-Codes (ab Server 0.4) ----------
- * Codes liegen nur auf dem Server, nie in den öffentlich lesbaren Ereignissen.
- * Mit einem Code meldet man sich über POST turnier.zugang an (wie mit dem Leitungscode).
+/* ---------- Kennungen für Leitung, Helfer und Spieler (ab Server 0.4, 8-stellig ab 0.6) ----------
+ * Kennungen liegen nur auf dem Server, nie in den öffentlich lesbaren Ereignissen.
+ * Mit einer Kennung meldet man sich über POST turnier.zugang an.
  */
-export type CodeRolle = 'spieler' | 'helfer';
+export type CodeRolle = 'leitung' | 'helfer' | 'spieler';
 export interface CodeEintrag {
   rolle: CodeRolle;
-  /** Spieler-ID im Turnier bzw. vom Gerät vergebene Helfer-ID */
+  /** Spieler-ID im Turnier bzw. vom Gerät vergebene Helfer-/Leitungs-ID */
   bezug: string;
   name: string;
+  /** 8 Ziffern */
   code: string;
   gesperrt: boolean;
+  /** Nur bei Spielerkennungen: darf zusätzlich alle Ergebnisse eintragen */
+  helfer?: boolean;
 }
 /** GET codes&turnier=… – nur Leitung */
 export interface CodesAntwort {
   codes: CodeEintrag[];
 }
-/** POST codes.anlegen – fehlende Codes erzeugen, Namen aktualisieren (vorhandene Codes bleiben) */
+/** POST codes.anlegen – fehlende Kennungen erzeugen, Namen aktualisieren (vorhandene Kennungen bleiben) */
 export interface CodesAnlegenAnfrage {
   turnier: string;
   eintraege: { rolle: CodeRolle; bezug: string; name: string }[];
 }
-/** POST code.neu – neuen Code ausgeben; der alte gilt nicht mehr, Anmeldungen damit enden */
+/** POST code.neu – neue Kennung ausgeben; die alte gilt nicht mehr, Anmeldungen damit enden */
 export interface CodeNeuAnfrage {
   turnier: string;
   rolle: CodeRolle;
@@ -329,15 +362,29 @@ export interface CodeNeuAnfrage {
 export interface CodeSperrenAnfrage extends CodeNeuAnfrage {
   gesperrt: boolean;
 }
-/** POST code.entfernen – z. B. Helfer streichen */
+/** POST code.entfernen – z. B. Helfer streichen. Die letzte nicht gesperrte Leitungskennung lässt sich nicht entfernen. */
 export type CodeEntfernenAnfrage = CodeNeuAnfrage;
+/** POST code.helfer – Spielerkennung zusätzlich Helfer-Recht geben oder nehmen (ab 0.6) */
+export interface CodeHelferAnfrage {
+  turnier: string;
+  bezug: string;
+  helfer: boolean;
+}
 export const MAX_CODES_JE_TURNIER = 400;
 
-/** Arten, die mit Spieler- bzw. Helfer-Code gesendet werden dürfen. Alles andere nur die Leitung. */
+/** Arten, die mit Spieler- bzw. Helfer-Kennung gesendet werden dürfen. Alles andere nur die Leitung. */
 export const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'] as const;
 export const ARTEN_HELFER = ['spiel.ergebnis'] as const;
 
-/* ---------- Spielerpool im Veranstalter-Konto (ab Server 0.4) ---------- */
+/* ---------- Einstellungen des Kontos (ab 0.6) ---------- */
+/** GET konto.einstellungen / POST konto.einstellungen – eigenes Konto */
+export interface KontoEinstellungen {
+  /** Begriffe für Leistungsklassen, die die App beim Tippen vorschlägt */
+  klassen: string[];
+}
+export const MAX_KLASSEN = 40;
+
+/* ---------- Spielerpool im Konto der Turnierleitung (ab Server 0.4) ---------- */
 export interface PoolSpieler {
   /** Vom Gerät vergebene ID */
   id: string;
@@ -401,7 +448,7 @@ export const ART = {
   /** Turnier aus einer Sicherungsdatei übernommen (Daten: { quelle: Turnier-ID, erstellt, anzahl }) */
   turnierWiederhergestellt: 'turnier.wiederhergestellt',
   testNotiz: 'test.notiz',
-  /** Ort, Tische, welche Spielerangaben im Turnier stehen (Daten: TurnierDaten-Felder) */
+  /** Ort, Tische, welche Spielerangaben im Turnier stehen, Veröffentlichung der Stände (Daten: TurnierDaten-Felder) */
   turnierDaten: 'turnier.daten',
   spielerAngelegt: 'spieler.angelegt',
   spielerGeaendert: 'spieler.geaendert',
@@ -445,7 +492,12 @@ export interface ZentraleStatus {
   /** Vom Nutzer eingetragene Zugangsdaten des Handy-Hotspots (für den WLAN-QR-Code) */
   wlan: { ssid: string | null; passwort: string | null };
   /** Hotspot, den die App selbst startet (Name und Passwort vergibt Android) */
-  hotspot: { aktiv: boolean; ssid: string | null; passwort: string | null; moeglich?: boolean };
+  hotspot: {
+    aktiv: boolean;
+    ssid: string | null;
+    passwort: string | null;
+    moeglich?: boolean;
+  };
   akkuAusnahme: boolean;
   internet: boolean;
   online: {
@@ -456,7 +508,13 @@ export interface ZentraleStatus {
     fehler: string | null;
   };
   /** Sicherungen, die auf Internet warten */
-  warteschlange: { turnier: string; name: string | null; anlass: string; seit: string; fehler: string | null }[];
+  warteschlange: {
+    turnier: string;
+    name: string | null;
+    anlass: string;
+    seit: string;
+    fehler: string | null;
+  }[];
   /** Nur nach zentrale.hotspot: Hinweis des Systems */
   meldung?: string | null;
 }

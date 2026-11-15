@@ -9,6 +9,7 @@ import type {
   FehlerCode,
   InfoAntwort,
   KontenAntwort,
+  KontoEinstellungen,
   Konto,
   KontoAnlegenAnfrage,
   LoginAntwort,
@@ -58,18 +59,26 @@ export class Api {
     private readonly basis: string,
     private readonly abruf: Abruf = (u, i) => fetch(u, i),
     private readonly zeitlimitMs = 10_000,
+    /** Geheimnis der Zentrale am eigenen Gerät (Kopfzeile X-TT-Zentrale), siehe lib/zentrale.svelte.ts */
+    private readonly zentraleGeheimnis: (() => string | null) | null = null,
   ) {}
 
   private async rufe<T>(
     methode: 'GET' | 'POST',
     route: string,
-    opt: { query?: Record<string, string>; rumpf?: unknown; token?: string | null } = {},
+    opt: {
+      query?: Record<string, string>;
+      rumpf?: unknown;
+      token?: string | null;
+    } = {},
     zeitlimitMs = this.zeitlimitMs,
   ): Promise<T> {
     const params = new URLSearchParams({ r: route, ...(opt.query ?? {}) });
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (opt.rumpf !== undefined) headers['Content-Type'] = 'application/json';
     if (opt.token) headers['X-TT-Token'] = opt.token;
+    const geheimnis = this.zentraleGeheimnis?.();
+    if (geheimnis) headers['X-TT-Zentrale'] = geheimnis;
 
     const abbruch = new AbortController();
     const timer = setTimeout(() => abbruch.abort(), zeitlimitMs);
@@ -107,7 +116,9 @@ export class Api {
     return this.rufe<{ ok: true }>('POST', 'setup', { rumpf: a });
   }
   login(email: string, passwort: string) {
-    return this.rufe<LoginAntwort>('POST', 'login', { rumpf: { email, passwort } });
+    return this.rufe<LoginAntwort>('POST', 'login', {
+      rumpf: { email, passwort },
+    });
   }
   logout(token: string) {
     return this.rufe<{ ok: true }>('POST', 'logout', { token });
@@ -119,79 +130,167 @@ export class Api {
     return this.rufe<LoginAntwort>('POST', 'registrieren', { rumpf: a });
   }
   passwortVergessen(email: string) {
-    return this.rufe<{ ok: true }>('POST', 'passwort.vergessen', { rumpf: { email } });
+    return this.rufe<{ ok: true }>('POST', 'passwort.vergessen', {
+      rumpf: { email },
+    });
   }
   passwortZuruecksetzen(schluessel: string, neu: string) {
-    return this.rufe<LoginAntwort>('POST', 'passwort.zuruecksetzen', { rumpf: { schluessel, neu } });
+    return this.rufe<LoginAntwort>('POST', 'passwort.zuruecksetzen', {
+      rumpf: { schluessel, neu },
+    });
   }
   kontoLoeschen(token: string, passwort: string) {
-    return this.rufe<{ ok: true }>('POST', 'konto.loeschen', { token, rumpf: { passwort } });
+    return this.rufe<{ ok: true }>('POST', 'konto.loeschen', {
+      token,
+      rumpf: { passwort },
+    });
   }
   rueckmeldung(token: string | null, a: RueckmeldungAnfrage) {
     return this.rufe<{ ok: true }>('POST', 'rueckmeldung', { token, rumpf: a });
   }
   einstellungen(token: string, id: string) {
-    return this.rufe<TurnierEinstellungen>('GET', 'turnier.einstellungen', { token, query: { id } });
+    return this.rufe<TurnierEinstellungen>('GET', 'turnier.einstellungen', {
+      token,
+      query: { id },
+    });
   }
   einstellungenSetzen(token: string, a: TurnierEinstellungenAnfrage) {
-    return this.rufe<TurnierEinstellungen>('POST', 'turnier.einstellungen', { token, rumpf: a });
+    return this.rufe<TurnierEinstellungen>('POST', 'turnier.einstellungen', {
+      token,
+      rumpf: a,
+    });
   }
   sichern(token: string, turnier: string) {
-    return this.rufe<{ ok: true; gesendetAn: string[]; zeit: string; wartend?: boolean; meldung?: string }>('POST', 'turnier.sichern', {
+    return this.rufe<{
+      ok: true;
+      gesendetAn: string[];
+      zeit: string;
+      wartend?: boolean;
+      meldung?: string;
+    }>('POST', 'turnier.sichern', {
       token,
       rumpf: { turnier },
     });
   }
   passwortAendern(token: string, alt: string, neu: string) {
-    return this.rufe<{ ok: true }>('POST', 'passwort.aendern', { token, rumpf: { alt, neu } });
+    return this.rufe<{ ok: true }>('POST', 'passwort.aendern', {
+      token,
+      rumpf: { alt, neu },
+    });
   }
   konten(token: string) {
     return this.rufe<KontenAntwort>('GET', 'konten', { token });
   }
   kontoAnlegen(token: string, a: KontoAnlegenAnfrage) {
-    return this.rufe<{ konto: Konto }>('POST', 'konto.anlegen', { token, rumpf: a });
+    return this.rufe<{ konto: Konto }>('POST', 'konto.anlegen', {
+      token,
+      rumpf: a,
+    });
   }
   kontoSperren(token: string, id: number, gesperrt: boolean) {
-    return this.rufe<{ konto: Konto }>('POST', 'konto.sperren', { token, rumpf: { id, gesperrt } });
+    return this.rufe<{ konto: Konto }>('POST', 'konto.sperren', {
+      token,
+      rumpf: { id, gesperrt },
+    });
   }
   turniere(token: string, alle = false) {
-    return this.rufe<TurniereAntwort>('GET', 'turniere', { token, query: alle ? { alle: '1' } : {} });
+    return this.rufe<TurniereAntwort>('GET', 'turniere', {
+      token,
+      query: alle ? { alle: '1' } : {},
+    });
   }
   turnierAnlegen(token: string, a: TurnierAnlegenAnfrage) {
-    return this.rufe<TurnierAnlegenAntwort>('POST', 'turnier.anlegen', { token, rumpf: a });
+    return this.rufe<TurnierAnlegenAntwort>('POST', 'turnier.anlegen', {
+      token,
+      rumpf: a,
+    });
   }
-  turnier(id: string) {
-    return this.rufe<TurnierAntwort>('GET', 'turnier', { query: { id } });
+  /** Öffentlich; mit Token steht in turnier.rechte, was diese Anmeldung darf. */
+  turnier(id: string, token: string | null = null) {
+    return this.rufe<TurnierAntwort>('GET', 'turnier', {
+      query: { id },
+      token,
+    });
   }
-  turnierZugang(turnier: string, code: string, name?: string) {
-    return this.rufe<TurnierZugangAntwort>('POST', 'turnier.zugang', { rumpf: { turnier, code, name } });
+  turnierZugang(turnier: string, code: string) {
+    return this.rufe<TurnierZugangAntwort>('POST', 'turnier.zugang', {
+      rumpf: { turnier, code },
+    });
   }
   codes(token: string, turnier: string) {
-    return this.rufe<CodesAntwort>('GET', 'codes', { token, query: { turnier } });
+    return this.rufe<CodesAntwort>('GET', 'codes', {
+      token,
+      query: { turnier },
+    });
   }
   codesAnlegen(token: string, turnier: string, eintraege: { rolle: CodeRolle; bezug: string; name: string }[]) {
-    return this.rufe<CodesAntwort>('POST', 'codes.anlegen', { token, rumpf: { turnier, eintraege } });
+    return this.rufe<CodesAntwort>('POST', 'codes.anlegen', {
+      token,
+      rumpf: { turnier, eintraege },
+    });
   }
   codeNeu(token: string, turnier: string, rolle: CodeRolle, bezug: string) {
-    return this.rufe<{ code: CodeEintrag }>('POST', 'code.neu', { token, rumpf: { turnier, rolle, bezug } });
+    return this.rufe<{ code: CodeEintrag }>('POST', 'code.neu', {
+      token,
+      rumpf: { turnier, rolle, bezug },
+    });
   }
   codeSperren(token: string, turnier: string, rolle: CodeRolle, bezug: string, gesperrt: boolean) {
-    return this.rufe<{ code: CodeEintrag }>('POST', 'code.sperren', { token, rumpf: { turnier, rolle, bezug, gesperrt } });
+    return this.rufe<{ code: CodeEintrag }>('POST', 'code.sperren', {
+      token,
+      rumpf: { turnier, rolle, bezug, gesperrt },
+    });
   }
   codeEntfernen(token: string, turnier: string, rolle: CodeRolle, bezug: string) {
-    return this.rufe<{ ok: true }>('POST', 'code.entfernen', { token, rumpf: { turnier, rolle, bezug } });
+    return this.rufe<{ ok: true }>('POST', 'code.entfernen', {
+      token,
+      rumpf: { turnier, rolle, bezug },
+    });
+  }
+  codeHelfer(token: string, turnier: string, bezug: string, helfer: boolean) {
+    return this.rufe<{ code: CodeEintrag }>('POST', 'code.helfer', {
+      token,
+      rumpf: { turnier, bezug, helfer },
+    });
+  }
+  /** Turnier endgültig löschen (Eigentümer-Konto/Admin, mit Passwort) */
+  turnierLoeschen(token: string, turnier: string, passwort: string) {
+    return this.rufe<{ ok: true }>('POST', 'turnier.loeschen', {
+      token,
+      rumpf: { turnier, passwort },
+    });
+  }
+  kontoEinstellungen(token: string) {
+    return this.rufe<KontoEinstellungen>('GET', 'konto.einstellungen', {
+      token,
+    });
+  }
+  kontoEinstellungenSetzen(token: string, a: Partial<KontoEinstellungen>) {
+    return this.rufe<KontoEinstellungen>('POST', 'konto.einstellungen', {
+      token,
+      rumpf: a,
+    });
   }
   pool(token: string) {
     return this.rufe<PoolAntwort>('GET', 'pool', { token });
   }
   poolSpeichern(token: string, spieler: PoolSpieler[]) {
-    return this.rufe<PoolAntwort>('POST', 'pool.speichern', { token, rumpf: { spieler } });
+    return this.rufe<PoolAntwort>('POST', 'pool.speichern', {
+      token,
+      rumpf: { spieler },
+    });
   }
   poolLoeschen(token: string, ids: string[]) {
-    return this.rufe<{ ok: true }>('POST', 'pool.loeschen', { token, rumpf: { ids } });
+    return this.rufe<{ ok: true }>('POST', 'pool.loeschen', {
+      token,
+      rumpf: { ids },
+    });
   }
   uebersicht(token: string, turnier: string, text: string) {
-    return this.rufe<{ ok: true }>('POST', 'turnier.uebersicht', { token, rumpf: { turnier, text } });
+    return this.rufe<{ ok: true }>('POST', 'turnier.uebersicht', {
+      token,
+      rumpf: { turnier, text },
+    });
   }
   /* ---------- nur Android-Zentrale, nur vom Gerät der Zentrale ---------- */
   zentraleAnmelden() {
@@ -201,19 +300,27 @@ export class Api {
     return this.rufe<ZentraleStatus>('GET', 'zentrale.status');
   }
   zentraleWlan(ssid: string, passwort: string) {
-    return this.rufe<ZentraleStatus>('POST', 'zentrale.wlan', { rumpf: { ssid, passwort } });
+    return this.rufe<ZentraleStatus>('POST', 'zentrale.wlan', {
+      rumpf: { ssid, passwort },
+    });
   }
   zentraleHotspot(an: boolean) {
-    return this.rufe<ZentraleStatus>('POST', 'zentrale.hotspot', { rumpf: { an } });
+    return this.rufe<ZentraleStatus>('POST', 'zentrale.hotspot', {
+      rumpf: { an },
+    });
   }
   zentraleOeffnen(ziel: 'hotspot' | 'akku' | 'wlan') {
-    return this.rufe<{ ok: boolean }>('POST', 'zentrale.oeffnen', { rumpf: { ziel } });
+    return this.rufe<{ ok: boolean }>('POST', 'zentrale.oeffnen', {
+      rumpf: { ziel },
+    });
   }
   zentraleOnlineAnmelden(email: string, passwort: string, url?: string) {
     return this.rufe<ZentraleStatus>('POST', 'zentrale.online.anmelden', { rumpf: { email, passwort, url } }, 30_000);
   }
   zentraleOnlineAbmelden() {
-    return this.rufe<ZentraleStatus>('POST', 'zentrale.online.abmelden', { rumpf: {} });
+    return this.rufe<ZentraleStatus>('POST', 'zentrale.online.abmelden', {
+      rumpf: {},
+    });
   }
   zentraleOnlineTurniere() {
     return this.rufe<{ turniere: OnlineTurnier[] }>('GET', 'zentrale.online.turniere', {}, 30_000);
@@ -231,13 +338,21 @@ export class Api {
     return this.rufe<ZentraleStatus>('POST', 'zentrale.sicherungen.senden', { rumpf: {} }, 60_000);
   }
   zentraleTurnierLoeschen(turnier: string, trotzdem = false) {
-    return this.rufe<{ ok: true }>('POST', 'zentrale.turnier.loeschen', { rumpf: { turnier, trotzdem } });
+    return this.rufe<{ ok: true }>('POST', 'zentrale.turnier.loeschen', {
+      rumpf: { turnier, trotzdem },
+    });
   }
 
   abholen(turnier: string, ab: number) {
-    return this.rufe<AbholenAntwort>('GET', 'events', { query: { turnier, ab: String(ab) } });
+    return this.rufe<AbholenAntwort>('GET', 'events', {
+      query: { turnier, ab: String(ab) },
+    });
   }
   senden(turnier: string, token: string, ereignisse: NeuesEreignis[]) {
-    return this.rufe<SendenAntwort>('POST', 'events', { token, query: { turnier }, rumpf: { ereignisse } });
+    return this.rufe<SendenAntwort>('POST', 'events', {
+      token,
+      query: { turnier },
+      rumpf: { ereignisse },
+    });
   }
 }

@@ -11,11 +11,14 @@
   let {
     z,
     gruppen = null,
+    klassen = null,
     plaetze = null,
     tauschen = null,
   }: {
     z: TurnierZustand;
     gruppen?: string[][] | null;
+    /** Klassenname je Gruppe (bei Klassentrennung) */
+    klassen?: string[] | null;
     plaetze?: (string | null)[] | null;
     tauschen?: ((a: string, b: string) => Promise<void>) | null;
   } = $props();
@@ -53,7 +56,7 @@
   <div class="gruppen">
     {#each gruppen as g, nr (nr)}
       <div class="gruppe">
-        <h4>{T.konk.gruppe(gruppenName(nr))}</h4>
+        <h4>{T.konk.gruppe(gruppenName(nr))}{#if klassen?.[nr]}<span class="marke">{klassen[nr]}</span>{/if}</h4>
         <ol>
           {#each g as id, i (id)}
             <li>
@@ -83,7 +86,7 @@
 
 <style>
   .gruppen { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 12px; }
-  .gruppe h4 { margin: 0 0 6px; }
+  .gruppe h4 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
   ol { margin: 0; padding: 0; list-style: none; }
   .gruppe li { margin-bottom: 6px; }
   .platz {

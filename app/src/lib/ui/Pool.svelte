@@ -6,6 +6,7 @@
   import { ALLE_ANGABEN, type SpielerDaten } from '../engine/modell';
   import { csvAusgeben, csvLesen, geraetInsKonto, geraetePool, imPool, pool, poolLaden, poolLoeschen, poolSpeichern } from '../pool.svelte';
   import SpielerForm from './turnier/SpielerForm.svelte';
+  import { klassenLaden } from '../klassen.svelte';
 
   let neu = $state(false);
   let bearbeite = $state<string | null>(null);
@@ -14,6 +15,7 @@
   let geraetAnzahl = $state(0);
 
   onMount(async () => {
+    void klassenLaden();
     await poolLaden();
     geraetAnzahl = pool.quelle === 'konto' ? geraetePool().length : 0;
   });

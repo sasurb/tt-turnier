@@ -6,10 +6,12 @@ import { rundenplan } from './rundenplan';
 import { kampflosErgebnis } from './wertung';
 import {
   ALLE_ANGABEN,
+  ALLES_OEFFENTLICH,
   FEST_NACH_START,
   STANDARD_ANGABEN,
   standardEinstellungen,
   type Angabe,
+  type Veroeffentlichung,
   type ErgebnisEingabe,
   type ErgebnisEintrag,
   type KonkurrenzEinstellungen,
@@ -33,8 +35,16 @@ export interface TurnierZustand {
   tische: number | null;
   /** Angaben neben Name und Verein, die im Turnier geführt werden */
   angaben: Angabe[];
+  /** Welche Stände alle sehen dürfen (Konkurrenzen können abweichen) */
+  veroeffentlichung: Veroeffentlichung;
   abgeschlossen: boolean;
-  notizen: { id: string; text: string; von: string; zeit: string; bestaetigt: boolean }[];
+  notizen: {
+    id: string;
+    text: string;
+    von: string;
+    zeit: string;
+    bestaetigt: boolean;
+  }[];
   anzahlEreignisse: number;
   spieler: Record<string, TurnierSpieler>;
   /** Spieler-IDs in Reihenfolge der Anlage */
@@ -51,6 +61,7 @@ export function leererZustand(): TurnierZustand {
     ort: '',
     tische: null,
     angaben: [...STANDARD_ANGABEN],
+    veroeffentlichung: { ...ALLES_OEFFENTLICH },
     abgeschlossen: false,
     notizen: [],
     anzahlEreignisse: 0,
@@ -66,6 +77,14 @@ export function leererZustand(): TurnierZustand {
 
 function istLeitung(a: Autor | null): boolean {
   return !a || a.rolle === 'leitung' || a.rolle === 'admin' || a.rolle === 'veranstalter';
+}
+
+function veroeffentlichungLesen(v: unknown): Veroeffentlichung | null | undefined {
+  if (v === null) return null;
+  if (!v || typeof v !== 'object') return undefined;
+  const x = v as Record<string, unknown>;
+  if (typeof x.tabellen !== 'boolean' || typeof x.ko !== 'boolean') return undefined;
+  return { tabellen: x.tabellen, ko: x.ko };
 }
 
 function text(v: unknown, max = 80): string | undefined {
@@ -114,6 +133,14 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
   if (zahl(x.gruppenGroesse, 3, 16)) e.gruppenGroesse = x.gruppenGroesse as number;
   if (zahl(x.aufsteiger, 1, 4)) e.aufsteiger = x.aufsteiger as number;
   if (typeof x.platz3 === 'boolean') e.platz3 = x.platz3;
+  if (x.klassenTrennung === 'keine' || x.klassenTrennung === 'klasse' || x.klassenTrennung === 'ttr') e.klassenTrennung = x.klassenTrennung;
+  if (Array.isArray(x.ttrGrenzen)) {
+    e.ttrGrenzen = [...new Set(x.ttrGrenzen.filter((g): g is number => typeof g === 'number' && Number.isInteger(g) && g > 0 && g <= 4000))]
+      .sort((a, b) => a - b)
+      .slice(0, 10);
+  }
+  const vo = veroeffentlichungLesen(x.veroeffentlichung);
+  if (vo !== undefined) e.veroeffentlichung = vo;
   const z = x.zulassung as Record<string, unknown> | undefined;
   if (z && typeof z === 'object') {
     for (const f of ['ttrMin', 'ttrMax'] as const) {
@@ -124,7 +151,12 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
       const v = zahl(z[f], 1900, 2100);
       if (v !== undefined) e.zulassung[f] = v;
     }
-    if (Array.isArray(z.klassen)) e.zulassung.klassen = z.klassen.filter((k): k is string => typeof k === 'string').map((k) => k.trim()).filter(Boolean).slice(0, 20);
+    if (Array.isArray(z.klassen))
+      e.zulassung.klassen = z.klassen
+        .filter((k): k is string => typeof k === 'string')
+        .map((k) => k.trim())
+        .filter(Boolean)
+        .slice(0, 20);
     if (Array.isArray(z.geschlecht)) e.zulassung.geschlecht = z.geschlecht.filter((g): g is 'm' | 'w' | 'd' => g === 'm' || g === 'w' || g === 'd');
   }
   return e;
@@ -213,7 +245,9 @@ function statusAktualisieren(k: KonkurrenzZustand) {
   if (k.gestartet.ko) koAktualisieren(k, zurueck);
   if (!begonnen(k)) k.status = 'meldung';
   else if (k.gestartet.ko) {
-    const offen = Object.values(k.spiele).some((s) => s.phase === 'ko' && (s.status === 'offen' || s.status === 'wartet' || s.stand === 'angefochten' || s.stand === 'konflikt'));
+    const offen = Object.values(k.spiele).some(
+      (s) => s.phase === 'ko' && (s.status === 'offen' || s.status === 'wartet' || s.stand === 'angefochten' || s.stand === 'konflikt'),
+    );
     k.status = offen ? 'ko' : 'beendet';
   } else {
     const offen = Object.values(k.spiele).some((s) => s.status === 'offen' || s.stand === 'angefochten' || s.stand === 'konflikt');
@@ -228,7 +262,13 @@ function gleicheMenge(a: string[], b: string[]) {
 /** Passt die gespeicherte Auslosung der ersten Phase noch zu den Meldungen? */
 export function auslosungAktuell(k: KonkurrenzZustand): boolean {
   if (erstePhase(k) === 'gruppen') return !!k.auslosungGruppen && gleicheMenge(k.auslosungGruppen.gruppen.flat(), k.meldungen);
-  return !!k.auslosungKo && gleicheMenge(k.auslosungKo.plaetze.filter((x): x is string => !!x), k.meldungen);
+  return (
+    !!k.auslosungKo &&
+    gleicheMenge(
+      k.auslosungKo.plaetze.filter((x): x is string => !!x),
+      k.meldungen,
+    )
+  );
 }
 
 function gruppenAnlegen(k: KonkurrenzZustand) {
@@ -244,10 +284,29 @@ function gruppenAnlegen(k: KonkurrenzZustand) {
         const b = m[y]!;
         const id = `g${nr}-${a}-${b}`;
         k.spiele[id] = {
-          id, konkurrenz: k.id, phase: 'gruppen', gruppe: nr, runde: r + 1, index: index++, a, b,
-          aFrei: false, bFrei: false, status: 'offen', ergebnis: null, stand: null, eintrag: null, alternativen: [],
-          angefochtenVon: null, kampflosDurchRueckzug: null, gestrichen: false, gewinner: null, weiter: null,
-          verliererWeiter: null, platz3: false, gesperrt: false,
+          id,
+          konkurrenz: k.id,
+          phase: 'gruppen',
+          gruppe: nr,
+          runde: r + 1,
+          index: index++,
+          a,
+          b,
+          aFrei: false,
+          bFrei: false,
+          status: 'offen',
+          ergebnis: null,
+          stand: null,
+          eintrag: null,
+          alternativen: [],
+          angefochtenVon: null,
+          kampflosDurchRueckzug: null,
+          gestrichen: false,
+          gewinner: null,
+          weiter: null,
+          verliererWeiter: null,
+          platz3: false,
+          gesperrt: false,
         };
         k.reihenfolge.push(id);
       }
@@ -331,7 +390,13 @@ function folgeBlockiert(k: KonkurrenzZustand, s: Spiel, neuerSieger: Seite | nul
 export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand {
   z.anzahlEreignisse++;
   const d = (e.daten ?? {}) as Record<string, unknown>;
-  const warnen = (t: string) => z.warnungen.push({ ereignis: e.id, text: t, zeit: e.zeit, von: e.autor?.name ?? '' });
+  const warnen = (t: string) =>
+    z.warnungen.push({
+      ereignis: e.id,
+      text: t,
+      zeit: e.zeit,
+      von: e.autor?.name ?? '',
+    });
   const leitung = istLeitung(e.autor);
   const nurLeitung = (): boolean => {
     if (leitung) return true;
@@ -359,7 +424,13 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       break;
     case ART.testNotiz: {
       if (typeof d.text === 'string') {
-        z.notizen.push({ id: e.id, text: d.text, von: e.autor?.name ?? '', zeit: e.zeit, bestaetigt: e.status !== 'ausstehend' });
+        z.notizen.push({
+          id: e.id,
+          text: d.text,
+          von: e.autor?.name ?? '',
+          zeit: e.zeit,
+          bestaetigt: e.status !== 'ausstehend',
+        });
       }
       break;
     }
@@ -371,6 +442,10 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       const t = zahl(d.tische, 1, 200);
       if (t !== undefined) z.tische = t;
       if (Array.isArray(d.angaben)) z.angaben = ALLE_ANGABEN.filter((a) => (d.angaben as unknown[]).includes(a));
+      const vo = veroeffentlichungLesen(d.veroeffentlichung);
+      if (vo) z.veroeffentlichung = vo;
+      // „Ergebnisse veröffentlichen“: Abweichungen der Konkurrenzen zurücknehmen
+      if (d.alleKonkurrenzen === true) for (const k of Object.values(z.konkurrenzen)) k.einst.veroeffentlichung = null;
       break;
     }
 
@@ -378,7 +453,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (!nurLeitung()) break;
       const id = text(d.id, 40);
       const daten = spielerDatenLesen(d);
-      if (!id || z.spieler[id] || !daten.vorname && !daten.nachname) {
+      if (!id || z.spieler[id] || (!daten.vorname && !daten.nachname)) {
         warnen('Spieler konnte nicht angelegt werden.');
         break;
       }
@@ -485,7 +560,12 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         break;
       }
       if (!k.rueckzuege.some((r) => r.teilnehmer === id)) {
-        k.rueckzuege.push({ teilnehmer: id, phase: k.gestartet.ko ? 'ko' : 'gruppen', zeit: e.zeit, nr: k.rueckzuege.length });
+        k.rueckzuege.push({
+          teilnehmer: id,
+          phase: k.gestartet.ko ? 'ko' : 'gruppen',
+          zeit: e.zeit,
+          nr: k.rueckzuege.length,
+        });
       }
       statusAktualisieren(k);
       break;
@@ -514,7 +594,12 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         }
         const g = Array.isArray(d.gruppen) ? d.gruppen : null;
         const flach = g?.flat() ?? [];
-        if (!g || !g.every((x) => Array.isArray(x) && x.length >= 1 && x.every((y) => typeof y === 'string')) || new Set(flach).size !== flach.length || !flach.every((x) => k.meldungen.includes(x as string))) {
+        if (
+          !g ||
+          !g.every((x) => Array.isArray(x) && x.length >= 1 && x.every((y) => typeof y === 'string')) ||
+          new Set(flach).size !== flach.length ||
+          !flach.every((x) => k.meldungen.includes(x as string))
+        ) {
           warnen('Ungültige Gruppenauslosung.');
           break;
         }
@@ -527,7 +612,14 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         const p = Array.isArray(d.plaetze) ? d.plaetze : null;
         const ids = (p ?? []).filter((x): x is string => typeof x === 'string');
         const groesse = p?.length ?? 0;
-        if (!p || groesse < 2 || (groesse & (groesse - 1)) !== 0 || !p.every((x) => x === null || typeof x === 'string') || new Set(ids).size !== ids.length || !ids.every((x) => k.meldungen.includes(x))) {
+        if (
+          !p ||
+          groesse < 2 ||
+          (groesse & (groesse - 1)) !== 0 ||
+          !p.every((x) => x === null || typeof x === 'string') ||
+          new Set(ids).size !== ids.length ||
+          !ids.every((x) => k.meldungen.includes(x))
+        ) {
           warnen('Ungültige K.-o.-Auslosung.');
           break;
         }
@@ -620,19 +712,13 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
   return z;
 }
 
-function spielEreignis(
-  z: TurnierZustand,
-  k: KonkurrenzZustand,
-  s: Spiel,
-  e: LokalesEreignis,
-  d: Record<string, unknown>,
-  leitung: boolean,
-): Pruefung {
+function spielEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, e: LokalesEreignis, d: Record<string, unknown>, leitung: boolean): Pruefung {
   void z;
   const rolle = e.autor?.rolle ?? 'leitung';
-  const amtlich = leitung || rolle === 'helfer';
   const ich = e.autor?.spieler;
   const meineSeite: Seite | null = rolle === 'spieler' && ich ? (s.a === ich ? 'a' : s.b === ich ? 'b' : null) : null;
+  // Spieler mit Helfer-Recht: fremde Spiele amtlich wie ein Helfer, eigene wie jeder Spieler (Gegner bestätigt)
+  const amtlich = leitung || rolle === 'helfer' || (rolle === 'spieler' && e.autor?.helfer === true && !meineSeite);
   if (!amtlich && !meineSeite) return 'Spieler dürfen nur ihre eigenen Spiele eintragen.';
 
   switch (e.art) {

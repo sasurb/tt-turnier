@@ -50,6 +50,7 @@
           {:else}
             <a role="menuitem" href={linkZu('konto')}>{T.kopf.konto}</a>
           {/if}
+          <a role="menuitem" href={linkZu('turniere')}>{T.kopf.turniere}</a>
           <a role="menuitem" href={linkZu('pool')}>{T.pool.titel}</a>
           {#if app.sitzung.konto.rolle === 'admin'}
             <a role="menuitem" href={linkZu('verwaltung')}>{T.kopf.verwaltung}</a>

@@ -91,7 +91,7 @@ lieber den Hotspot nehmen.
    Die Links auf den Zetteln zeigen auf die Zentrale – sie funktionieren, sobald das Gerät im WLAN der
    Zentrale ist.
 4. Weitere Leitungsgeräte (z. B. iPad am Turniertisch): App über Code 2 öffnen, Turnier antippen,
-   mit dem **Leitungscode** anmelden.
+   mit ihrer **Leitungskennung** anmelden (unter *Zugänge* → *Turnierleitung*). Am PC (`java -jar kern.jar`) öffnest du die Adresse, die beim Start als „Am Gerät selbst öffnen“ ausgegeben wird – nur sie schaltet die Zentrale-Seite frei.
 5. Handy der Zentrale ans **Ladegerät**. Bildschirm darf ausgehen; die App darf im Hintergrund sein.
    Solange die Benachrichtigung **„Zentrale läuft“** zu sehen ist, läuft der Server. Beenden: in der
    Benachrichtigung auf **Beenden**.
@@ -106,7 +106,7 @@ Dafür braucht das Handy kurz Internet (mobile Daten oder WLAN zu Hause).
 1. *Zentrale* → **Online-Konto**: E-Mail und Passwort deines Kontos auf saschaurban.de → **Verbinden**.
 2. **Spielerpool abgleichen** holt den Pool aus dem Konto (und lädt auf der Zentrale ergänzte Spieler hoch).
 3. **Online vorbereitete Turniere** → *Liste laden* → **Auf die Zentrale holen**. Das Turnier kommt mit
-   allen Spielern, Auslosungen, Codes und Leitungscode. Online ist es solange nur lesbar
+   allen Spielern, Auslosungen und Kennungen. Online ist es solange nur lesbar
    (Hinweis „läuft gerade auf der Zentrale“). QR-Zettel aus der Vorbereitung gelten weiter – die Codes
    bleiben gleich; nur die Adresse ist in der Halle die der Zentrale.
 4. Nach dem Turnier (wieder mit Internet): *Turniere auf dieser Zentrale* →
@@ -131,7 +131,6 @@ im Turnier *Einstellungen* → **Sicherung teilen** (Android-Teilen-Menü, z. B.
 | Zentrale-Seite zeigt keine Adresse | Hotspot ist aus oder das Handy in keinem WLAN. |
 | Nach einiger Zeit keine Verbindung mehr | Akku-Optimierung ausschalten (Abschnitt B, Schritt 4); Hotspot-Abschaltung „automatisch deaktivieren“ aus (Abschnitt C). |
 | „Hotspot durch die App“ geht nicht | normalen Hotspot ausschalten; Berechtigung „Geräte in der Nähe“ erlauben. |
-| Übernahme: „Bitte zuerst einen Leitungscode festlegen“ | ältere Online-Turniere: online unter *Einstellungen* einen Leitungscode setzen. |
 | Rückgabe: „inzwischen von … übernommen“ | Das Turnier wurde mit „Trotzdem holen“ auf eine andere Zentrale geholt. Einträge dieser Zentrale: *Sicherung teilen* und online wiederherstellen. |
 
 ## Technik (für Entwickler)

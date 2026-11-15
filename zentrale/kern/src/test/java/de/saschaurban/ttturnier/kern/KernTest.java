@@ -49,6 +49,7 @@ public final class KernTest {
         if (query != null) q.putAll(query);
         Map<String, String> kopf = new LinkedHashMap<>();
         if (token != null) kopf.put("x-tt-token", token);
+        if (selbst) kopf.put("x-tt-zentrale", z.geraetGeheimnis());
         byte[] b = rumpf == null ? new byte[0] : Json.schreiben(rumpf).getBytes(StandardCharsets.UTF_8);
         HttpServer.Antwort a = z.api(new HttpServer.Anfrage(methode, "/api/index.php", q, kopf, b, selbst ? "127.0.0.1" : "192.168.43.20", selbst));
         return new A(a.status, Json.objekt(new String(a.inhalt, StandardCharsets.UTF_8)));
@@ -79,6 +80,7 @@ public final class KernTest {
     }
 
     public static void main(String[] args) throws Exception {
+        Zentrale.ohneWarten = true;
         json();
         protokoll();
         http();
@@ -117,28 +119,61 @@ public final class KernTest {
         pruefe(a.s == 403, "Konto der Zentrale nur vom Gerät selbst");
         a = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true);
         pruefe(a.s == 200 && a.t("token").length() == 64, "Konto der Zentrale am Gerät selbst");
+        // Loopback allein reicht nicht: Geheimnis und Herkunft werden geprüft (fremde Webseite im Browser des Handys)
+        Map<String, String> q0 = new LinkedHashMap<>();
+        q0.put("r", "zentrale.anmelden");
+        HttpServer.Antwort ohne = z.api(new HttpServer.Anfrage("POST", "/api/index.php", q0, new LinkedHashMap<>(), "{}".getBytes(StandardCharsets.UTF_8), "127.0.0.1", true));
+        pruefe(ohne.status == 403, "Loopback ohne Geheimnis abgewiesen");
+        Map<String, String> k1 = new LinkedHashMap<>();
+        k1.put("x-tt-zentrale", z.geraetGeheimnis());
+        k1.put("origin", "https://boese.example");
+        HttpServer.Antwort fremd = z.api(new HttpServer.Anfrage("POST", "/api/index.php", q0, k1, "{}".getBytes(StandardCharsets.UTF_8), "127.0.0.1", true));
+        pruefe(fremd.status == 403, "Loopback mit fremdem Origin abgewiesen");
+        Map<String, String> k2 = new LinkedHashMap<>();
+        k2.put("x-tt-zentrale", z.geraetGeheimnis());
+        k2.put("origin", "http://127.0.0.1:8080");
+        HttpServer.Antwort eigen = z.api(new HttpServer.Anfrage("POST", "/api/index.php", q0, k2, "{}".getBytes(StandardCharsets.UTF_8), "127.0.0.1", true));
+        pruefe(eigen.status == 200, "Loopback mit eigenem Origin erlaubt");
         String konto = a.t("token");
         a = rufe(z, "GET", "ich", null, konto);
         pruefe(a.s == 200 && Json.alsObjekt(a.g("konto")) != null, "ich: Konto");
         a = rufe(z, "POST", "login", Json.obj("email", "a@b.de", "passwort", "x"), null);
         pruefe(a.s == 503, "login gibt es auf der Zentrale nicht");
-        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "X", "leitungsCode", "583920"), konto);
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "X"), konto);
         pruefe(a.s == 400, "Name zu kurz");
-        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01", "leitungsCode", "123456"), konto);
-        pruefe(a.s == 400, "zu einfacher Leitungscode");
-        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01", "leitungsCode", "583920"), null);
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01"), null);
         pruefe(a.s == 401, "Anlegen nur mit Konto");
-        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01", "leitungsCode", "583920"), konto);
-        pruefe(a.s == 200, "Turnier angelegt");
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
+        String kontoKennung = (String) Json.alsObjekt(a.g("leitung")).get("code");
+        pruefe(a.s == 200 && tid.matches("^[0-9]{8}$") && Zentrale.codeGueltig(kontoKennung), "Turnier angelegt: Kennung 8 Ziffern, Leitungskennung");
         String leitA = a.t("token");
         a = rufe(z, "GET", "turnier", null, null, q("id", tid), false);
-        pruefe(a.s == 200 && "Hallencup".equals(Json.alsObjekt(a.g("turnier")).get("name")), "Turnier öffentlich lesbar");
-        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "000000"), null);
-        pruefe(a.s == 401, "falscher Code");
-        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "583920", "name", "Helga"), null);
-        pruefe(a.s == 200 && "leitung".equals(a.t("rolle")), "Leitungscode");
+        pruefe(a.s == 200 && "Hallencup".equals(Json.alsObjekt(a.g("turnier")).get("name")) && !Json.alsObjekt(a.g("turnier")).containsKey("rechte"), "Turnier öffentlich lesbar");
+        a = rufe(z, "GET", "turnier", null, konto, q("id", tid), false);
+        pruefe("leitung".equals(Json.alsObjekt(a.g("turnier")).get("rechte")), "Konto: Rechte = leitung");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "00000000"), null);
+        pruefe(a.s == 401, "falsche Kennung");
+        a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "leitung", "bezug", "l-helga", "name", "Helga"))), leitA);
+        String helgaKennung = null;
+        for (Object o : a.l("codes")) if ("l-helga".equals(Json.alsObjekt(o).get("bezug"))) helgaKennung = (String) Json.alsObjekt(o).get("code");
+        pruefe(a.s == 200 && helgaKennung != null, "zweite Leitungskennung angelegt");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", helgaKennung.substring(0, 4) + " " + helgaKennung.substring(4)), null);
+        pruefe(a.s == 200 && "leitung".equals(a.t("rolle")) && "Helga".equals(a.t("name")), "Leitungskennung mit Namen");
         String leitB = a.t("token");
+        a = rufe(z, "POST", "code.sperren", Json.obj("turnier", tid, "rolle", "leitung", "bezug", "l-helga", "gesperrt", true), leitA);
+        pruefe(a.s == 200, "Leitungskennung gesperrt");
+        a = rufe(z, "GET", "turnier", null, leitB, q("id", tid), false);
+        pruefe(Json.alsObjekt(a.g("turnier")).get("rechte") == null, "gesperrt: Anmeldung ohne Rechte");
+        a = rufe(z, "GET", "codes", null, leitA, q("turnier", tid), false);
+        String kb = null;
+        for (Object o : a.l("codes")) if ("leitung".equals(Json.alsObjekt(o).get("rolle")) && !"l-helga".equals(Json.alsObjekt(o).get("bezug"))) kb = (String) Json.alsObjekt(o).get("bezug");
+        a = rufe(z, "POST", "code.sperren", Json.obj("turnier", tid, "rolle", "leitung", "bezug", kb, "gesperrt", true), leitA);
+        pruefe(a.s == 409, "letzte gültige Leitungskennung lässt sich nicht sperren");
+        rufe(z, "POST", "code.sperren", Json.obj("turnier", tid, "rolle", "leitung", "bezug", "l-helga", "gesperrt", false), leitA);
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", helgaKennung), null);
+        leitB = a.t("token");
+        pruefe(a.s == 200, "entsperrt: Zugang wieder möglich");
 
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000001", "test.notiz", Json.obj("text", "A")))), null, q("turnier", tid), false);
         pruefe(a.s == 401, "Senden ohne Anmeldung");
@@ -176,10 +211,10 @@ public final class KernTest {
         a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(
             Json.obj("rolle", "spieler", "bezug", "sp1", "name", "Anna"), Json.obj("rolle", "spieler", "bezug", "sp2", "name", "Ben"),
             Json.obj("rolle", "helfer", "bezug", "h1", "name", "Hilde"))), leitB);
-        pruefe(a.s == 200 && a.l("codes").size() == 3, "Codes angelegt");
+        pruefe(a.s == 200 && a.l("codes").size() == 5 && "leitung".equals(Json.alsObjekt(a.l("codes").get(0)).get("rolle")), "Kennungen angelegt, Leitung zuerst");
         Map<String, String> codes = new LinkedHashMap<>();
         for (Object o : a.l("codes")) codes.put((String) Json.alsObjekt(o).get("bezug"), (String) Json.alsObjekt(o).get("code"));
-        pruefe(Zentrale.codeGueltig(codes.get("sp1")) && !codes.get("sp1").equals("583920"), "Code gültig, nicht der Leitungscode");
+        pruefe(Zentrale.codeGueltig(codes.get("sp1")) && !codes.get("sp1").equals(kontoKennung) && !codes.get("sp1").equals(tid), "Kennung gültig, nicht Leitung/Turnier");
         a = rufe(z, "GET", "codes", null, null, q("turnier", tid), false);
         pruefe(a.s == 401, "Codes nur für die Leitung");
         a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("sp1")), null);
@@ -199,17 +234,36 @@ public final class KernTest {
         rufe(z, "POST", "code.sperren", Json.obj("turnier", tid, "rolle", "spieler", "bezug", "sp2", "gesperrt", true), leitB);
         a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("sp2")), null);
         pruefe(a.s == 401, "gesperrter Code");
-        a = rufe(z, "POST", "turnier.einstellungen", Json.obj("turnier", tid, "leitungsCode", codes.get("h1")), leitB);
-        pruefe(a.s == 409, "Leitungscode ≠ Spieler-/Helfer-Code");
+        a = rufe(z, "POST", "code.helfer", Json.obj("turnier", tid, "bezug", "sp2", "helfer", true), leitB);
+        pruefe(a.s == 200 && Boolean.TRUE.equals(Json.alsObjekt(a.g("code")).get("helfer")), "Spieler mit Helfer-Recht");
+        rufe(z, "POST", "code.sperren", Json.obj("turnier", tid, "rolle", "spieler", "bezug", "sp2", "gesperrt", false), leitB);
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("sp2")), null);
+        pruefe(a.s == 200 && Boolean.TRUE.equals(a.g("helfer")), "Zugang: Spieler mit Helfer-Recht");
+        String spH = a.t("token");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000004", "spiel.ergebnis", Json.obj()))), spH, q("turnier", tid), false);
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "204"), false);
+        autor = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor"));
+        pruefe(Boolean.TRUE.equals(autor.get("helfer")) && "sp2".equals(autor.get("spieler")), "Autor mit Helfer-Recht");
+        a = rufe(z, "GET", "konto.einstellungen", null, konto);
+        pruefe(a.s == 200 && a.l("klassen").isEmpty(), "Konto-Einstellungen leer");
+        a = rufe(z, "POST", "konto.einstellungen", Json.obj("klassen", liste("A", " B ", "A", "")), konto);
+        pruefe(a.s == 200 && a.l("klassen").size() == 2, "Klassen gespeichert");
         a = rufe(z, "POST", "turnier.einstellungen", Json.obj("turnier", tid, "sicherungTakt", 15L, "sicherungAn", liste("a@example.org")), leitB);
         pruefe(a.s == 200 && Long.valueOf(15).equals(a.g("sicherungTakt")) && Boolean.FALSE.equals(a.g("mail")), "Einstellungen; ohne Online-Konto keine Mail");
         a = rufe(z, "POST", "turnier.sichern", Json.obj("turnier", tid), leitB);
         pruefe(a.s == 503, "Sichern per Mail braucht verbundenes Online-Konto");
 
         System.out.println("Zugriffsschutz");
-        for (int i = 0; i < 10; i++) rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "999999"), null);
-        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "583920"), null);
-        pruefe(a.s == 429, "Bremse nach 10 Fehlversuchen");
+        for (int i = 0; i < 30; i++) rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "99999999"), null);
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "99999998"), null);
+        pruefe(a.s == 429, "falsche Kennungen nach 30 Fehlversuchen gebremst");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", helgaKennung), null);
+        pruefe(a.s == 200, "richtige Kennung trotz Bremse angenommen (Hallen-WLAN)");
+        for (int i = 0; i < 30; i++) rufe(z, "GET", "turnier", null, null, q("id", String.valueOf(20000000 + i)), false);
+        a = rufe(z, "GET", "turnier", null, null, q("id", "20000099"), false);
+        pruefe(a.s == 429, "Durchprobieren von Turnierkennungen wird gebremst");
+        a = rufe(z, "GET", "turnier", null, null, q("id", tid), false);
+        pruefe(a.s == 200, "bekannte Turniere bleiben erreichbar");
         a = rufe(z, "GET", "zentrale.status", null, konto);
         pruefe(a.s == 403, "Zentrale-Status nicht für andere Geräte");
         a = rufe(z, "GET", "zentrale.status", null, null, null, true);
@@ -230,7 +284,7 @@ public final class KernTest {
         System.out.println("Neustart (Daten bleiben)");
         Zentrale z2 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
         a = rufe(z2, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
-        pruefe(a.s == 200 && Long.valueOf(204).equals(a.g("hoechsteSeq")), "Ereignisse nach Neustart");
+        pruefe(a.s == 200 && Long.valueOf(205).equals(a.g("hoechsteSeq")), "Ereignisse nach Neustart");
         a = rufe(z2, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("h1")), null);
         pruefe(a.s == 200 && "helfer".equals(a.t("rolle")), "Codes nach Neustart");
         a = rufe(z2, "GET", "turnier.einstellungen", null, leitB, q("id", tid), false);
@@ -240,7 +294,7 @@ public final class KernTest {
         Files.write(j, "{\"id\":\"kaputt-00".getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
         Zentrale z3 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
         a = rufe(z3, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
-        pruefe(a.s == 200 && Long.valueOf(204).equals(a.g("hoechsteSeq")), "beschädigte letzte Zeile wird übersprungen");
+        pruefe(a.s == 200 && Long.valueOf(205).equals(a.g("hoechsteSeq")), "beschädigte letzte Zeile wird übersprungen");
     }
 
     static void http() throws Exception {
@@ -306,14 +360,16 @@ public final class KernTest {
         String mail = "zentrale-" + zuf + "@example.org";
         Map<String, Object> reg = o.rufe(basis, "registrieren", null, Json.obj("name", "TTC Zentral", "email", mail, "passwort", "zentral-pw1", "website", ""), null);
         String vk = (String) reg.get("token");
-        Map<String, Object> t = o.rufe(basis, "turnier.anlegen", null, Json.obj("name", "Online vorbereitet", "datum", "2026-12-12", "leitungsCode", "583920",
+        Map<String, Object> t = o.rufe(basis, "turnier.anlegen", null, Json.obj("name", "Online vorbereitet", "datum", "2026-12-12",
             "sicherungAn", liste(mail)), vk);
         String tid = (String) Json.alsObjekt(t.get("turnier")).get("id");
         String leit = (String) t.get("token");
         o.rufe(basis, "events", q("turnier", tid), Json.obj("ereignisse", liste(ev("o-0000001", "turnier.angelegt", Json.obj("name", "Online vorbereitet")),
             ev("o-0000002", "test.notiz", Json.obj("text", "online")))), leit);
         Map<String, Object> cs = o.rufe(basis, "codes.anlegen", null, Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "spieler", "bezug", "sp1", "name", "Anna"))), leit);
-        String annaCode = (String) Json.alsObjekt(Json.alsListe(cs.get("codes")).get(0)).get("code");
+        String annaCode = null;
+        for (Object c : Json.alsListe(cs.get("codes"))) if ("sp1".equals(Json.alsObjekt(c).get("bezug"))) annaCode = (String) Json.alsObjekt(c).get("code");
+        String onlineLeitung = (String) Json.alsObjekt(t.get("leitung")).get("code");
         o.rufe(basis, "pool.speichern", null, Json.obj("spieler", liste(Json.obj("id", "op1", "vorname", "Olga", "nachname", "O", "verein", "TTC"))), vk);
 
         Zentrale z = new Zentrale(new Speicher(neuerOrdner()), new PlattformJvm(null), o, () -> System.currentTimeMillis() / 1000);
@@ -339,7 +395,8 @@ public final class KernTest {
         a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", annaCode), null);
         pruefe(a.s == 200 && "sp1".equals(a.t("spieler")), "Spieler-Code von online gilt auf der Zentrale");
         String anna = a.t("token");
-        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "583920", "name", "Halle"), null);
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", onlineLeitung), null);
+        pruefe(a.s == 200 && "leitung".equals(a.t("rolle")) && "TTC Zentral".equals(a.t("name")), "Leitungskennung von online gilt auf der Zentrale");
         String halle = a.t("token");
         rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("h-0000001", "spiel.ergebnis", Json.obj("s", "1")))), anna, q("turnier", tid), false);
         rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("h-0000002", "turnier.abgeschlossen", Json.obj()))), halle, q("turnier", tid), false);
@@ -382,7 +439,7 @@ public final class KernTest {
         a = rufe(z, "POST", "zentrale.uebernehmen", Json.obj("turnier", tid), null, null, true);
         pruefe(a.s == 200 && Long.valueOf(1).equals(a.g("neu")), "erneute Übernahme holt nur Neues");
         rufe(z, "POST", "zentrale.rueckgabe", Json.obj("turnier", tid), null, null, true);
-        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Nur in der Halle", "leitungsCode", "640219"), konto);
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Nur in der Halle"), konto);
         String hid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("n-0000001", "turnier.angelegt", Json.obj("name", "Nur in der Halle")))), a.t("token"), q("turnier", hid), false);
         a = rufe(z, "POST", "zentrale.rueckgabe", Json.obj("turnier", hid), null, null, true);

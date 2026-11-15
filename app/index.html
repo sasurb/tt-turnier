@@ -7,10 +7,7 @@
     <meta name="description" content="Tischtennis-Turniere auf Handy und Tablet anlegen, auslosen und abwickeln." />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <title>Tischtennis-Turnier</title>
-    <script>
-      // Aufruf ohne Schrägstrich am Ende (…/tt-turnier) korrigieren, damit relative Pfade stimmen
-      if (!/\/$|\.html$/.test(location.pathname)) location.replace(location.pathname + '/' + location.search + location.hash);
-    </script>
+    <script src="./pfad.js"></script>
   </head>
   <body>
     <div id="app"></div>

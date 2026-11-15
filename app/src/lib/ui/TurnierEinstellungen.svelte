@@ -1,9 +1,13 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { ART, SICHERUNG_MAX_EMPFAENGER, SICHERUNG_TAKTE, type Sicherung, type SicherungTakt, type TurnierEinstellungen } from '@shared/protokoll';
   import { T } from '../texte';
-  import { api } from '../dienste';
-  import { fehlerText } from '../app.svelte';
-  import { codeAnzeige, codeEingabe, codeGueltig } from '../code';
+  import { api, speicher } from '../dienste';
+  import { app, fehlerText } from '../app.svelte';
+  import { gehe } from '../router.svelte';
+  import { turnierVergessen } from '../einstellungen';
+  import PasswortFeld from './PasswortFeld.svelte';
+  import type { TurnierZustand } from '../engine/zustand';
   import { kannTeilen, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben } from '../sicherung';
   import Hilfe from './Hilfe.svelte';
   import { istZentrale } from '../zentrale.svelte';
@@ -13,36 +17,62 @@
     lokal,
     token,
     einst = $bindable(),
+    z,
     abgeschlossen,
     anzahl,
     eintragen,
     sicherung,
+    protokoll,
   }: {
     id: string;
     lokal: boolean;
     token: string | null;
     einst: TurnierEinstellungen | null;
+    z: TurnierZustand;
     abgeschlossen: boolean;
     anzahl: number;
-    eintragen: (art: string) => Promise<unknown>;
+    eintragen: (art: string, daten?: Record<string, unknown>) => Promise<unknown>;
     sicherung: () => Promise<Sicherung>;
+    protokoll: Snippet;
   } = $props();
 
   let meldung = $state<{ ok: boolean; text: string; wo: string } | null>(null);
   const zeige = (wo: string, ok: boolean, text: string) => (meldung = { wo, ok, text });
 
-  /* Leitungscode */
-  let neuerCode = $state('');
-  async function codeSpeichern(e: SubmitEvent) {
-    e.preventDefault();
-    if (!token) return;
-    if (!codeGueltig(neuerCode)) return zeige('code', false, T.neu.codeUngueltig);
+  /* Veröffentlichung der Stände */
+  async function veroeffentlichung(tabellen: boolean, ko: boolean) {
     try {
-      einst = await api.einstellungenSetzen(token, { turnier: id, leitungsCode: neuerCode });
-      neuerCode = '';
-      zeige('code', true, T.einstellungen.codeGeaendert);
+      await eintragen(ART.turnierDaten, { veroeffentlichung: { tabellen, ko } });
+      zeige('veroeff', true, T.app.gespeichert);
     } catch (x) {
-      zeige('code', false, fehlerText(x, T.app.fehlerAllgemein));
+      zeige('veroeff', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
+  async function allesVeroeffentlichen() {
+    if (!confirm(T.einstellungen.veroeffentlichenFrage)) return;
+    try {
+      await eintragen(ART.turnierDaten, { veroeffentlichung: { tabellen: true, ko: true }, alleKonkurrenzen: true });
+      zeige('veroeff', true, T.einstellungen.veroeffentlicht);
+    } catch (x) {
+      zeige('veroeff', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
+  const abweichend = $derived(Object.values(z.konkurrenzen).filter((k) => k.einst.veroeffentlichung !== null));
+
+  /* Turnier löschen: online über das Konto (mit Passwort), lokal/Zentrale nur vom Gerät */
+  let loeschPw = $state('');
+  const onlineLoeschbar = $derived(!lokal && !istZentrale() && !!app.sitzung);
+  async function loeschen(e: SubmitEvent) {
+    e.preventDefault();
+    if (!confirm(T.einstellungen.loeschenFrage(z.name))) return;
+    try {
+      if (onlineLoeschbar && app.sitzung) await api.turnierLoeschen(app.sitzung.token, id, loeschPw);
+      await speicher.loeschen(id);
+      turnierVergessen(id);
+      app.hinweis = T.einstellungen.geloescht;
+      gehe('');
+    } catch (x) {
+      zeige('loeschen', false, fehlerText(x, T.app.fehlerAllgemein));
     }
   }
 
@@ -132,6 +162,17 @@
 <details class="karte einstellungen" id="einstellungen" open>
   <summary>{T.einstellungen.titel}</summary>
 
+  <section>
+    <h3>{T.einstellungen.veroeffTitel}<Hilfe text={T.einstellungen.veroeffHinweis} /></h3>
+    <p class="leise">{T.einstellungen.veroeffText}</p>
+    <label class="haken"><input type="checkbox" checked={z.veroeffentlichung.tabellen} onchange={(e) => veroeffentlichung(e.currentTarget.checked, z.veroeffentlichung.ko)} /> {T.einstellungen.veroeffTabellen}</label>
+    <label class="haken"><input type="checkbox" checked={z.veroeffentlichung.ko} onchange={(e) => veroeffentlichung(z.veroeffentlichung.tabellen, e.currentTarget.checked)} /> {T.einstellungen.veroeffKo}</label>
+    {#if !z.veroeffentlichung.tabellen || !z.veroeffentlichung.ko || abweichend.length}
+      <button class="zweit" style="margin-top:8px" onclick={allesVeroeffentlichen} data-testid="alles-veroeffentlichen">{T.einstellungen.veroeffentlichen}</button>
+    {/if}
+    {@render hinweis('veroeff')}
+  </section>
+
   {#if !lokal && einst}
     <section>
       <h3>{T.einstellungen.sicherungTitel}</h3>
@@ -185,34 +226,33 @@
     {@render hinweis('datei')}
   </section>
 
-  {#if !lokal && einst}
-    <section>
-      <h3>{T.einstellungen.codeTitel}<Hilfe text={T.einstellungen.codeText} /></h3>
-      {#if einst.leitungsCode}<p class="leise">{T.turnier.code}: <strong class="code-klein">{codeAnzeige(einst.leitungsCode)}</strong></p>{/if}
-      <form class="reihe" onsubmit={codeSpeichern}>
-        <input
-          class="wachsen code-feld"
-          value={neuerCode}
-          oninput={(e) => {
-            neuerCode = codeEingabe(e.currentTarget.value);
-            e.currentTarget.value = neuerCode;
-          }}
-          inputmode="numeric"
-          maxlength="6"
-          autocomplete="off"
-          placeholder="______"
-          aria-label={T.turnier.codeEingabe}
-        />
-        <button type="submit" class="zweit">{T.einstellungen.codeSpeichern}</button>
-      </form>
-      {@render hinweis('code')}
-    </section>
-  {/if}
-
   <section>
     <h3>{T.einstellungen.abschliessenTitel}</h3>
     <p class="leise">{T.einstellungen.abschliessenText}</p>
     <button class="zweit" onclick={abschliessen}>{abgeschlossen ? T.einstellungen.wiedereroeffnen : T.einstellungen.abschliessen}</button>
+  </section>
+
+  {#if lokal || onlineLoeschbar}
+    <section>
+      <h3>{T.einstellungen.loeschenTitel}</h3>
+      <p class="leise">{lokal ? T.einstellungen.loeschenLokal : T.einstellungen.loeschenText}</p>
+      <form onsubmit={loeschen}>
+        {#if onlineLoeschbar}
+          <label for="lpw">{T.einstellungen.loeschenPasswort}</label>
+          <PasswortFeld id="lpw" bind:wert={loeschPw} />
+        {/if}
+        <button type="submit" class="gefahr" style="margin-top:8px" disabled={onlineLoeschbar && !loeschPw} data-testid="turnier-loeschen">{T.einstellungen.loeschenKnopf}</button>
+      </form>
+      {@render hinweis('loeschen')}
+    </section>
+  {/if}
+
+  <section>
+    <details class="protokoll">
+      <summary>{T.einstellungen.protokollTitel} <span class="leise">({anzahl})</span></summary>
+      <p class="leise">{T.einstellungen.protokollText}</p>
+      {@render protokoll()}
+    </details>
   </section>
 </details>
 
@@ -220,5 +260,7 @@
   .einstellungen section { border-top: 1px solid var(--linie); padding-top: 14px; margin-top: 14px; }
   .einstellungen section:first-of-type { border-top: 0; margin-top: 8px; padding-top: 0; }
   .empf + .empf { margin-top: 8px; }
-  .code-klein { font-family: ui-monospace, monospace; letter-spacing: 0.1em; }
+  .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; margin: 8px 0; }
+  .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
+  .protokoll summary { font-size: 1.05rem; font-weight: 700; }
 </style>

@@ -51,7 +51,7 @@ public final class Speicher {
     /** Ein Turnier im Arbeitsspeicher. */
     public static final class Turnier {
         public final String id;
-        /** Kopfdaten (name, datum, angelegt, leitungCode, sicherungAn, …) */
+        /** Kopfdaten (name, datum, angelegt, sicherungAn, …) */
         public final Map<String, Object> kopf;
         public final List<Map<String, Object>> ereignisse = new ArrayList<>();
         public final Map<String, Integer> index = new HashMap<>();

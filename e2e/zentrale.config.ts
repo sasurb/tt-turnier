@@ -7,6 +7,8 @@ import { networkInterfaces } from 'node:os';
  * Aufruf: (cd ../zentrale/kern && ./pruefen.sh) && npx playwright test -c zentrale.config.ts
  */
 const PORT = Number(process.env.ZENTRALE_PORT ?? 8099);
+/** Festes Geheimnis für den Test (die Hülle öffnet die App sonst mit einem zufälligen) */
+export const GEHEIMNIS = '0123456789abcdef0123456789abcdef';
 
 function lanAdresse(): string {
   for (const liste of Object.values(networkInterfaces())) {
@@ -31,11 +33,23 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   projects: [
-    { name: 'zentrale-handy', use: { ...devices['Pixel 7'], browserName: 'chromium' } },
-    { name: 'zentrale-tablet', use: { viewport: { width: 820, height: 1180 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, browserName: 'chromium' } },
+    {
+      name: 'zentrale-handy',
+      use: { ...devices['Pixel 7'], browserName: 'chromium' },
+    },
+    {
+      name: 'zentrale-tablet',
+      use: {
+        viewport: { width: 820, height: 1180 },
+        deviceScaleFactor: 2,
+        isMobile: true,
+        hasTouch: true,
+        browserName: 'chromium',
+      },
+    },
   ],
   webServer: {
-    command: `rm -rf /tmp/tt-e2e-zentrale && (cd ../app && npm run build --silent) && java -jar ../zentrale/kern/build/kern.jar --daten /tmp/tt-e2e-zentrale --app ../app/dist --port ${PORT}`,
+    command: `rm -rf /tmp/tt-e2e-zentrale && (cd ../app && npm run build --silent) && java -jar ../zentrale/kern/build/kern.jar --daten /tmp/tt-e2e-zentrale --app ../app/dist --port ${PORT} --geheimnis ${GEHEIMNIS}`,
     url: `http://127.0.0.1:${PORT}/api/index.php?r=info`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

@@ -7,6 +7,7 @@
   import { ALLE_ANGABEN, spielerName, type Angabe, type SpielerDaten } from '../../engine/modell';
   import { begonnen, type TurnierZustand } from '../../engine/zustand';
   import { imPool, pool, poolLaden, poolSpeichern } from '../../pool.svelte';
+  import { klassenLaden } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
   import SpielerForm from './SpielerForm.svelte';
 
@@ -19,7 +20,10 @@
   let meldenIn = $state('');
   let meldung = $state('');
 
-  onMount(() => void poolLaden());
+  onMount(() => {
+    void poolLaden();
+    void klassenLaden();
+  });
 
   const angabenText: Record<Angabe, string> = { ttr: T.tspieler.ttr, klasse: T.tspieler.klasse, geschlecht: T.tspieler.geschlecht, jahrgang: T.tspieler.jahrgang };
   const offeneKonkurrenzen = $derived(z.konkurrenzReihe.filter((id) => !begonnen(z.konkurrenzen[id]!)));

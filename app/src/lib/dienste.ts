@@ -1,12 +1,13 @@
 import type { InfoAntwort } from '@shared/protokoll';
 import { PROTOKOLL_VERSION } from '@shared/protokoll';
 import { Api } from './engine/api';
+import { zentraleGeheimnis } from './geheimnis';
 import { SpeicherIndexedDb, SpeicherImArbeitsspeicher, type EreignisSpeicher } from './engine/speicher';
 
 /** Adresse der Schnittstelle; Standard: gleicher Server, Ordner api/. */
 export const API_BASIS: string = import.meta.env.VITE_API ?? './api/index.php';
 
-export const api = new Api(API_BASIS);
+export const api = new Api(API_BASIS, undefined, undefined, zentraleGeheimnis);
 
 function speicherErzeugen(): EreignisSpeicher {
   try {
@@ -19,11 +20,7 @@ function speicherErzeugen(): EreignisSpeicher {
 
 export const speicher = speicherErzeugen();
 
-export type ServerZustand =
-  | { art: 'pruefe' }
-  | { art: 'keiner' }
-  | { art: 'bereit'; info: InfoAntwort }
-  | { art: 'nicht_eingerichtet'; info: InfoAntwort };
+export type ServerZustand = { art: 'pruefe' } | { art: 'keiner' } | { art: 'bereit'; info: InfoAntwort } | { art: 'nicht_eingerichtet'; info: InfoAntwort };
 
 let pruefung: Promise<ServerZustand> | null = null;
 

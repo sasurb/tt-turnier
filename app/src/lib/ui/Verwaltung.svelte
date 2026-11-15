@@ -104,7 +104,7 @@
         {#each turniere as t (t.id)}
           <li class="reihe">
             <div class="wachsen"><strong>{t.name}</strong><br /><span class="leise">{t.veranstalter} · {datumText(t.datum)}</span></div>
-            <button class="zweit klein" onclick={() => kontoTurnierOeffnen(t, false)}>{T.admin.oeffnen}</button>
+            <button class="zweit klein" onclick={() => kontoTurnierOeffnen(t)}>{T.admin.oeffnen}</button>
           </li>
         {/each}
       </ul>

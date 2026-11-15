@@ -16,10 +16,11 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
   const geraet = info.project.name;
 
   // Gerät der Zentrale: ohne Anmeldung als „Zentrale“ angemeldet, Karte zur Zentrale-Seite
-  await page.goto('./');
+  // Das Gerät der Zentrale öffnet die App mit dem Geheimnis der Hülle
+  await page.goto('./?zentrale=0123456789abcdef0123456789abcdef');
   await expect(page.getByTestId('zentrale-karte')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Konto-Menü' })).toContainText('Zentrale');
-  await expect(page.getByRole('heading', { name: 'Mit mehreren Geräten eintragen?' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Turnierleitung' })).toHaveCount(0);
   await bild(page, '01-start-zentrale');
 
   await page.getByTestId('zentrale-karte').click();
@@ -41,7 +42,10 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
   await expect(page.getByRole('heading', { name: `Hallencup ${geraet}` })).toBeVisible();
   await expect(page.getByText('Verbunden')).toBeVisible();
 
-  for (const [v, n] of [['Anna', 'Alpha'], ['Ben', 'Beta']] as const) {
+  for (const [v, n] of [
+    ['Anna', 'Alpha'],
+    ['Ben', 'Beta'],
+  ] as const) {
     if (v === 'Anna') await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
     await page.getByLabel('Vorname').fill(v);
     await page.getByLabel('Nachname').fill(n);
@@ -54,32 +58,54 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
   await page.getByLabel(/Jeder gegen jeden/).check();
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
   await page.getByRole('button', { name: 'Alle melden' }).click();
+  await expect(page.getByRole('heading', { name: 'Meldungen (2)' })).toBeVisible();
   await page.getByRole('button', { name: 'Auslosen' }).click();
   page.once('dialog', (d) => void d.accept());
   await page.getByTestId('starten').click();
   await expect(page.getByTestId('konkurrenz').getByText('Gruppenphase')).toBeVisible();
 
-  // Zugänge: Links zeigen auf die Adresse im WLAN, nicht auf 127.0.0.1
+  // Zugänge: Turnierkennung 8 Ziffern, Links zeigen auf die Adresse im WLAN, nicht auf 127.0.0.1
   await page.getByRole('link', { name: 'Zugänge' }).click();
+  expect((await page.getByTestId('turnierkennung').innerText()).replace(/\s/g, '')).toMatch(/^\d{8}$/);
   const link = await page.getByLabel('Link').inputValue();
   expect(link.startsWith(lan)).toBe(true);
-  const annaCode = (await page.locator('li', { hasText: 'Anna Alpha' }).getByTestId('code').innerText()).replace(/\s/g, '');
+  // Die Zentrale hat für die Leitung eine eigene Kennung
+  await expect(page.getByTestId('zugaenge-leitung').getByTestId('code')).toHaveCount(1);
+  const spielerZugaenge = page.getByTestId('zugaenge-spieler');
+  await spielerZugaenge.locator('summary').click();
+  const annaCode = (await spielerZugaenge.locator('li', { hasText: 'Anna Alpha' }).getByTestId('code').innerText()).replace(/\s/g, '');
+  expect(annaCode).toMatch(/^\d{8}$/);
   await bild(page, '03-zugaenge');
 
-  // Anderes Gerät im WLAN: kein Konto-Angebot, persönlicher Link meldet Anna an
+  // Anderes Gerät im WLAN: kein Konto-Angebot, kein „Neues Turnier“ – nur beitreten; persönlicher Link meldet Anna an
   const u = info.project.use;
-  const zweites = await browser.newContext({ viewport: u.viewport, isMobile: u.isMobile, hasTouch: u.hasTouch, deviceScaleFactor: u.deviceScaleFactor, userAgent: u.userAgent, locale: 'de-DE' });
+  const zweites = await browser.newContext({
+    viewport: u.viewport,
+    isMobile: u.isMobile,
+    hasTouch: u.hasTouch,
+    deviceScaleFactor: u.deviceScaleFactor,
+    userAgent: u.userAgent,
+    locale: 'de-DE',
+  });
   const p2 = await zweites.newPage();
   await p2.goto(lan);
-  await expect(p2.getByTestId('neues-turnier')).toBeVisible();
+  await expect(p2.getByTestId('neues-turnier')).toHaveCount(0);
+  await expect(p2.getByTestId('beitreten')).toBeVisible();
   await expect(p2.getByTestId('zentrale-karte')).toHaveCount(0);
   await expect(p2.getByRole('link', { name: 'Anmelden' })).toHaveCount(0);
   await p2.goto(link.replace('#/t/', '#/c/') + '/' + annaCode);
   await expect(p2.getByText(/Willkommen, Anna Alpha/)).toBeVisible();
   await p2.getByTestId('spiel').first().click();
   const dialog = p2.getByRole('dialog');
-  for (const [i, punkte] of [[1, '5'], [2, '7'], [3, '9']] as const) {
-    await dialog.getByTestId(`satz-${i}`).getByRole('radio', { name: /Anna Alpha/ }).click();
+  for (const [i, punkte] of [
+    [1, '5'],
+    [2, '7'],
+    [3, '9'],
+  ] as const) {
+    await dialog
+      .getByTestId(`satz-${i}`)
+      .getByRole('radio', { name: /Anna Alpha/ })
+      .click();
     await dialog.getByLabel(`Punkte des Verlierers Satz ${i}`).fill(punkte);
   }
   await dialog.getByRole('button', { name: 'Ergebnis speichern' }).click();
@@ -90,7 +116,7 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
   // Zentrale sieht das Ergebnis und das verbundene Gerät
   await page.getByRole('link', { name: 'Tabellen' }).click();
   await expect(page.getByTestId('tabelle-A').locator('tbody tr').first()).toContainText('Anna Alpha', { timeout: 15_000 });
-  await page.goto('./#/zentrale');
+  await page.goto('./?zentrale=0123456789abcdef0123456789abcdef#/zentrale');
   await expect(page.getByText(/1 anderes Gerät verbunden|andere Geräte verbunden/)).toBeVisible();
   await expect(page.getByText(`Hallencup ${geraet}`)).toBeVisible();
 });

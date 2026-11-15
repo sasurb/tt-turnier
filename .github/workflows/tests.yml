@@ -154,9 +154,9 @@ jobs:
       - name: App-Abgleich über die Zentrale
         working-directory: app
         run: |
-          java -jar ../zentrale/kern/build/kern.jar --daten /tmp/zi --app dist --port 8098 > /tmp/zentrale.log 2>&1 &
+          java -jar ../zentrale/kern/build/kern.jar --daten /tmp/zi --app dist --port 8098 --geheimnis 0123456789abcdef0123456789abcdef > /tmp/zentrale.log 2>&1 &
           for i in $(seq 1 50); do curl -sf "http://127.0.0.1:8098/api/index.php?r=info" > /dev/null && break; sleep 0.2; done
-          TT_ZENTRALE=http://127.0.0.1:8098/api/index.php npx vitest run zentrale.integration
+          TT_ZENTRALE=http://127.0.0.1:8098/api/index.php TT_ZENTRALE_GEHEIMNIS=0123456789abcdef0123456789abcdef npx vitest run zentrale.integration
       - run: npm ci && npx playwright install --with-deps chromium
         working-directory: e2e
       - name: Oberfläche über die Zentrale (Gerät der Zentrale + Gerät im WLAN)

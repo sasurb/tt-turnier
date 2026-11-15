@@ -139,7 +139,8 @@ public final class HauptActivity extends Activity {
         if (p > 0) {
             if (!geladen) {
                 geladen = true;
-                web.loadUrl("http://127.0.0.1:" + p + "/");
+                String adresse = ZentraleDienst.startAdresse;
+                web.loadUrl(adresse != null ? adresse : "http://127.0.0.1:" + p + "/");
             }
         } else if (p < 0) {
             hinweis.setText("Die Zentrale konnte nicht starten:\n" + ZentraleDienst.fehler);

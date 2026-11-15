@@ -37,6 +37,8 @@ public final class ZentraleDienst extends Service {
 
     /** Port des laufenden Servers, 0 = startet noch, -1 = Fehler */
     static volatile int port = 0;
+    /** Adresse mit Geheimnis, mit der die WebView die App öffnet (nur diese App kennt sie) */
+    static volatile String startAdresse = null;
     static volatile String fehler = null;
 
     private HttpServer server;
@@ -81,6 +83,7 @@ public final class ZentraleDienst extends Service {
                 server = new HttpServer(zentrale);
                 int p = server.starten(null, PORT);
                 zentrale.setzePort(p);
+                startAdresse = zentrale.startAdresse();
                 port = p;
                 takt = Executors.newSingleThreadScheduledExecutor();
                 takt.scheduleWithFixedDelay(() -> zentrale.takt(), 5, 15, TimeUnit.SECONDS);

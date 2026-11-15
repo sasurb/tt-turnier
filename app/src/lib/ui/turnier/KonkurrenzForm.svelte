@@ -1,6 +1,7 @@
 <script lang="ts">
   import { T } from '../../texte';
   import { standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
+  import { klassen as klassenStore } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
   import WertungInfo from './WertungInfo.svelte';
 
@@ -25,6 +26,10 @@
   let gesetzte = $state(start.gesetzte === null ? '' : String(start.gesetzte));
   // svelte-ignore state_referenced_locally
   let klassen = $state(start.zulassung.klassen.join(', '));
+  // svelte-ignore state_referenced_locally
+  let ttrGrenzen = $state(start.ttrGrenzen.join(', '));
+  // svelte-ignore state_referenced_locally
+  let veroeff = $state<'turnier' | 'offen' | 'verdeckt'>(start.veroeffentlichung === null ? 'turnier' : start.veroeffentlichung.tabellen && start.veroeffentlichung.ko ? 'offen' : 'verdeckt');
   const zahl = (t: string) => (t === '' ? null : Number.isFinite(parseInt(t, 10)) ? parseInt(t, 10) : null);
   // svelte-ignore state_referenced_locally
   let zl = $state({
@@ -45,6 +50,8 @@
       ...$state.snapshot(e),
       name: e.name.trim(),
       gesetzte: zahl(gesetzte),
+      ttrGrenzen: [...new Set(ttrGrenzen.split(',').map((t) => parseInt(t.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 4000))].sort((a, b) => a - b),
+      veroeffentlichung: veroeff === 'turnier' ? null : veroeff === 'offen' ? { tabellen: true, ko: true } : { tabellen: false, ko: false },
       zulassung: {
         ttrMin: zahl(zl.ttrMin),
         ttrMax: zahl(zl.ttrMax),
@@ -126,6 +133,18 @@
     <label class="haken"><input type="checkbox" bind:checked={e.platz3} /> {T.konk.platz3}</label>
   {/if}
 
+  {#if e.modus === 'gruppen_ko'}
+    <h3>{T.konk.trennungTitel}<Hilfe text={T.konk.trennungHilfe} /></h3>
+    <label for="kt-{id}">{T.konk.trennung}</label>
+    <select id="kt-{id}" bind:value={e.klassenTrennung} disabled={gestartet}>
+      {#each ['keine', 'klasse', 'ttr'] as w (w)}<option value={w}>{T.konk.trennungWahl[w]}</option>{/each}
+    </select>
+    {#if e.klassenTrennung === 'ttr'}
+      <div class="label-zeile"><label for="tg-{id}">{T.konk.ttrGrenzen}</label><Hilfe text={T.konk.ttrGrenzenHilfe} /></div>
+      <input id="tg-{id}" bind:value={ttrGrenzen} inputmode="numeric" placeholder="1200, 1500" disabled={gestartet} />
+    {/if}
+  {/if}
+
   <details class="weitere">
     <summary>{T.konk.weitere}</summary>
     <div class="raster">
@@ -151,7 +170,8 @@
       <div><label for="j2-{id}">{T.konk.jahrgangBis}</label><input id="j2-{id}" bind:value={zl.jahrgangBis} inputmode="numeric" /></div>
     </div>
     <label for="kl-{id}">{T.konk.klassen}</label>
-    <input id="kl-{id}" bind:value={klassen} placeholder="Anfänger, Fortgeschritten" />
+    <input id="kl-{id}" bind:value={klassen} placeholder={klassenStore.liste.length ? klassenStore.liste.slice(0, 3).join(', ') : 'Anfänger, Fortgeschritten'} list="klassen-vorschlag" />
+    <datalist id="klassen-vorschlag">{#each klassenStore.liste as k (k)}<option value={k}></option>{/each}</datalist>
     <fieldset>
       <legend>{T.konk.geschlecht}</legend>
       <div class="reihe">
@@ -160,6 +180,11 @@
         {/each}
       </div>
     </fieldset>
+
+    <h3>{T.konk.veroeffTitel}<Hilfe text={T.einstellungen.veroeffText} /></h3>
+    <select bind:value={veroeff} aria-label={T.konk.veroeffTitel}>
+      {#each ['turnier', 'offen', 'verdeckt'] as w (w)}<option value={w}>{T.konk.veroeffWahl[w]}</option>{/each}
+    </select>
   </details>
 
   {#if gestartet}<p class="leise">{T.konk.festNachStart}</p>{/if}

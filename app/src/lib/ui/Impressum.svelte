@@ -21,7 +21,7 @@
   <p class="leise">
     Private, nicht-kommerzielle Turnier-App ohne Werbung. Quellcode unter MIT-Lizenz:
     <a href="https://github.com/Sasurb/tt-turnier">github.com/Sasurb/tt-turnier</a>.
-    Für Inhalte, die Veranstalter in ihre Turniere eintragen, sind die jeweiligen Veranstalter verantwortlich.
+    Für Inhalte, die eine Turnierleitung in ihre Turniere einträgt, ist die jeweilige Turnierleitung verantwortlich.
   </p>
   <p><a href={linkZu('datenschutz')}>Datenschutzhinweis</a></p>
 </section>

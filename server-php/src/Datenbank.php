@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 4;
+    public const SCHEMA_VERSION = 5;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -93,7 +93,40 @@ final class Datenbank
             }
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['4', 'schema']);
         }
-        // Spätere Versionen: if ($version < 5) { … UPDATE meta … }
+        if ($version < 5) {
+            foreach ($this->schemaV5() as $sql) {
+                try {
+                    $this->pdo->exec($sql);
+                } catch (\PDOException $e) {
+                    if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                        throw $e;
+                    }
+                }
+            }
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['5', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 6) { … UPDATE meta … }
+    }
+
+    /**
+     * Version 5 (Paket 4b): 8-stellige Kennungen, Leitungskennungen je Person (Tabelle codes, Rolle „leitung“),
+     * Helfer-Recht an Spielerkennungen, Einstellungen je Konto (Leistungsklassen).
+     * Alte 6-stellige Codes und Anmeldungen damit werden gelöscht (Testphase); die App erzeugt neue.
+     * @return list<string>
+     */
+    private function schemaV5(): array
+    {
+        return [
+            'ALTER TABLE codes ADD COLUMN helfer INTEGER NOT NULL DEFAULT 0',
+            'ALTER TABLE sitzungen ADD COLUMN helfer INTEGER NOT NULL DEFAULT 0',
+            'ALTER TABLE ereignisse ADD COLUMN autor_helfer INTEGER NOT NULL DEFAULT 0',
+            'ALTER TABLE konten ADD COLUMN daten TEXT NULL',
+            'DELETE FROM codes',
+            'DELETE FROM sitzungen WHERE konto_id IS NULL',
+            $this->treiber === 'sqlite' ? 'DROP INDEX IF EXISTS idx_codes_code' : 'DROP INDEX idx_codes_code ON codes',
+            'CREATE UNIQUE INDEX idx_codes_code ON codes (turnier_id, code)',
+            'UPDATE turniere SET leitung_code = NULL',
+        ];
     }
 
     /**
@@ -223,7 +256,7 @@ final class Datenbank
                 angelegt BIGINT NOT NULL,
                 PRIMARY KEY (turnier_id, rolle, bezug)
             )$nach",
-            'CREATE INDEX idx_codes_code ON codes (turnier_id, code)',
+            'CREATE UNIQUE INDEX idx_codes_code ON codes (turnier_id, code)',
             "CREATE TABLE pool (
                 konto_id BIGINT NOT NULL,
                 id VARCHAR(40) NOT NULL,

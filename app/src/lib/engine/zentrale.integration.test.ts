@@ -15,17 +15,23 @@ const basis = env.TT_ZENTRALE;
 
 describe.skipIf(!basis)('Integration mit der Zentrale', () => {
   it('Gerät der Zentrale, Helferin und Spieler gleichen ab', async () => {
-    const api = new Api(basis!);
+    const geheimnis = env.TT_ZENTRALE_GEHEIMNIS ?? null;
+    const api = new Api(basis!, undefined, undefined, () => geheimnis);
     const info = await api.info();
     expect(info.protokoll).toBe(1);
     expect(info.zentrale).toBeTruthy();
     expect(info.registrierung).toBe(false);
 
     const konto = await api.zentraleAnmelden();
-    const t = await api.turnierAnlegen(konto.token, { name: 'Hallenturnier', datum: '2026-12-01', leitungsCode: '583920' });
-    const zugangB = await api.turnierZugang(t.turnier.id, '583920', 'Helferin B');
+    const t = await api.turnierAnlegen(konto.token, {
+      name: 'Hallenturnier',
+      datum: '2026-12-01',
+    });
+    expect(t.turnier.id).toMatch(/^[0-9]{8}$/);
+    const leitungB = await api.codesAnlegen(t.token, t.turnier.id, [{ rolle: 'leitung', bezug: 'l-b', name: 'Helferin B' }]);
+    const zugangB = await api.turnierZugang(t.turnier.id, leitungB.codes.find((c) => c.bezug === 'l-b')!.code);
     const codes = await api.codesAnlegen(t.token, t.turnier.id, [{ rolle: 'spieler', bezug: 'sp1', name: 'Anna' }]);
-    const anna = await api.turnierZugang(t.turnier.id, codes.codes[0]!.code);
+    const anna = await api.turnierZugang(t.turnier.id, codes.codes.find((c) => c.bezug === 'sp1')!.code);
     expect(anna.rolle).toBe('spieler');
     expect(anna.spieler).toBe('sp1');
 
@@ -56,7 +62,17 @@ describe.skipIf(!basis)('Integration mit der Zentrale', () => {
     expect(await texte(zuschauer)).toEqual(await texte(a));
 
     // Spieler dürfen nur Ergebnisse senden
-    await expect(api.senden(t.turnier.id, anna.token, [{ id: 'x-12345678', art: ART.testNotiz, daten: {}, zeit: new Date().toISOString(), geraet: 'geraet-s' }])).rejects.toBeInstanceOf(ApiFehler);
+    await expect(
+      api.senden(t.turnier.id, anna.token, [
+        {
+          id: 'x-12345678',
+          art: ART.testNotiz,
+          daten: {},
+          zeit: new Date().toISOString(),
+          geraet: 'geraet-s',
+        },
+      ]),
+    ).rejects.toBeInstanceOf(ApiFehler);
 
     // Status der Zentrale (nur vom Gerät selbst)
     const st = await api.zentraleStatus();

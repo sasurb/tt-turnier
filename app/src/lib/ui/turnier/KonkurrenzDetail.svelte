@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ART, type PoolSpieler } from '@shared/protokoll';
   import { T } from '../../texte';
-  import { auslosungErstellen, endrundeErstellen, gruppenZahlVorschlag, name, qualifikanten, zulassungsHinweise } from '../../engine/abfragen';
+  import { auslosungErstellen, endrundeErstellen, gruppenKlassen, gruppenZahlVorschlag, klassenDerMeldungen, name, qualifikanten, zulassungsHinweise } from '../../engine/abfragen';
   import { setzreihe } from '../../engine/auslosung';
   import { spielerName, type KonkurrenzEinstellungen, type KonkurrenzZustand } from '../../engine/modell';
   import { neuerZufallswert } from '../../engine/zufall';
@@ -32,6 +32,8 @@
   const quali = $derived(k.einst.modus === 'gruppen_ko' && k.gestartet.gruppen && !k.gestartet.ko ? qualifikanten(k) : null);
   const aktive = $derived(k.meldungen.filter((id) => !zurueckgezogen(k).includes(id)));
   const hatErgebnisse = $derived(Object.values(k.spiele).some((s) => s.eintrag));
+  const klassenTrennung = $derived(k.einst.modus === 'gruppen_ko' && k.einst.klassenTrennung !== 'keine');
+  const klassenListe = $derived(klassenTrennung ? klassenDerMeldungen(z, k) : []);
 
   async function los(art: string, d: Record<string, unknown>) {
     fehler = '';
@@ -165,7 +167,9 @@
     {#if n >= 2}
       <h3>{T.konk.auslosung}</h3>
       <p class="leise">{T.konk.auslosungText}</p>
-      {#if k.einst.modus === 'gruppen_ko'}
+      {#if klassenTrennung}
+        <p class="leise">{T.konk.trennungWahl[k.einst.klassenTrennung]}: {klassenListe.map((kl) => `${kl.name} (${kl.mitglieder.length})`).join(' · ')}</p>
+      {:else if k.einst.modus === 'gruppen_ko'}
         <label for="gz-{k.id}">{T.konk.anzahlGruppen}</label>
         <select id="gz-{k.id}" value={gZahl} onchange={(e) => (gruppenZahl = Number(e.currentTarget.value))}>
           {#each Array.from({ length: Math.max(1, Math.floor(n / 2)) }, (_, i) => i + 1) as g (g)}
@@ -179,7 +183,7 @@
       {#if (k.auslosungGruppen || k.auslosungKo) && !aktuell}<p class="meldung info">{T.konk.veraltet}</p>{/if}
       {#if aktuell}
         {#if phase1 === 'gruppen'}
-          <AuslosungVorschau {z} gruppen={k.auslosungGruppen!.gruppen} tauschen={tauschenGruppen} />
+          <AuslosungVorschau {z} gruppen={k.auslosungGruppen!.gruppen} klassen={klassenTrennung ? gruppenKlassen(z, k, k.auslosungGruppen!.gruppen) : null} tauschen={tauschenGruppen} />
         {:else}
           <AuslosungVorschau {z} plaetze={k.auslosungKo!.plaetze} tauschen={tauschenKo} />
         {/if}

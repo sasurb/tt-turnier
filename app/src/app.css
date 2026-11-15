@@ -176,7 +176,7 @@ legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
 .wahl input { width: 22px; height: 22px; min-height: 0; margin: 2px 0 0; flex: none; accent-color: var(--blau); }
 .wahl > span { display: flex; flex-direction: column; gap: 2px; }
 
-/* Eingabe des 6-stelligen Leitungscodes */
+/* Einzeilige Code-Eingaben (Einrichtungscode u. ä.) */
 .code-feld, input.code { font-family: ui-monospace, monospace; font-size: 1.35rem; letter-spacing: 0.25em; }
 
 textarea { min-height: 120px; line-height: 1.4; }

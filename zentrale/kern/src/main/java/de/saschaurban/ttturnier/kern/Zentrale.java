@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.5.0";
+    public static final String VERSION = "0.6.0";
     public static final int PROTOKOLL = 1;
     public static final String ONLINE_STANDARD = "https://saschaurban.de/tt-turnier/api/index.php";
 
@@ -54,7 +54,18 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     private static final Pattern P_ART = Pattern.compile("^[a-z][a-z0-9_.]{1,63}$");
     private static final Pattern P_GERAET = Pattern.compile("^[A-Za-z0-9-]{4,64}$");
     private static final Pattern P_ZEIT = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?)?(Z|[+-]\\d{2}:?\\d{2})?$");
-    private static final Pattern P_TURNIER_ID = Pattern.compile("^[a-z0-9]{6,16}$");
+    /** Turnierkennung: 8 Ziffern (ab 0.6); ältere Kennungen (10 Zeichen) bleiben gültig */
+    private static final Pattern P_TURNIER_ID = Pattern.compile("^([0-9]{8}|[a-z0-9]{6,16})$");
+    private static final List<String> CODE_ROLLEN = Arrays.asList("leitung", "helfer", "spieler");
+    private static final int MAX_KLASSEN = 40;
+    /** Unbekannte Turnierkennungen je Anschluss und Viertelstunde, bevor gebremst wird */
+    private static final int SUCHE_MAX = 30;
+    /** Fehlversuche je Turnier (alle Anschlüsse) in 15 Minuten; danach nur noch richtige Kennungen */
+    private static final int ZUGANG_TURNIER_MAX = 200;
+    /** ab so vielen Fehlversuchen je Anschluss und Turnier wird verzögert statt ausgesperrt */
+    private static final int ZUGANG_VERZOEGERN_AB = 5;
+    /** Wartezeiten abschaltbar (Tests) */
+    static volatile boolean ohneWarten = false;
     private static final Pattern P_DATUM = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
     private static final Pattern P_BEZUG = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
     private static final Pattern P_POOL_ID = Pattern.compile("^[A-Za-z0-9_-]{1,40}$");
@@ -76,6 +87,13 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     private final Map<String, Long> geraete = new HashMap<>();
     private int gemeldeteGeraete = -1;
     private volatile int port = 0;
+    /**
+     * Geheimnis für Aufrufe vom Gerät selbst: Die Hülle (Android/PC) öffnet die App mit
+     * …/?zentrale=<geheimnis>; die App schickt es als Kopfzeile X-TT-Zentrale mit. Ohne dieses Geheimnis
+     * gilt auch eine Loopback-Verbindung nicht als „Gerät selbst“ (sonst könnte eine Webseite im Browser
+     * des Handys die Zentrale fernsteuern).
+     */
+    private volatile String geraetGeheimnis;
     /** Nur ein Versand der Warteschlange gleichzeitig */
     private final Object versandSperre = new Object();
 
@@ -86,6 +104,11 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         this.uhr = uhrSekunden;
         this.turniere = speicher.ladeTurniere();
         this.einst = speicher.ladeObjekt("zentrale.json");
+        byte[] g = new byte[16];
+        zufall.nextBytes(g);
+        StringBuilder gh = new StringBuilder();
+        for (byte b : g) gh.append(String.format("%02x", b));
+        this.geraetGeheimnis = gh.toString();
         if (!(einst.get("id") instanceof String)) {
             einst.put("id", "z-" + zufallsText(10));
             einst.put("angelegt", iso(jetzt()));
@@ -114,6 +137,22 @@ public final class Zentrale implements HttpServer.Bearbeiter {
 
     public void setzePort(int port) {
         this.port = port;
+    }
+
+    /** Adresse, mit der die Hülle die App am Gerät selbst öffnet (enthält das Geheimnis). */
+    public String startAdresse() {
+        return "http://127.0.0.1:" + port + "/?zentrale=" + geraetGeheimnis;
+    }
+
+    /** Das Geheimnis dieses Laufs (für Tests und die Hülle) */
+    public String geraetGeheimnis() {
+        return geraetGeheimnis;
+    }
+
+    /** Festes Geheimnis setzen – nur für Tests (Start.java --geheimnis); 32 Hex-Zeichen. */
+    public void setzeGeraetGeheimnis(String g) {
+        if (g == null || !g.matches("^[0-9a-f]{32}$")) throw new IllegalArgumentException("Geheimnis: 32 Hex-Zeichen");
+        this.geraetGeheimnis = g;
     }
 
     /* ======================================================================
@@ -150,8 +189,19 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         }
         HttpServer.Antwort a = new HttpServer.Antwort(200, dateiTyp(p), inhalt);
         a.kopf.put("Cache-Control", p.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache");
+        if (p.endsWith(".html")) {
+            // Gleiche Sicherheitsregeln wie public/.htaccess beim Online-Server (scripts/paket-bauen.sh)
+            a.kopf.put("Content-Security-Policy", CSP);
+            a.kopf.put("X-Frame-Options", "DENY");
+            a.kopf.put("Referrer-Policy", "strict-origin-when-cross-origin");
+            a.kopf.put("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+        }
         return a;
     }
+
+    /** Inhaltssicherheitsregel der App; data: für QR-Codes und Icons, blob: für Downloads */
+    static final String CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+        + "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
     static String dateiTyp(String p) {
         String e = p.contains(".") ? p.substring(p.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";
@@ -228,9 +278,9 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             case "POST logout": return logout(a);
             case "GET turniere": return turniereListe(a);
             case "POST turnier.anlegen": return turnierAnlegen(a);
-            case "GET turnier": return Json.obj("turnier", turnierAusgabe(turnierLaden(a.q("id"))));
+            case "GET turnier": return turnier(a);
             case "POST turnier.zugang": return turnierZugang(a);
-            case "GET turnier.einstellungen": return einstellungen(turnierLaden(a.q("id")), a);
+            case "GET turnier.einstellungen": return einstellungen(turnierLaden(a.q("id"), a), a);
             case "POST turnier.einstellungen": return einstellungenSetzen(a);
             case "POST turnier.sichern": return sichernJetzt(a);
             case "GET codes": return codes(a);
@@ -238,6 +288,9 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             case "POST code.neu": return codeNeu(a);
             case "POST code.sperren": return codeSperren(a);
             case "POST code.entfernen": return codeEntfernen(a);
+            case "POST code.helfer": return codeHelfer(a);
+            case "GET konto.einstellungen": return kontoEinstellungen(a);
+            case "POST konto.einstellungen": return kontoEinstellungenSetzen(a);
             case "GET pool": return poolListe(a);
             case "POST pool.speichern": return poolSpeichern(a);
             case "POST pool.loeschen": return poolLoeschen(a);
@@ -341,25 +394,17 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         return e.length() <= 190 && P_EMAIL.matcher(e).matches() ? e : null;
     }
 
+    /** Kennung: 8 Ziffern, nicht alle gleich, keine Ziffernfolge */
     static boolean codeGueltig(String code) {
-        if (code == null || !code.matches("^[0-9]{6}$")) return false;
+        if (code == null || !code.matches("^[0-9]{8}$")) return false;
         boolean gleich = true, auf = true, ab = true;
-        for (int i = 1; i < 6; i++) {
+        for (int i = 1; i < 8; i++) {
             int v = code.charAt(i - 1) - '0', c = code.charAt(i) - '0';
             gleich = gleich && c == v;
             auf = auf && c == (v + 1) % 10;
             ab = ab && c == (v + 9) % 10;
         }
         return !gleich && !auf && !ab;
-    }
-
-    private static String leitungsCodeFeld(Anf a) {
-        String c = Json.alsText(a.rumpf.get("leitungsCode"));
-        c = c == null ? "" : c.trim();
-        if (!codeGueltig(c)) {
-            throw new ApiFehler("ungueltig", "Der Leitungscode muss aus 6 Ziffern bestehen und darf nicht zu einfach sein (z. B. nicht 123456).");
-        }
-        return c;
     }
 
     private static List<Object> empfaengerFeld(Object o) {
@@ -430,6 +475,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     /* ---------------- Sitzungen ---------------- */
 
     private String neuesToken(boolean konto, String turnier, String rolle, String name, String bezug) {
+        return neuesToken(konto, turnier, rolle, name, bezug, false);
+    }
+
+    private String neuesToken(boolean konto, String turnier, String rolle, String name, String bezug, boolean helfer) {
         byte[] b = new byte[32];
         zufall.nextBytes(b);
         StringBuilder t = new StringBuilder();
@@ -437,7 +486,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         String token = t.toString();
         synchronized (this) {
             sitzungen.put(sha256(token), Json.obj(
-                "konto", konto, "turnier", turnier, "rolle", rolle, "name", name, "bezug", bezug,
+                "konto", konto, "turnier", turnier, "rolle", rolle, "name", name, "bezug", bezug, "helfer", helfer,
                 "ablauf", jetzt() + SITZUNG_DAUER));
             sitzungenSpeichern();
         }
@@ -468,8 +517,28 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         return s;
     }
 
-    private static void selbst(Anf a) {
+    /**
+     * Nur vom Gerät selbst: Loopback-Verbindung, passendes Geheimnis und – falls ein Browser einen
+     * Origin mitschickt – nur der eigene (127.0.0.1/localhost mit unserem Port).
+     */
+    private void selbst(Anf a) {
         if (!a.http.vomGeraetSelbst) throw new ApiFehler("keine_berechtigung", "Nur am Gerät der Zentrale möglich.");
+        String g = a.http.kopf.get("x-tt-zentrale");
+        if (g == null || !MessageDigest.isEqual(g.getBytes(StandardCharsets.UTF_8), geraetGeheimnis.getBytes(StandardCharsets.UTF_8))) {
+            throw new ApiFehler("keine_berechtigung", "Nur aus der Zentrale-App möglich.");
+        }
+        String origin = a.http.kopf.get("origin");
+        if (origin != null && !eigeneHerkunft(origin)) throw new ApiFehler("keine_berechtigung", "Fremde Herkunft.");
+        String referer = a.http.kopf.get("referer");
+        if (referer != null && !eigeneHerkunft(referer)) throw new ApiFehler("keine_berechtigung", "Fremde Herkunft.");
+    }
+
+    private boolean eigeneHerkunft(String url) {
+        String u = url.toLowerCase(Locale.ROOT);
+        for (String h : new String[]{"http://127.0.0.1:" + port, "http://localhost:" + port}) {
+            if (u.equals(h) || u.startsWith(h + "/")) return true;
+        }
+        return false;
     }
 
     private synchronized void sitzungenEntfernen(String turnier, String rolle, String bezug) {
@@ -520,10 +589,47 @@ public final class Zentrale implements HttpServer.Bearbeiter {
 
     /* ---------------- Turniere ---------------- */
 
-    private synchronized Speicher.Turnier turnierLaden(String id) {
-        Speicher.Turnier t = id == null || !P_TURNIER_ID.matcher(id).matches() ? null : turniere.get(id);
-        if (t == null) throw new ApiFehler("nicht_gefunden", "Turnier nicht gefunden.");
+    private Speicher.Turnier turnierLaden(String id) {
+        return turnierLaden(id, null);
+    }
+
+    /**
+     * Unbekannte Kennungen werden je Anschluss gezählt: Durchprobieren wird gebremst.
+     * Bekannte Turniere bleiben immer erreichbar (alle Geräte in der Halle teilen sich oft eine Adresse).
+     */
+    private Speicher.Turnier turnierLaden(String id, Anf a) {
+        Speicher.Turnier t;
+        synchronized (this) {
+            t = id == null || !P_TURNIER_ID.matcher(id).matches() ? null : turniere.get(id);
+        }
+        if (t == null) {
+            if (a != null) {
+                String schluessel = "turnier-suche|" + a.http.ip;
+                if (anzahlVersuche(schluessel, VERSUCHE_FENSTER) >= SUCHE_MAX) {
+                    throw new ApiFehler("zu_viele_versuche", "Zu viele unbekannte Turnierkennungen. Bitte in 15 Minuten erneut versuchen.");
+                }
+                fehlversuch(schluessel);
+            }
+            throw new ApiFehler("nicht_gefunden", "Turnier nicht gefunden.");
+        }
         return t;
+    }
+
+    /** Was darf eine Sitzung in diesem Turnier? */
+    private String rechte(Map<String, Object> s, Speicher.Turnier t) {
+        if (leitungsRecht(s, t)) return "leitung";
+        if (t.id.equals(s.get("turnier")) && ("helfer".equals(s.get("rolle")) || "spieler".equals(s.get("rolle")))) return (String) s.get("rolle");
+        return null;
+    }
+
+    private Map<String, Object> turnier(Anf a) {
+        Speicher.Turnier t = turnierLaden(a.q("id"), a);
+        Map<String, Object> aus = turnierAusgabe(t);
+        if (a.token != null) {
+            Map<String, Object> s = sitzung(a);
+            aus.put("rechte", s == null ? null : rechte(s, t));
+        }
+        return Json.obj("turnier", aus);
     }
 
     private Map<String, Object> turnierAusgabe(Speicher.Turnier t) {
@@ -537,11 +643,12 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             "abgegeben", wahr(t.kopf.get("abgegeben")));
     }
 
+    /** Neue Turnierkennung: 8 Ziffern, nicht zu einfach, noch nicht vergeben */
     private String neueTurnierId() {
         String id;
         do {
-            id = zufallsText(10);
-        } while (turniere.containsKey(id));
+            id = String.valueOf(10_000_000 + zufall.nextInt(90_000_000));
+        } while (!codeGueltig(id) || turniere.containsKey(id));
         return id;
     }
 
@@ -583,6 +690,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             "registrierung", false,
             "mail", mailBereit(),
             "codes", true,
+            "kennungen", true,
             "zentrale", Json.obj("version", VERSION, "adresse", adresse, "online", verbunden()));
     }
 
@@ -590,7 +698,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         Map<String, Object> s = sitzung(a);
         if (s == null) throw new ApiFehler("nicht_angemeldet", "Nicht angemeldet.");
         Map<String, Object> aus = Json.obj("rolle", s.get("rolle"), "name", s.get("name"), "turnier", s.get("turnier"));
-        if ("spieler".equals(s.get("rolle")) && s.get("bezug") != null) aus.put("spieler", s.get("bezug"));
+        if ("spieler".equals(s.get("rolle")) && s.get("bezug") != null) {
+            aus.put("spieler", s.get("bezug"));
+            if (wahr(s.get("helfer"))) aus.put("helfer", true);
+        }
         if (istKonto(s)) aus.put("konto", kontoAusgabe());
         return aus;
     }
@@ -616,7 +727,6 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         if (datum != null && (!(datum instanceof String) || !P_DATUM.matcher((String) datum).matches())) {
             throw new ApiFehler("ungueltig", "Datum im Format JJJJ-MM-TT angeben.");
         }
-        String code = leitungsCodeFeld(a);
         List<Object> empf;
         if (a.rumpf.containsKey("sicherungAn")) {
             empf = empfaengerFeld(a.rumpf.get("sicherungAn"));
@@ -632,54 +742,68 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             long j = jetzt();
             t = new Speicher.Turnier(id, Json.obj(
                 "name", name, "datum", datum, "angelegt", iso(j), "angelegtSek", j,
-                "leitungCode", code, "sicherungAn", empf, "sicherungTakt", 30L,
+                "sicherungAn", empf, "sicherungTakt", 30L,
                 "sicherungLetzte", null, "sicherungSeq", 0L, "uebersicht", null, "uebersichtZeit", null,
                 "herkunft", "zentrale", "abgegeben", false));
             speicher.turnierAnlegen(t);
             turniere.put(id, t);
         }
+        Map<String, Object> leitung;
+        synchronized (this) {
+            // Leitungskennung für die anlegende Person (die Zentrale selbst leitet über ihr Konto)
+            leitung = codeAnlegen(t, "leitung", "l-" + zufallsText(10), kontoName());
+            speicher.codesSpeichern(t);
+        }
         String token = neuesToken(true, t.id, "leitung", kontoName(), null);
-        return Json.obj("turnier", turnierAusgabe(t), "token", token);
+        return Json.obj("turnier", turnierAusgabe(t), "token", token, "leitung", codeAusgabe(leitung));
     }
 
     private Map<String, Object> turnierZugang(Anf a) {
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
+        // Bremsen ohne Aussperren richtiger Kennungen (siehe PHP-Server): Verzögerung ab dem 5. Fehlversuch je
+        // Anschluss, 429 für falsche Kennungen ab 30 je Anschluss bzw. 200 je Turnier.
         String schluessel = "zugang|" + t.id + "|" + a.http.ip;
-        bremse(schluessel);
-        Object roh = a.rumpf.containsKey("code") ? a.rumpf.get("code") : a.rumpf.get("passwort");
-        String code = roh instanceof String ? ((String) roh).trim() : "";
-        String leitung;
-        synchronized (this) {
-            leitung = Json.alsText(t.kopf.get("leitungCode"));
+        String schluesselTurnier = "zugang-turnier|" + t.id;
+        int fehl = anzahlVersuche(schluessel, VERSUCHE_FENSTER);
+        if (fehl >= ZUGANG_VERZOEGERN_AB && !ohneWarten) {
+            try {
+                Thread.sleep(Math.min(2000L, 250L * (fehl - ZUGANG_VERZOEGERN_AB + 1)));
+            } catch (InterruptedException x) {
+                Thread.currentThread().interrupt();
+            }
         }
-        if (!code.isEmpty() && leitung != null && gleich(code, leitung)) {
-            versucheLoeschen(schluessel);
-            String name = Json.alsText(a.rumpf.get("name"));
-            name = name == null || name.trim().isEmpty() ? "Leitung" : kuerzen(name.trim(), 120);
-            return Json.obj("token", neuesToken(false, t.id, "leitung", name, null), "rolle", "leitung", "name", name);
-        }
+        String roh = Json.alsText(a.rumpf.get("code"));
+        String code = roh == null ? "" : roh.replaceAll("\\s+", "");
         Map<String, Object> c = null;
-        if (code.matches("^[0-9]{6}$")) {
+        if (code.matches("^[0-9]{8}$")) {
             synchronized (this) {
                 for (Map<String, Object> x : t.codes) {
-                    if (code.equals(x.get("code")) && !wahr(x.get("gesperrt"))) { c = x; break; }
+                    if (gleich(code, String.valueOf(x.get("code"))) && !wahr(x.get("gesperrt"))) { c = x; break; }
                 }
             }
         }
         if (c == null) {
             fehlversuch(schluessel);
-            throw new ApiFehler("falsche_zugangsdaten", "Dieser Code passt nicht zu diesem Turnier.");
+            fehlversuch(schluesselTurnier);
+            if (fehl + 1 >= VERSUCHE_MAX * 3 || anzahlVersuche(schluesselTurnier, VERSUCHE_FENSTER) > ZUGANG_TURNIER_MAX) {
+                throw new ApiFehler("zu_viele_versuche", "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.");
+            }
+            throw new ApiFehler("falsche_zugangsdaten", "Diese Kennung passt nicht zu diesem Turnier.");
         }
         versucheLoeschen(schluessel);
         String rolle = (String) c.get("rolle");
-        String token = neuesToken(false, t.id, rolle, (String) c.get("name"), (String) c.get("bezug"));
+        boolean helfer = "spieler".equals(rolle) && wahr(c.get("helfer"));
+        String token = neuesToken(false, t.id, rolle, (String) c.get("name"), (String) c.get("bezug"), helfer);
         Map<String, Object> aus = Json.obj("token", token, "rolle", rolle, "name", c.get("name"));
-        if ("spieler".equals(rolle)) aus.put("spieler", c.get("bezug"));
+        if ("spieler".equals(rolle)) {
+            aus.put("spieler", c.get("bezug"));
+            if (helfer) aus.put("helfer", true);
+        }
         return aus;
     }
 
     private Map<String, Object> abholen(Anf a) {
-        Speicher.Turnier t = turnierLaden(a.q("turnier"));
+        Speicher.Turnier t = turnierLaden(a.q("turnier"), a);
         long ab;
         try {
             ab = Long.parseLong(a.q("ab").isEmpty() ? "0" : a.q("ab"));
@@ -717,7 +841,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     }
 
     private Map<String, Object> senden(Anf a) {
-        Speicher.Turnier t = turnierLaden(a.q("turnier"));
+        Speicher.Turnier t = turnierLaden(a.q("turnier"), a);
         Map<String, Object> s = sitzung(a);
         if (s == null) throw new ApiFehler("nicht_angemeldet", "Zum Eintragen bitte anmelden.");
         String srolle = (String) s.get("rolle");
@@ -738,7 +862,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             }
         }
         Map<String, Object> autor = Json.obj("rolle", rolle, "name", s.get("name"));
-        if ("spieler".equals(rolle) && s.get("bezug") != null) autor.put("spieler", s.get("bezug"));
+        if ("spieler".equals(rolle) && s.get("bezug") != null) {
+            autor.put("spieler", s.get("bezug"));
+            if (wahr(s.get("helfer"))) autor.put("helfer", true);
+        }
 
         List<Map<String, Object>> geprueft = new ArrayList<>();
         for (Object o : liste) geprueft.add(ereignisPruefen(o));
@@ -804,7 +931,6 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     private synchronized Map<String, Object> einstellungen(Speicher.Turnier t, Anf a) {
         leitungPruefen(a, t);
         return Json.obj(
-            "leitungsCode", t.kopf.get("leitungCode"),
             "sicherungAn", new ArrayList<Object>(empfaengerAus(t)),
             "sicherungTakt", zahl(t.kopf.get("sicherungTakt"), 30),
             "letzteSicherung", t.kopf.get("sicherungLetzte"),
@@ -813,19 +939,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     }
 
     private Map<String, Object> einstellungenSetzen(Anf a) {
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         leitungPruefen(a, t);
         synchronized (this) {
             beschreibbar(t);
-            if (a.rumpf.containsKey("leitungsCode")) {
-                String code = leitungsCodeFeld(a);
-                for (Map<String, Object> c : t.codes) {
-                    if (code.equals(c.get("code"))) {
-                        throw new ApiFehler("konflikt", "Diesen Code hat schon ein Spieler oder Helfer. Bitte einen anderen wählen.");
-                    }
-                }
-                t.kopf.put("leitungCode", code);
-            }
             if (a.rumpf.containsKey("sicherungAn")) t.kopf.put("sicherungAn", empfaengerFeld(a.rumpf.get("sicherungAn")));
             if (a.rumpf.containsKey("sicherungTakt")) {
                 Long takt = Json.alsGanzzahl(a.rumpf.get("sicherungTakt"));
@@ -838,7 +955,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     }
 
     private Map<String, Object> sichernJetzt(Anf a) {
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         leitungPruefen(a, t);
         if (!mailBereit()) {
             throw new ApiFehler("nicht_eingerichtet", "Für Sicherungsmails das Online-Konto auf der Zentrale verbinden (Seite „Zentrale“).");
@@ -996,14 +1113,16 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     /* ---------------- Codes ---------------- */
 
     private static Map<String, Object> codeAusgabe(Map<String, Object> c) {
-        return Json.obj("rolle", c.get("rolle"), "bezug", c.get("bezug"), "name", c.get("name"), "code", c.get("code"), "gesperrt", wahr(c.get("gesperrt")));
+        Map<String, Object> aus = Json.obj("rolle", c.get("rolle"), "bezug", c.get("bezug"), "name", c.get("name"), "code", c.get("code"), "gesperrt", wahr(c.get("gesperrt")));
+        if ("spieler".equals(c.get("rolle"))) aus.put("helfer", wahr(c.get("helfer")));
+        return aus;
     }
 
     private synchronized Map<String, Object> codesListe(Speicher.Turnier t) {
         List<Map<String, Object>> l = new ArrayList<>(t.codes);
-        // wie PHP: ORDER BY rolle DESC, name
+        // wie PHP: Leitung, Helfer, Spieler – je Rolle nach Name
         l.sort((x, y) -> {
-            int r = String.valueOf(y.get("rolle")).compareTo(String.valueOf(x.get("rolle")));
+            int r = Integer.compare(CODE_ROLLEN.indexOf(String.valueOf(x.get("rolle"))), CODE_ROLLEN.indexOf(String.valueOf(y.get("rolle"))));
             return r != 0 ? r : String.valueOf(x.get("name")).compareTo(String.valueOf(y.get("name")));
         });
         List<Object> aus = new ArrayList<>();
@@ -1013,19 +1132,36 @@ public final class Zentrale implements HttpServer.Bearbeiter {
 
     private String freierCode(Speicher.Turnier t) {
         for (int i = 0; i < 1000; i++) {
-            String code = String.format("%06d", zufall.nextInt(1_000_000));
-            if (!codeGueltig(code) || code.equals(t.kopf.get("leitungCode"))) continue;
+            String code = String.valueOf(10_000_000 + zufall.nextInt(90_000_000));
+            if (!codeGueltig(code) || code.equals(t.id)) continue;
             boolean belegt = false;
             for (Map<String, Object> c : t.codes) if (code.equals(c.get("code"))) { belegt = true; break; }
             if (!belegt) return code;
         }
-        throw new ApiFehler("serverfehler", "Es konnte kein freier Code erzeugt werden.");
+        throw new ApiFehler("serverfehler", "Es konnte keine freie Kennung erzeugt werden.");
+    }
+
+    /** Eine Kennung anlegen (Aufruf unter synchronized) */
+    private Map<String, Object> codeAnlegen(Speicher.Turnier t, String rolle, String bezug, String name) {
+        if (t.codes.size() >= MAX_CODES) throw new ApiFehler("ungueltig", "Höchstens " + MAX_CODES + " Kennungen je Turnier.");
+        Map<String, Object> c = Json.obj("rolle", rolle, "bezug", bezug, "name", name, "code", freierCode(t), "gesperrt", false, "angelegt", jetzt(), "helfer", false);
+        t.codes.add(c);
+        return c;
+    }
+
+    /** Mindestens eine Leitungskennung muss nutzbar bleiben */
+    private static void letzteLeitungPruefen(Speicher.Turnier t, String rolle, String bezug) {
+        if (!"leitung".equals(rolle)) return;
+        for (Map<String, Object> c : t.codes) {
+            if ("leitung".equals(c.get("rolle")) && !wahr(c.get("gesperrt")) && !bezug.equals(c.get("bezug"))) return;
+        }
+        throw new ApiFehler("konflikt", "Das ist die letzte gültige Leitungskennung. Bitte zuerst eine weitere anlegen.");
     }
 
     private static String[] codeZiel(Anf a) {
         Object rolle = a.rumpf.get("rolle");
         String bezug = Json.alsText(a.rumpf.get("bezug"));
-        if (!("spieler".equals(rolle) || "helfer".equals(rolle)) || bezug == null || !P_BEZUG.matcher(bezug).matches()) {
+        if (!CODE_ROLLEN.contains(rolle) || bezug == null || !P_BEZUG.matcher(bezug).matches()) {
             throw new ApiFehler("ungueltig", "Rolle oder Bezug ungültig.");
         }
         return new String[] {(String) rolle, bezug};
@@ -1037,13 +1173,13 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     }
 
     private Map<String, Object> codes(Anf a) {
-        Speicher.Turnier t = turnierLaden(a.q("turnier"));
+        Speicher.Turnier t = turnierLaden(a.q("turnier"), a);
         leitungPruefen(a, t);
         return codesListe(t);
     }
 
     private Map<String, Object> codesAnlegen(Anf a) {
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         leitungPruefen(a, t);
         List<Object> liste = Json.alsListe(a.rumpf.get("eintraege"));
         if (liste == null || liste.size() > MAX_CODES) throw new ApiFehler("ungueltig", "Feld „eintraege“ muss eine Liste sein.");
@@ -1057,8 +1193,8 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                     Object rolle = e == null ? null : e.get("rolle");
                     String bezug = e == null ? null : Json.alsText(e.get("bezug"));
                     String name = e == null || Json.alsText(e.get("name")) == null ? "" : kuerzen(Json.alsText(e.get("name")).trim(), 160);
-                    if (!("spieler".equals(rolle) || "helfer".equals(rolle)) || bezug == null || !P_BEZUG.matcher(bezug).matches() || name.isEmpty()) {
-                        throw new ApiFehler("ungueltig", "Ungültiger Eintrag für einen Code.");
+                    if (!CODE_ROLLEN.contains(rolle) || bezug == null || !P_BEZUG.matcher(bezug).matches() || name.isEmpty()) {
+                        throw new ApiFehler("ungueltig", "Ungültiger Eintrag für eine Kennung.");
                     }
                     Map<String, Object> alt = codeSuchen(t, (String) rolle, bezug);
                     if (alt != null) {
@@ -1071,8 +1207,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                         }
                         continue;
                     }
-                    if (t.codes.size() >= MAX_CODES) throw new ApiFehler("ungueltig", "Höchstens " + MAX_CODES + " Codes je Turnier.");
-                    t.codes.add(Json.obj("rolle", rolle, "bezug", bezug, "name", name, "code", freierCode(t), "gesperrt", false, "angelegt", jetzt()));
+                    codeAnlegen(t, (String) rolle, bezug, name);
                 }
             } catch (RuntimeException x) {
                 t.codes.clear();
@@ -1085,7 +1220,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     }
 
     private Map<String, Object> codeNeu(Anf a) {
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         leitungPruefen(a, t);
         String[] z = codeZiel(a);
         synchronized (this) {
@@ -1101,7 +1236,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     }
 
     private Map<String, Object> codeSperren(Anf a) {
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         leitungPruefen(a, t);
         String[] z = codeZiel(a);
         synchronized (this) {
@@ -1109,6 +1244,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             Map<String, Object> c = codeSuchen(t, z[0], z[1]);
             if (c == null) throw new ApiFehler("nicht_gefunden", "Code nicht gefunden.");
             boolean gesperrt = wahr(a.rumpf.get("gesperrt"));
+            if (gesperrt) letzteLeitungPruefen(t, z[0], z[1]);
             c.put("gesperrt", gesperrt);
             speicher.codesSpeichern(t);
             if (gesperrt) sitzungenEntfernen(t.id, z[0], z[1]);
@@ -1117,16 +1253,58 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     }
 
     private Map<String, Object> codeEntfernen(Anf a) {
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         leitungPruefen(a, t);
         String[] z = codeZiel(a);
         synchronized (this) {
             beschreibbar(t);
+            letzteLeitungPruefen(t, z[0], z[1]);
             t.codes.removeIf(c -> z[0].equals(c.get("rolle")) && z[1].equals(c.get("bezug")));
             speicher.codesSpeichern(t);
             sitzungenEntfernen(t.id, z[0], z[1]);
             return Json.obj("ok", true);
         }
+    }
+
+    /** Spielerkennung zusätzlich Helfer-Recht geben oder nehmen; laufende Anmeldungen enden */
+    private Map<String, Object> codeHelfer(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
+        leitungPruefen(a, t);
+        String bezug = Json.alsText(a.rumpf.get("bezug"));
+        if (bezug == null || !P_BEZUG.matcher(bezug).matches()) throw new ApiFehler("ungueltig", "Bezug ungültig.");
+        synchronized (this) {
+            beschreibbar(t);
+            Map<String, Object> c = codeSuchen(t, "spieler", bezug);
+            if (c == null) throw new ApiFehler("nicht_gefunden", "Kennung nicht gefunden.");
+            c.put("helfer", wahr(a.rumpf.get("helfer")));
+            speicher.codesSpeichern(t);
+            sitzungenEntfernen(t.id, "spieler", bezug);
+            return Json.obj("code", codeAusgabe(c));
+        }
+    }
+
+    /* ---------------- Einstellungen des Kontos (Leistungsklassen) ---------------- */
+
+    private synchronized Map<String, Object> kontoEinstellungen(Anf a) {
+        konto(a);
+        List<Object> l = Json.alsListe(einst.get("klassen"));
+        List<Object> aus = new ArrayList<>();
+        if (l != null) for (Object o : l) if (o instanceof String) aus.add(o);
+        return Json.obj("klassen", aus);
+    }
+
+    private synchronized Map<String, Object> kontoEinstellungenSetzen(Anf a) {
+        konto(a);
+        List<Object> l = Json.alsListe(a.rumpf.get("klassen"));
+        if (l == null || l.size() > MAX_KLASSEN) throw new ApiFehler("ungueltig", "Höchstens " + MAX_KLASSEN + " Leistungsklassen.");
+        List<Object> klassen = new ArrayList<>();
+        for (Object o : l) {
+            String k = o instanceof String ? kuerzen(((String) o).trim(), 40) : "";
+            if (!k.isEmpty() && !klassen.contains(k)) klassen.add(k);
+        }
+        einst.put("klassen", klassen);
+        einstSpeichern();
+        return Json.obj("klassen", klassen);
     }
 
     /* ---------------- Spielerpool ---------------- */
@@ -1226,7 +1404,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     /* ---------------- Übersicht ---------------- */
 
     private Map<String, Object> uebersichtSetzen(Anf a) {
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         leitungPruefen(a, t);
         String text = Json.alsText(a.rumpf.get("text"));
         if (text == null || text.codePointCount(0, text.length()) > MAX_UEBERSICHT) throw new ApiFehler("ungueltig", "Übersicht fehlt oder ist zu lang.");
@@ -1472,7 +1650,6 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             }
             t.kopf.put("name", info.get("name"));
             t.kopf.put("datum", info.get("datum"));
-            t.kopf.put("leitungCode", ein.get("leitungsCode"));
             t.kopf.put("sicherungAn", empfaengerFeldStill(ein.get("sicherungAn")));
             t.kopf.put("sicherungTakt", zahl(ein.get("sicherungTakt"), 30));
             t.kopf.put("sicherungLetzte", ein.get("letzteSicherung"));
@@ -1487,7 +1664,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                 Map<String, Object> c = Json.alsObjekt(o);
                 if (c == null) continue;
                 t.codes.add(Json.obj("rolle", c.get("rolle"), "bezug", c.get("bezug"), "name", c.get("name"), "code", c.get("code"),
-                    "gesperrt", wahr(c.get("gesperrt")), "angelegt", jetzt()));
+                    "gesperrt", wahr(c.get("gesperrt")), "angelegt", jetzt(), "helfer", wahr(c.get("helfer"))));
             }
             if (anlegen) {
                 speicher.turnierAnlegen(t);
@@ -1541,7 +1718,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
 
     private Map<String, Object> rueckgabe(Anf a) {
         selbst(a);
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         String[] z = onlineZugang();
         List<Map<String, Object>> offen = new ArrayList<>();
         Map<String, Object> neu = null;
@@ -1551,14 +1728,14 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             if (wahr(t.kopf.get("rueckgabeLaeuft"))) throw new ApiFehler("konflikt", "Die Rückgabe läuft bereits.");
             for (Map<String, Object> e : t.ereignisse) if (!wahr(e.get("online"))) offen.add(e);
             if ("zentrale".equals(t.kopf.get("herkunft"))) {
-                neu = Json.obj("name", t.kopf.get("name"), "datum", t.kopf.get("datum"), "leitungsCode", t.kopf.get("leitungCode"));
+                neu = Json.obj("name", t.kopf.get("name"), "datum", t.kopf.get("datum"));
             }
             List<Object> codes = new ArrayList<>();
             for (Map<String, Object> c : t.codes) codes.add(codeAusgabe(c));
             Object ueb = t.kopf.get("uebersicht");
             abschluss = Json.obj(
                 "turnier", t.id, "zentraleId", z[2], "codes", codes,
-                "einstellungen", Json.obj("leitungsCode", t.kopf.get("leitungCode"), "sicherungAn", new ArrayList<Object>(empfaengerAus(t)),
+                "einstellungen", Json.obj("sicherungAn", new ArrayList<Object>(empfaengerAus(t)),
                     "sicherungTakt", zahl(t.kopf.get("sicherungTakt"), 30)),
                 "uebersicht", ueb == null ? null : Json.obj("text", ueb));
             t.kopf.put("rueckgabeLaeuft", true);
@@ -1607,7 +1784,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
 
     private Map<String, Object> turnierLoeschen(Anf a) {
         selbst(a);
-        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")));
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         synchronized (this) {
             boolean ungesichert = false;
             for (Map<String, Object> e : t.ereignisse) if (!wahr(e.get("online"))) { ungesichert = true; break; }

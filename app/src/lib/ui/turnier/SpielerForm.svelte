@@ -1,6 +1,7 @@
 <script lang="ts">
   import { T } from '../../texte';
   import type { Angabe, Geschlecht, SpielerDaten } from '../../engine/modell';
+  import { klassen, klassenMerken } from '../../klassen.svelte';
 
   let {
     angaben,
@@ -48,6 +49,7 @@
     fehler = '';
     try {
       await speichern(daten, mitPool && inPool);
+      if (angaben.includes('klasse')) klassenMerken(daten.klasse);
     } catch (x) {
       fehler = x instanceof Error ? x.message : String(x);
     } finally {
@@ -80,7 +82,9 @@
       <div><label for="jg-{id}">{T.tspieler.jahrgang}</label><input id="jg-{id}" bind:value={d.jahrgang} inputmode="numeric" maxlength="4" /></div>
     {/if}
   </div>
-  <datalist id="klassen-vorschlag"><option value="Anfänger"></option><option value="Fortgeschritten"></option><option value="A"></option><option value="B"></option><option value="C"></option></datalist>
+  <datalist id="klassen-vorschlag">
+    {#each klassen.liste.length ? klassen.liste : ['Anfänger', 'Fortgeschritten', 'A', 'B', 'C'] as k (k)}<option value={k}></option>{/each}
+  </datalist>
   {#if mitPool}
     <label class="haken"><input type="checkbox" bind:checked={inPool} /> {T.tspieler.auchInPool}</label>
   {/if}

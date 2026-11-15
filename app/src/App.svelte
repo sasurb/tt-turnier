@@ -21,6 +21,7 @@
   import Wiederherstellen from './lib/ui/Wiederherstellen.svelte';
   import TurnierAnsicht from './lib/ui/TurnierAnsicht.svelte';
   import Pool from './lib/ui/Pool.svelte';
+  import MeineTurniere from './lib/ui/MeineTurniere.svelte';
   import Zentrale from './lib/ui/Zentrale.svelte';
 
   onMount(() => void serverLaden());
@@ -57,6 +58,8 @@
     <Datenschutz />
   {:else if route.seite === 'wiederherstellen'}
     <Wiederherstellen />
+  {:else if route.seite === 'turniere'}
+    <MeineTurniere />
   {:else if route.seite === 'pool'}
     <Pool />
   {:else if route.seite === 'zentrale'}

@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { ART, type Autor } from '@shared/protokoll';
-import { auslosungErstellen, endrundeErstellen, platzierungen, pruefliste, qualifikanten, spieleVon, tabelle, zulassungsHinweise } from './abfragen';
+import {
+  auslosungErstellen,
+  endrundeErstellen,
+  etwasVerdeckt,
+  gruppenKlassen,
+  klassenDerMeldungen,
+  platzierungen,
+  pruefliste,
+  qualifikanten,
+  sichtbar,
+  spieleVon,
+  tabelle,
+  zulassungsHinweise,
+} from './abfragen';
 import { gruppenAuslosen, koAuslosen, setzplaetze, treffRunde } from './auslosung';
 import { ergebnisText, ergebnisWerten, satzAusVerliererpunkten } from './ergebnis';
 import { PLATZ3_ID, koSpielId } from './ko';
-import { standardEinstellungen, type ErgebnisEingabe, type KonkurrenzEinstellungen, type TurnierSpieler } from './modell';
+import { klasseVon, standardEinstellungen, ttrBereichName, type ErgebnisEingabe, type KonkurrenzEinstellungen, type TurnierSpieler } from './modell';
 import { rundenplan } from './rundenplan';
 import type { LokalesEreignis } from './typen';
 import { uebersichtText } from './uebersicht';
@@ -12,7 +25,11 @@ import { zufallAus } from './zufall';
 import { berechnen, type TurnierZustand } from './zustand';
 
 const LEITUNG: Autor = { rolle: 'leitung', name: 'Leitung' };
-const spielerAutor = (id: string): Autor => ({ rolle: 'spieler', name: id, spieler: id });
+const spielerAutor = (id: string): Autor => ({
+  rolle: 'spieler',
+  name: id,
+  spieler: id,
+});
 
 /** Kleiner Turnier-Baukasten: sammelt Ereignisse und rechnet den Stand */
 class Turnier {
@@ -21,8 +38,16 @@ class Turnier {
   e(art: string, daten: Record<string, unknown>, autor: Autor = LEITUNG) {
     this.n++;
     this.liste.push({
-      id: `e${this.n}`, art, daten, zeit: new Date(Date.UTC(2026, 10, 14, 9, 0, this.n)).toISOString(), geraet: 'g1',
-      turnier: 't', status: 'lokal', seq: this.n, empfangen: null, autor,
+      id: `e${this.n}`,
+      art,
+      daten,
+      zeit: new Date(Date.UTC(2026, 10, 14, 9, 0, this.n)).toISOString(),
+      geraet: 'g1',
+      turnier: 't',
+      status: 'lokal',
+      seq: this.n,
+      empfangen: null,
+      autor,
     });
     return `e${this.n}`;
   }
@@ -30,10 +55,19 @@ class Turnier {
     return berechnen(this.liste);
   }
   spieler(id: string, ttr: number | null = null, verein = '') {
-    this.e(ART.spielerAngelegt, { id, vorname: id.toUpperCase(), nachname: 'Test', verein, ttr });
+    this.e(ART.spielerAngelegt, {
+      id,
+      vorname: id.toUpperCase(),
+      nachname: 'Test',
+      verein,
+      ttr,
+    });
   }
   konkurrenz(id: string, einst: Partial<KonkurrenzEinstellungen>, spieler: string[]) {
-    this.e(ART.konkurrenzAngelegt, { id, einst: { ...standardEinstellungen(id), ...einst } });
+    this.e(ART.konkurrenzAngelegt, {
+      id,
+      einst: { ...standardEinstellungen(id), ...einst },
+    });
     for (const s of spieler) this.e(ART.teilnehmerGemeldet, { konkurrenz: id, id: s });
   }
   auslosen(k: string, zufall = 42) {
@@ -55,27 +89,96 @@ class Turnier {
   }
 }
 
-const s3 = (...p: number[]): ErgebnisEingabe => ({ saetze: p.map((v) => (v >= 0 ? [11, v] : [-v, 11]) as [number, number]) });
+const s3 = (...p: number[]): ErgebnisEingabe => ({
+  saetze: p.map((v) => (v >= 0 ? [11, v] : [-v, 11]) as [number, number]),
+});
 
 describe('Ergebnisse', () => {
   it('prüft Sätze nach den Regeln', () => {
-    expect(ergebnisWerten({ saetze: [[11, 7], [9, 11], [11, 5], [12, 10]] }, 5, 'punkte')).toMatchObject({ ok: true, ergebnis: { satzA: 3, satzB: 1, ballA: 43, ballB: 33, gewinner: 'a' } });
+    expect(
+      ergebnisWerten(
+        {
+          saetze: [
+            [11, 7],
+            [9, 11],
+            [11, 5],
+            [12, 10],
+          ],
+        },
+        5,
+        'punkte',
+      ),
+    ).toMatchObject({
+      ok: true,
+      ergebnis: { satzA: 3, satzB: 1, ballA: 43, ballB: 33, gewinner: 'a' },
+    });
     expect(ergebnisWerten({ saetze: [[11, 10]] }, 3, 'punkte').ok).toBe(false);
-    expect(ergebnisWerten({ saetze: [[12, 9], [11, 0]] }, 3, 'punkte').ok).toBe(false);
-    expect(ergebnisWerten({ saetze: [[14, 12], [11, 3]] }, 3, 'punkte').ok).toBe(true);
-    expect(ergebnisWerten({ saetze: [[11, 3], [11, 3], [11, 3]] }, 3, 'punkte').ok).toBe(false); // ein Satz zu viel
+    expect(
+      ergebnisWerten(
+        {
+          saetze: [
+            [12, 9],
+            [11, 0],
+          ],
+        },
+        3,
+        'punkte',
+      ).ok,
+    ).toBe(false);
+    expect(
+      ergebnisWerten(
+        {
+          saetze: [
+            [14, 12],
+            [11, 3],
+          ],
+        },
+        3,
+        'punkte',
+      ).ok,
+    ).toBe(true);
+    expect(
+      ergebnisWerten(
+        {
+          saetze: [
+            [11, 3],
+            [11, 3],
+            [11, 3],
+          ],
+        },
+        3,
+        'punkte',
+      ).ok,
+    ).toBe(false); // ein Satz zu viel
     expect(ergebnisWerten({ saetze: [[11, 3]] }, 3, 'punkte').ok).toBe(false); // noch offen
-    expect(ergebnisWerten({ stand: [3, 2] }, 5, 'saetze')).toMatchObject({ ok: true, ergebnis: { ballA: null, gewinner: 'a' } });
+    expect(ergebnisWerten({ stand: [3, 2] }, 5, 'saetze')).toMatchObject({
+      ok: true,
+      ergebnis: { ballA: null, gewinner: 'a' },
+    });
     expect(ergebnisWerten({ stand: [3, 3] }, 5, 'saetze').ok).toBe(false);
   });
 
   it('wertet Aufgabe und kampflos nach WO D 7.10', () => {
     const a = ergebnisWerten({ saetze: [[11, 5]], aufgabe: 'a', laufend: [7, 3] }, 5, 'punkte');
-    expect(a.ok && a.ergebnis.saetze).toEqual([[11, 5], [7, 11], [0, 11], [0, 11]]);
+    expect(a.ok && a.ergebnis.saetze).toEqual([
+      [11, 5],
+      [7, 11],
+      [0, 11],
+      [0, 11],
+    ]);
     const b = ergebnisWerten({ aufgabe: 'b', laufend: [5, 10] }, 3, 'punkte');
-    expect(b.ok && b.ergebnis.saetze).toEqual([[12, 10], [11, 0]]); // Sieger mindestens X+2
+    expect(b.ok && b.ergebnis.saetze).toEqual([
+      [12, 10],
+      [11, 0],
+    ]); // Sieger mindestens X+2
     const k = ergebnisWerten({ kampflos: 'b' }, 5, 'punkte');
-    expect(k.ok && k.ergebnis).toMatchObject({ satzA: 3, satzB: 0, ballA: 33, ballB: 0, art: 'kampflos' });
+    expect(k.ok && k.ergebnis).toMatchObject({
+      satzA: 3,
+      satzB: 0,
+      ballA: 33,
+      ballB: 0,
+      art: 'kampflos',
+    });
     expect(k.ok && ergebnisText(k.ergebnis)).toBe('3:0 kampflos');
   });
 
@@ -119,7 +222,13 @@ describe('Spielfolge und Auslosung', () => {
     expect([...sp.slice(2, 4)].sort((a, b) => a - b)).toEqual([8, 9]);
     expect([...sp.slice(4, 8)].sort((a, b) => a - b)).toEqual([4, 5, 12, 13]);
     const ids = Array.from({ length: 12 }, (_, i) => `s${i + 1}`);
-    const plaetze = koAuslosen({ gesetzte: ids.slice(0, 4), stufen: [ids.slice(4)], spieler: {}, vereinstrennung: false, zufall: 3 });
+    const plaetze = koAuslosen({
+      gesetzte: ids.slice(0, 4),
+      stufen: [ids.slice(4)],
+      spieler: {},
+      vereinstrennung: false,
+      zufall: 3,
+    });
     expect(plaetze.length).toBe(16);
     expect(plaetze[0]).toBe('s1');
     expect(plaetze[15]).toBe('s2');
@@ -152,7 +261,12 @@ describe('Gruppenwertung', () => {
     const tab = gruppe('dttb');
     expect(tab.zeilen.map((r) => r.id)).toEqual(['b', 'a', 'd', 'c']);
     expect(tab.fertig).toBe(true);
-    expect(tab.zeilen[0]).toMatchObject({ siege: 2, niederlagen: 1, saetzeG: 8, saetzeV: 3 });
+    expect(tab.zeilen[0]).toMatchObject({
+      siege: 2,
+      niederlagen: 1,
+      saetzeG: 8,
+      saetzeV: 3,
+    });
   });
 
   it('ITTF 3.7.5: direkter Vergleich der Punktgleichen zuerst', () => {
@@ -173,7 +287,11 @@ describe('Gruppenwertung', () => {
     let tab = tabelle(t.z.konkurrenzen.k!, 0);
     expect(tab.losGruppen.length).toBe(1);
     expect(tab.zeilen.every((r) => r.losNoetig)).toBe(true);
-    t.e(ART.gruppeLos, { konkurrenz: 'k', gruppe: 0, reihenfolge: ['c', 'a', 'b'] });
+    t.e(ART.gruppeLos, {
+      konkurrenz: 'k',
+      gruppe: 0,
+      reihenfolge: ['c', 'a', 'b'],
+    });
     tab = tabelle(t.z.konkurrenzen.k!, 0);
     expect(tab.losGruppen.length).toBe(0);
     expect(tab.zeilen.map((r) => r.id)).toEqual(['c', 'a', 'b']);
@@ -387,14 +505,329 @@ describe('Gruppen + K.-o.', () => {
     t.auslosen('k');
     t.starten('k', 'gruppen');
     expect(t.z.konkurrenzen.k!.gestartet.gruppen).toBe(true);
-    t.e(ART.spielerAngelegt, { id: 'e', vorname: 'E', nachname: 'E', verein: '' });
+    t.e(ART.spielerAngelegt, {
+      id: 'e',
+      vorname: 'E',
+      nachname: 'E',
+      verein: '',
+    });
     t.e(ART.teilnehmerGemeldet, { konkurrenz: 'k', id: 'e' });
     expect(t.z.warnungen.at(-1)!.text).toMatch(/Nachmelden/);
   });
 
   it('Zulassung warnt nur', () => {
-    const z = { ...standardEinstellungen().zulassung, ttrMax: 1500, klassen: ['B'] };
+    const z = {
+      ...standardEinstellungen().zulassung,
+      ttrMax: 1500,
+      klassen: ['B'],
+    };
     expect(zulassungsHinweise({ ttr: 1600, klasse: 'A' }, z)).toEqual(['TTR 1600 über 1500', 'Klasse „A“']);
     expect(zulassungsHinweise({ ttr: 1400, klasse: 'b' }, z)).toEqual([]);
+  });
+});
+
+describe('Paket 4b: Leistungsklassen in den Gruppen', () => {
+  it('Klasse eines Spielers nach Begriff oder TTR-Bereich', () => {
+    expect(klasseVon({ klasse: ' Anfänger ', ttr: 1200 }, { klassenTrennung: 'klasse', ttrGrenzen: [] })).toBe('anfänger');
+    expect(klasseVon({ klasse: null, ttr: 1200 }, { klassenTrennung: 'klasse', ttrGrenzen: [] })).toBe('');
+    const ttr = { klassenTrennung: 'ttr' as const, ttrGrenzen: [1500, 1200] };
+    expect(klasseVon({ ttr: 1199 }, ttr)).toBe('ttr0');
+    expect(klasseVon({ ttr: 1200 }, ttr)).toBe('ttr1');
+    expect(klasseVon({ ttr: 1700 }, ttr)).toBe('ttr2');
+    expect(klasseVon({ ttr: null }, ttr)).toBe('');
+    expect(ttrBereichName(0, [1200, 1500])).toBe('bis 1199');
+    expect(ttrBereichName(1, [1200, 1500])).toBe('1200–1499');
+    expect(ttrBereichName(2, [1200, 1500])).toBe('ab 1500');
+  });
+
+  it('Gruppen werden je Klasse getrennt ausgelost, Endrunde mischt alle', () => {
+    const t = new Turnier();
+    for (const [id, ttr, kl] of [
+      ['a', 1800, 'A'],
+      ['b', 1700, 'A'],
+      ['c', 1600, 'A'],
+      ['d', 1500, 'A'],
+      ['e', 1100, 'B'],
+      ['f', 1000, 'B'],
+      ['g', 900, 'B'],
+      ['h', 800, 'B'],
+    ] as const) {
+      t.e(ART.spielerAngelegt, {
+        id,
+        vorname: id,
+        nachname: 'T',
+        verein: '',
+        ttr,
+        klasse: kl,
+      });
+    }
+    t.konkurrenz(
+      'k',
+      {
+        modus: 'gruppen_ko',
+        klassenTrennung: 'klasse',
+        gruppenGroesse: 4,
+        aufsteiger: 2,
+        bestOf: 3,
+      },
+      ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+    );
+    let z = t.z;
+    const kl = klassenDerMeldungen(z, z.konkurrenzen.k!);
+    expect(kl.map((x) => [x.name, x.mitglieder.length])).toEqual([
+      ['A', 4],
+      ['B', 4],
+    ]);
+    t.auslosen('k');
+    z = t.z;
+    const g = z.konkurrenzen.k!.auslosungGruppen!.gruppen;
+    expect(g.length).toBe(2);
+    expect(g.map((x) => [...x].sort())).toEqual([
+      ['a', 'b', 'c', 'd'],
+      ['e', 'f', 'g', 'h'],
+    ]);
+    expect(gruppenKlassen(z, z.konkurrenzen.k!, g)).toEqual(['A', 'B']);
+    // Klassentrennung ist nach dem Start fest
+    t.starten('k', 'gruppen');
+    t.e(ART.konkurrenzGeaendert, {
+      id: 'k',
+      einst: { ...t.z.konkurrenzen.k!.einst, klassenTrennung: 'keine' },
+    });
+    expect(t.z.konkurrenzen.k!.einst.klassenTrennung).toBe('klasse');
+    expect(t.z.warnungen.length).toBe(1);
+    // Alle Gruppenspiele: 1 schlägt 2 schlägt 3 …
+    for (const grp of g) for (let i = 0; i < grp.length; i++) for (let j = i + 1; j < grp.length; j++) t.gruppenspiel('k', grp[i]!, grp[j]!, s3(5, 5));
+    const q = qualifikanten(t.z.konkurrenzen.k!);
+    expect(q.ok && q.gruppen.flat().sort()).toEqual(['a', 'b', 'e', 'f']);
+    t.e(ART.auslosung, endrundeErstellen(t.z, t.z.konkurrenzen.k!, 7)!);
+    const plaetze = t.z.konkurrenzen.k!.auslosungKo!.plaetze;
+    expect(plaetze.filter(Boolean).sort()).toEqual(['a', 'b', 'e', 'f']);
+  });
+
+  it('TTR-Bereiche: Spieler ohne TTR bilden eine eigene Gruppe', () => {
+    const t = new Turnier();
+    t.spieler('a', 1800);
+    t.spieler('b', 1750);
+    t.spieler('c', 1100);
+    t.spieler('d', 1050);
+    t.spieler('e', null);
+    t.spieler('f', null);
+    t.konkurrenz(
+      'k',
+      {
+        modus: 'gruppen_ko',
+        klassenTrennung: 'ttr',
+        ttrGrenzen: [1500],
+        gruppenGroesse: 4,
+      },
+      ['a', 'b', 'c', 'd', 'e', 'f'],
+    );
+    t.auslosen('k');
+    const z = t.z;
+    const g = z.konkurrenzen.k!.auslosungGruppen!.gruppen;
+    expect(g.map((x) => [...x].sort())).toEqual([
+      ['c', 'd'],
+      ['a', 'b'],
+      ['e', 'f'],
+    ]);
+    expect(gruppenKlassen(z, z.konkurrenzen.k!, g)).toEqual(['TTR bis 1499', 'TTR ab 1500', 'ohne Angabe']);
+  });
+});
+
+describe('Paket 4b: Verdeckte Stände', () => {
+  it('Turnier- und Konkurrenz-Einstellung, „Ergebnisse veröffentlichen“ hebt alles auf', () => {
+    const t = new Turnier();
+    t.spieler('a');
+    t.spieler('b');
+    t.konkurrenz('k1', { modus: 'jgj' }, ['a', 'b']);
+    t.konkurrenz('k2', { modus: 'jgj', veroeffentlichung: { tabellen: false, ko: true } }, ['a', 'b']);
+    let z = t.z;
+    expect(z.veroeffentlichung).toEqual({ tabellen: true, ko: true });
+    expect(sichtbar(z, z.konkurrenzen.k1!)).toEqual({
+      tabellen: true,
+      ko: true,
+    });
+    expect(sichtbar(z, z.konkurrenzen.k2!)).toEqual({
+      tabellen: false,
+      ko: true,
+    });
+    expect(etwasVerdeckt(z)).toBe(true);
+    t.e(ART.turnierDaten, {
+      veroeffentlichung: { tabellen: false, ko: false },
+    });
+    z = t.z;
+    expect(sichtbar(z, z.konkurrenzen.k1!)).toEqual({
+      tabellen: false,
+      ko: false,
+    });
+    // Spieler dürfen das nicht ändern
+    t.e(ART.turnierDaten, { veroeffentlichung: { tabellen: true, ko: true } }, spielerAutor('a'));
+    expect(t.z.veroeffentlichung.tabellen).toBe(false);
+    t.e(ART.turnierDaten, {
+      veroeffentlichung: { tabellen: true, ko: true },
+      alleKonkurrenzen: true,
+    });
+    z = t.z;
+    expect(etwasVerdeckt(z)).toBe(false);
+    expect(z.konkurrenzen.k2!.einst.veroeffentlichung).toBeNull();
+  });
+});
+
+describe('Paket 4b: Spieler mit Helfer-Recht', () => {
+  it('fremde Spiele amtlich, eigene wie ein Spieler', () => {
+    const t = new Turnier();
+    t.spieler('a');
+    t.spieler('b');
+    t.spieler('c');
+    t.konkurrenz('k', { modus: 'jgj', bestOf: 3 }, ['a', 'b', 'c']);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    const helfer: Autor = {
+      rolle: 'spieler',
+      name: 'A',
+      spieler: 'a',
+      helfer: true,
+    };
+    t.gruppenspiel('k', 'b', 'c', s3(3, 3), helfer);
+    const bc = Object.values(t.z.konkurrenzen.k!.spiele).find((s) => s.a !== 'a' && s.b !== 'a')!;
+    expect(bc.stand).toBe('bestaetigt');
+    expect(bc.eintrag!.amtlich).toBe(true);
+    t.gruppenspiel('k', 'a', 'b', s3(3, 3), helfer);
+    const ab = Object.values(t.z.konkurrenzen.k!.spiele).find((s) => [s.a, s.b].includes('a') && [s.a, s.b].includes('b'))!;
+    expect(ab.stand).toBe('eingetragen');
+    expect(ab.eintrag!.amtlich).toBe(false);
+    expect(t.z.warnungen.length).toBe(0);
+  });
+});
+
+describe('Paket 4b: Leistungsklassen, Veröffentlichung, Spieler als Helfer', () => {
+  it('Klassentrennung: Gruppen nur aus gleicher Klasse, Endrunde gemischt', () => {
+    const t = new Turnier();
+    for (const [id, kl] of [
+      ['a', 'A'],
+      ['b', 'A'],
+      ['c', 'A'],
+      ['d', 'A'],
+      ['e', 'B'],
+      ['f', 'B'],
+      ['g', 'B'],
+      ['h', 'B'],
+      ['i', 'B'],
+      ['j', 'B'],
+    ] as const) {
+      t.e(ART.spielerAngelegt, {
+        id,
+        vorname: id,
+        nachname: 'T',
+        verein: '',
+        klasse: kl,
+      });
+    }
+    t.e(ART.turnierDaten, { angaben: ['klasse'] });
+    t.konkurrenz(
+      'k',
+      {
+        modus: 'gruppen_ko',
+        gruppenGroesse: 3,
+        klassenTrennung: 'klasse',
+        aufsteiger: 1,
+      },
+      ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
+    );
+    const z0 = t.z;
+    expect(klassenDerMeldungen(z0, z0.konkurrenzen.k!).map((k) => `${k.name}:${k.mitglieder.length}`)).toEqual(['A:4', 'B:6']);
+    t.auslosen('k');
+    const k = t.z.konkurrenzen.k!;
+    const gruppen = k.auslosungGruppen!.gruppen;
+    expect(gruppen.length).toBe(4); // je Klasse eigene Gruppen zu höchstens 3
+    const klassen = gruppenKlassen(t.z, k, gruppen);
+    expect(klassen).toEqual(['A', 'A', 'B', 'B']);
+    for (const g of gruppen) expect(new Set(g.map((s) => t.z.spieler[s]!.klasse)).size).toBe(1);
+    t.starten('k', 'gruppen');
+    expect(t.z.konkurrenzen.k!.gruppen.length).toBe(4);
+  });
+
+  it('TTR-Bereiche: Grenzen bilden Stufen, ohne TTR eigener Bereich', () => {
+    const t = new Turnier();
+    t.spieler('a', 1100);
+    t.spieler('b', 1250);
+    t.spieler('c', 1600);
+    t.spieler('d', null);
+    t.spieler('e', 1199);
+    t.spieler('f', 1500);
+    t.konkurrenz(
+      'k',
+      {
+        modus: 'gruppen_ko',
+        gruppenGroesse: 4,
+        klassenTrennung: 'ttr',
+        ttrGrenzen: [1200, 1500],
+      },
+      ['a', 'b', 'c', 'd', 'e', 'f'],
+    );
+    const z = t.z;
+    const kl = klassenDerMeldungen(z, z.konkurrenzen.k!);
+    expect(kl.map((x) => `${x.name}|${x.mitglieder.sort().join('')}`)).toEqual(['TTR bis 1199|ae', 'TTR 1200–1499|b', 'TTR ab 1500|cf', 'ohne Angabe|d']);
+    expect(ttrBereichName(0, [1200, 1500])).toBe('bis 1199');
+  });
+
+  it('Veröffentlichung: Turnier-Standard, Abweichung je Konkurrenz, „alles veröffentlichen“', () => {
+    const t = new Turnier();
+    t.spieler('a');
+    t.spieler('b');
+    t.konkurrenz('k1', { modus: 'jgj' }, ['a', 'b']);
+    t.konkurrenz('k2', { modus: 'jgj', veroeffentlichung: { tabellen: false, ko: false } }, ['a', 'b']);
+    let z = t.z;
+    expect(z.veroeffentlichung).toEqual({ tabellen: true, ko: true });
+    expect(sichtbar(z, z.konkurrenzen.k1!)).toEqual({
+      tabellen: true,
+      ko: true,
+    });
+    expect(sichtbar(z, z.konkurrenzen.k2!)).toEqual({
+      tabellen: false,
+      ko: false,
+    });
+    expect(etwasVerdeckt(z)).toBe(true);
+    t.e(ART.turnierDaten, { veroeffentlichung: { tabellen: false, ko: true } });
+    z = t.z;
+    expect(sichtbar(z, z.konkurrenzen.k1!)).toEqual({
+      tabellen: false,
+      ko: true,
+    });
+    t.e(ART.turnierDaten, {
+      veroeffentlichung: { tabellen: true, ko: true },
+      alleKonkurrenzen: true,
+    });
+    z = t.z;
+    expect(etwasVerdeckt(z)).toBe(false);
+    expect(z.konkurrenzen.k2!.einst.veroeffentlichung).toBeNull();
+    // Unsinn wird ignoriert
+    t.e(ART.turnierDaten, { veroeffentlichung: { tabellen: 'ja' } });
+    expect(t.z.veroeffentlichung).toEqual({ tabellen: true, ko: true });
+  });
+
+  it('Spieler mit Helferrecht: fremde Spiele amtlich, eigene wie ein Spieler', () => {
+    const t = new Turnier();
+    t.spieler('a');
+    t.spieler('b');
+    t.spieler('c');
+    t.konkurrenz('k', { modus: 'jgj' }, ['a', 'b', 'c']);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    const helferA: Autor = {
+      rolle: 'spieler',
+      name: 'A',
+      spieler: 'a',
+      helfer: true,
+    };
+    t.gruppenspiel('k', 'b', 'c', s3(5, 6, 7), helferA);
+    t.gruppenspiel('k', 'a', 'b', s3(5, 6, 7), helferA);
+    const k = t.z.konkurrenzen.k!;
+    const bc = Object.values(k.spiele).find((s) => [s.a, s.b].includes('b') && [s.a, s.b].includes('c'))!;
+    const ab = Object.values(k.spiele).find((s) => [s.a, s.b].includes('a') && [s.a, s.b].includes('b'))!;
+    expect(bc.eintrag?.amtlich).toBe(true);
+    expect(bc.stand).toBe('bestaetigt');
+    expect(ab.eintrag?.amtlich).toBe(false);
+    expect(ab.stand).toBe('eingetragen');
   });
 });

@@ -2,15 +2,7 @@ import type { LoginAntwort, TurnierInfo } from '@shared/protokoll';
 import { api, serverPruefen, type ServerZustand } from './dienste';
 import { ApiFehler } from './engine/api';
 import { gehe } from './router.svelte';
-import {
-  gemerktesTurnier,
-  kontoSitzung,
-  setzeAnzeigeName,
-  setzeKontoSitzung,
-  turnierMerken,
-  anzeigeName,
-  type KontoSitzung,
-} from './einstellungen';
+import { gemerktesTurnier, kontoSitzung, setzeAnzeigeName, setzeKontoSitzung, turnierMerken, anzeigeName, type KontoSitzung } from './einstellungen';
 
 /**
  * Zustand, den mehrere Seiten teilen: Server erreichbar? Wer ist angemeldet?
@@ -97,10 +89,20 @@ export function fehlerText(x: unknown, standard: string): string {
   return x instanceof Error ? x.message : standard;
 }
 
-/** Ein Turnier aus der Konto-Liste öffnen. Eigene Turniere darf das Konto beschreiben, fremde (Admin) nur ansehen. */
-export function kontoTurnierOeffnen(t: TurnierInfo, eigenes: boolean) {
+/**
+ * Ein Turnier aus der Konto-Liste öffnen. Die Rechte kommen vom Konto (der Server prüft sie beim Öffnen);
+ * das Konto-Token wird nie am Turnier gespeichert, damit „Abmelden“ sauber wirkt.
+ */
+export function kontoTurnierOeffnen(t: TurnierInfo) {
   const g = gemerktesTurnier(t.id);
-  const token = g?.token ?? (eigenes && app.sitzung ? app.sitzung.token : null);
-  turnierMerken({ id: t.id, name: t.name, datum: t.datum, modus: 'online', rolle: token ? 'leitung' : 'zuschauer', token });
+  turnierMerken({
+    id: t.id,
+    name: t.name,
+    datum: t.datum,
+    modus: 'online',
+    rolle: g?.rolle ?? 'zuschauer',
+    token: g?.token ?? null,
+    konto: true,
+  });
   gehe('t/' + t.id);
 }
