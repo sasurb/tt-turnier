@@ -8,12 +8,15 @@
   let {
     start = standardEinstellungen(),
     gestartet = false,
+    mitMeldungen = false,
     knopf,
     speichern,
     abbrechen,
   }: {
     start?: KonkurrenzEinstellungen;
     gestartet?: boolean;
+    /** Einzel/Doppel lässt sich nur ohne Meldungen umstellen */
+    mitMeldungen?: boolean;
     knopf: string;
     speichern: (e: KonkurrenzEinstellungen) => Promise<void>;
     abbrechen: () => void;
@@ -40,8 +43,9 @@
   });
   let fehler = $state('');
   let sendet = $state(false);
-  const mitGruppen = $derived(e.modus !== 'ko');
+  const mitGruppen = $derived(e.modus !== 'ko' && e.modus !== 'doppel_ko');
   const mitKo = $derived(e.modus !== 'jgj');
+  const einfachesKo = $derived(e.modus === 'ko' || e.modus === 'gruppen_ko');
 
   async function absenden(ev: SubmitEvent) {
     ev.preventDefault();
@@ -77,9 +81,21 @@
   <label for="kn-{id}">{T.konk.name}</label>
   <input id="kn-{id}" bind:value={e.name} placeholder={T.konk.namePlatzhalter} required maxlength="80" />
 
+  <fieldset disabled={gestartet || mitMeldungen}>
+    <legend>{T.konk.art}<Hilfe text={T.konk.artHilfe} /></legend>
+    <div class="reihe arten">
+      {#each ['einzel', 'doppel', 'mixed'] as const as a (a)}
+        <label class="wahl klein" class:aktiv={e.art === a}>
+          <input type="radio" name="art-{id}" value={a} bind:group={e.art} />
+          <span><strong>{T.konk.arten[a]}</strong></span>
+        </label>
+      {/each}
+    </div>
+  </fieldset>
+
   <fieldset disabled={gestartet}>
     <legend>{T.konk.modus}</legend>
-    {#each ['gruppen_ko', 'jgj', 'ko'] as const as m (m)}
+    {#each ['gruppen_ko', 'jgj', 'ko', 'doppel_ko'] as const as m (m)}
       <label class="wahl" class:aktiv={e.modus === m}>
         <input type="radio" name="modus-{id}" value={m} bind:group={e.modus} />
         <span><strong>{T.konk.modi[m]}</strong><span class="leise">{T.konk.modiText[m]}</span></span>
@@ -129,8 +145,11 @@
       {#each ['wo', 'hobby'] as w (w)}<option value={w}>{T.konk.rueckzugWahl[w]}</option>{/each}
     </select>
   {/if}
-  {#if mitKo}
+  {#if einfachesKo}
     <label class="haken"><input type="checkbox" bind:checked={e.platz3} /> {T.konk.platz3}</label>
+    <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={e.trostrunde} /> {T.konk.trostrunde}</label><Hilfe text={T.konk.trostrundeHilfe} /></div>
+  {:else if e.modus === 'doppel_ko'}
+    <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={e.finaleWiederholung} /> {T.konk.finaleWiederholung}</label><Hilfe text={T.konk.finaleWiederholungHilfe} /></div>
   {/if}
 
   {#if e.modus === 'gruppen_ko'}
@@ -202,7 +221,12 @@
   }
   .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; margin: 12px 0 6px; }
   .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
+  .haken-zeile { display: flex; align-items: center; gap: 4px; }
+  .haken-zeile .haken { margin: 6px 0; }
   .weitere { margin-top: 16px; }
+  .arten { gap: 8px; }
+  .arten .wahl { flex: 1 1 0; justify-content: center; padding: 10px 8px; margin: 0; }
+  legend { display: flex; align-items: center; }
   .weitere summary { font-size: 1rem; }
   h3 { margin-top: 16px; }
 </style>

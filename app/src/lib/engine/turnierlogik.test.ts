@@ -1,22 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { ART, type Autor } from '@shared/protokoll';
 import {
+  anstehendeSpiele,
   auslosungErstellen,
   endrundeErstellen,
   etwasVerdeckt,
+  freierTisch,
   gruppenKlassen,
   klassenDerMeldungen,
+  meinAufruf,
+  name,
   platzierungen,
   pruefliste,
   qualifikanten,
   sichtbar,
   spieleVon,
   tabelle,
+  teilnehmerDaten,
+  tische,
+  trostPlaetze,
   zulassungsHinweise,
 } from './abfragen';
 import { gruppenAuslosen, koAuslosen, setzplaetze, treffRunde } from './auslosung';
 import { ergebnisText, ergebnisWerten, satzAusVerliererpunkten } from './ergebnis';
-import { PLATZ3_ID, koSpielId } from './ko';
+import { PLATZ3_ID, koSpielId, rundenName } from './ko';
 import { klasseVon, standardEinstellungen, ttrBereichName, type ErgebnisEingabe, type KonkurrenzEinstellungen, type TurnierSpieler } from './modell';
 import { rundenplan } from './rundenplan';
 import type { LokalesEreignis } from './typen';
@@ -829,5 +836,275 @@ describe('Paket 4b: Leistungsklassen, Veröffentlichung, Spieler als Helfer', ()
     expect(bc.stand).toBe('bestaetigt');
     expect(ab.eintrag?.amtlich).toBe(false);
     expect(ab.stand).toBe('eingetragen');
+  });
+});
+
+
+/** Sieger eines K.-o.-Spiels eintragen: a gewinnt 3:0 bzw. b */
+function koSieg(t: Turnier, k: string, spiel: string, wer: 'a' | 'b') {
+  const s = t.z.konkurrenzen[k]!.spiele[spiel]!;
+  expect(s.status, `${spiel} sollte offen sein`).toBe('offen');
+  t.ergebnis(k, spiel, wer === 'a' ? s3(5, 6, 7) : s3(-5, -6, -7));
+}
+
+describe('Etappe 5: Trostrunde', () => {
+  it('Verlierer der ersten Runde spielen in der Trostrunde weiter, eigene Platzierung', () => {
+    const t = new Turnier();
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) t.spieler(id, 1800 - id.charCodeAt(0));
+    t.konkurrenz('k', { modus: 'ko', trostrunde: true, platz3: true }, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+    t.auslosen('k');
+    t.starten('k', 'ko');
+    let k = t.z.konkurrenzen.k!;
+    const trost = Object.values(k.spiele).filter((s) => s.baum === 'trost');
+    expect(trost.map((s) => s.id).sort()).toEqual(['tr-1-0', 'tr-1-1', 'tr-2-0']);
+    expect(trost.every((s) => s.status === 'wartet')).toBe(true);
+    expect(k.spiele['ko-1-0']!.verliererWeiter).toEqual({ spiel: 'tr-1-0', seite: 'a' });
+    // erste Runde: immer a gewinnt
+    for (let i = 0; i < 4; i++) koSieg(t, 'k', koSpielId(1, i), 'a');
+    k = t.z.konkurrenzen.k!;
+    const verlierer = [0, 1, 2, 3].map((i) => k.spiele[koSpielId(1, i)]!.b);
+    expect(k.spiele['tr-1-0']!.a).toBe(verlierer[0]);
+    expect(k.spiele['tr-1-0']!.b).toBe(verlierer[1]);
+    expect(k.spiele['tr-1-1']!.a).toBe(verlierer[2]);
+    expect(k.spiele['tr-1-1']!.status).toBe('offen');
+    koSieg(t, 'k', 'tr-1-0', 'b');
+    koSieg(t, 'k', 'tr-1-1', 'a');
+    koSieg(t, 'k', 'tr-2-0', 'a');
+    k = t.z.konkurrenzen.k!;
+    const tp = trostPlaetze(k);
+    expect(tp.find((p) => p.platz === 1)?.id).toBe(verlierer[1]);
+    expect(tp.find((p) => p.platz === 2)?.id).toBe(verlierer[2]);
+    expect(tp.filter((p) => p.bezeichnung === '3–4').map((p) => p.id).sort()).toEqual([verlierer[0], verlierer[3]].sort());
+    // Hauptrunde: Verlierer der 1. Runde tauchen nicht als 5–8 auf
+    expect(platzierungen(k).some((p) => p.bezeichnung === '5–8')).toBe(false);
+    expect(rundenName(2, 2, 'trost')).toBe('Trostrunde: Endspiel');
+    // Konkurrenz ist erst beendet, wenn auch die Trostrunde durch ist
+    expect(k.status).toBe('ko');
+  });
+
+  it('Freilos in Runde 1 ergibt Freilos in der Trostrunde', () => {
+    const t = new Turnier();
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) t.spieler(id, 1800 - id.charCodeAt(0));
+    t.konkurrenz('k', { modus: 'ko', trostrunde: true }, ['a', 'b', 'c', 'd', 'e', 'f']);
+    t.auslosen('k');
+    t.starten('k', 'ko');
+    const k = t.z.konkurrenzen.k!;
+    const freilose = Object.values(k.spiele).filter((s) => s.baum === 'haupt' && s.runde === 1 && s.status === 'freilos');
+    expect(freilose.length).toBe(2);
+    // je Freilos-Spiel kommt kein Verlierer: Trostspiel hat eine freie Seite
+    const trostFrei = Object.values(k.spiele).filter((s) => s.baum === 'trost' && s.runde === 1 && (s.aFrei || s.bFrei));
+    expect(trostFrei.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Etappe 5: Doppel-K.-o.', () => {
+  it('4 Teilnehmer: Verliererbaum, Endspiel, zweites Endspiel nur wenn der Verliererbaum gewinnt', () => {
+    const t = new Turnier();
+    for (const id of ['a', 'b', 'c', 'd']) t.spieler(id, 1800 - id.charCodeAt(0));
+    t.konkurrenz('k', { modus: 'doppel_ko', finaleWiederholung: true }, ['a', 'b', 'c', 'd']);
+    t.auslosen('k');
+    t.starten('k', 'ko');
+    let k = t.z.konkurrenzen.k!;
+    expect(k.reihenfolge).toEqual(['ko-1-0', 'ko-1-1', 'vl-1-0', 'ko-2-0', 'vl-2-0', 'fi-1-0', 'fi-2-0']);
+    koSieg(t, 'k', 'ko-1-0', 'a');
+    koSieg(t, 'k', 'ko-1-1', 'a');
+    k = t.z.konkurrenzen.k!;
+    const [w1, l1, w2, l2] = [k.spiele['ko-1-0']!.a, k.spiele['ko-1-0']!.b, k.spiele['ko-1-1']!.a, k.spiele['ko-1-1']!.b];
+    expect([k.spiele['vl-1-0']!.a, k.spiele['vl-1-0']!.b]).toEqual([l1, l2]);
+    expect([k.spiele['ko-2-0']!.a, k.spiele['ko-2-0']!.b]).toEqual([w1, w2]);
+    koSieg(t, 'k', 'vl-1-0', 'a'); // l1 weiter
+    koSieg(t, 'k', 'ko-2-0', 'b'); // w2 ins Endspiel, w1 in den Verliererbaum
+    k = t.z.konkurrenzen.k!;
+    expect([k.spiele['vl-2-0']!.a, k.spiele['vl-2-0']!.b]).toEqual([l1, w1]);
+    koSieg(t, 'k', 'vl-2-0', 'b'); // w1 gewinnt den Verliererbaum
+    k = t.z.konkurrenzen.k!;
+    expect([k.spiele['fi-1-0']!.a, k.spiele['fi-1-0']!.b]).toEqual([w2, w1]);
+    expect(k.spiele['fi-2-0']!.status).toBe('wartet');
+    // Verliererbaum-Sieger gewinnt das erste Endspiel → zweites Endspiel
+    koSieg(t, 'k', 'fi-1-0', 'b');
+    k = t.z.konkurrenzen.k!;
+    expect(k.spiele['fi-2-0']!.status).toBe('offen');
+    expect([k.spiele['fi-2-0']!.a, k.spiele['fi-2-0']!.b]).toEqual([w1, w2]);
+    expect(platzierungen(k).find((p) => p.platz === 1)).toBeUndefined();
+    koSieg(t, 'k', 'fi-2-0', 'b');
+    k = t.z.konkurrenzen.k!;
+    const p = platzierungen(k);
+    expect(p.find((x) => x.platz === 1)?.id).toBe(w2);
+    expect(p.find((x) => x.platz === 2)?.id).toBe(w1);
+    expect(p.find((x) => x.platz === 3)?.id).toBe(l1);
+    expect(p.find((x) => x.platz === 4)?.id).toBe(l2);
+    expect(k.status).toBe('beendet');
+  });
+
+  it('Hauptrundensieger gewinnt das Endspiel → zweites Endspiel entfällt; 8er-Baum hat 6 Verliererrunden', () => {
+    const t = new Turnier();
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) t.spieler(id, 1800 - id.charCodeAt(0));
+    t.konkurrenz('k', { modus: 'doppel_ko', finaleWiederholung: true }, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+    t.auslosen('k');
+    t.starten('k', 'ko');
+    let k = t.z.konkurrenzen.k!;
+    const vl = Object.values(k.spiele).filter((s) => s.baum === 'verlierer');
+    expect(Math.max(...vl.map((s) => s.runde))).toBe(4);
+    expect(vl.length).toBe(6); // 2 + 2 + 1 + 1
+    // alles a gewinnt
+    for (const id of k.reihenfolge) {
+      const s = t.z.konkurrenzen.k!.spiele[id]!;
+      if (s.status === 'offen') koSieg(t, 'k', id, 'a');
+    }
+    k = t.z.konkurrenzen.k!;
+    expect(k.spiele['fi-1-0']!.status).toBe('gespielt');
+    expect(k.spiele['fi-2-0']!.status).toBe('entfallen');
+    expect(k.status).toBe('beendet');
+    const p = platzierungen(k);
+    expect(p.map((x) => x.platz).sort((x, y) => x - y)).toEqual([1, 2, 3, 4, 5, 5, 7, 7]);
+    expect(rundenName(3, 3, 'verlierer')).toBe('Verliererrunde 3');
+  });
+});
+
+describe('Etappe 5: Doppel und Mixed', () => {
+  it('Paare melden, Namen, Setzung nach Summen-TTR, Spieler trägt als Teil des Paares ein', () => {
+    const t = new Turnier();
+    t.e(ART.spielerAngelegt, { id: 'a', vorname: 'Anna', nachname: 'Alpha', verein: 'TTC', ttr: 1500, geschlecht: 'w' });
+    t.e(ART.spielerAngelegt, { id: 'b', vorname: 'Ben', nachname: 'Beta', verein: 'TTC', ttr: 1400, geschlecht: 'm' });
+    t.e(ART.spielerAngelegt, { id: 'c', vorname: 'Cem', nachname: 'Gamma', verein: 'SV', ttr: 1300, geschlecht: 'm' });
+    t.e(ART.spielerAngelegt, { id: 'd', vorname: 'Dora', nachname: 'Delta', verein: 'SV', ttr: 1200, geschlecht: 'w' });
+    t.e(ART.spielerAngelegt, { id: 'e', vorname: 'Eva', nachname: 'Delta', verein: 'SV', ttr: 1100, geschlecht: 'w' });
+    t.e(ART.spielerAngelegt, { id: 'f', vorname: 'Fin', nachname: 'Zeta', verein: 'SV', ttr: null, geschlecht: 'm' });
+    t.e(ART.konkurrenzAngelegt, { id: 'k', einst: { ...standardEinstellungen('Mixed'), art: 'mixed', modus: 'jgj' } });
+    // Einzelmeldung im Doppel geht nicht
+    t.e(ART.teilnehmerGemeldet, { konkurrenz: 'k', id: 'a' });
+    t.e(ART.paarGemeldet, { konkurrenz: 'k', id: 'p-0001', spieler: ['a', 'b'] });
+    t.e(ART.paarGemeldet, { konkurrenz: 'k', id: 'p-0002', spieler: ['c', 'd'] });
+    t.e(ART.paarGemeldet, { konkurrenz: 'k', id: 'p-0003', spieler: ['e', 'f'] });
+    t.e(ART.paarGemeldet, { konkurrenz: 'k', id: 'p-0004', spieler: ['a', 'c'] }); // a schon gemeldet
+    t.e(ART.paarGemeldet, { konkurrenz: 'k', id: 'p-0005', spieler: ['d', 'e'] }); // zwei Frauen im Mixed, d schon gemeldet
+    let z = t.z;
+    let k = z.konkurrenzen.k!;
+    expect(k.meldungen).toEqual(['p-0001', 'p-0002', 'p-0003']);
+    expect(z.warnungen.length).toBe(3);
+    expect(name(z, 'p-0001')).toBe('Alpha/Beta');
+    expect(name(z, 'p-0002')).toBe('Gamma/Delta');
+    const daten = teilnehmerDaten(z, k);
+    expect(daten['p-0001']!.ttr).toBe(2900);
+    expect(daten['p-0001']!.verein).toBe('TTC');
+    expect(daten['p-0002']!.verein).toBe('SV');
+    expect(daten['p-0003']!.ttr).toBeNull();
+    // Mixed mit gleichem Geschlecht wird abgelehnt
+    t.e(ART.teilnehmerAbgemeldet, { konkurrenz: 'k', id: 'p-0003' });
+    t.e(ART.paarGemeldet, { konkurrenz: 'k', id: 'p-0006', spieler: ['e', 'a'] });
+    z = t.z;
+    expect(z.konkurrenzen.k!.meldungen).toEqual(['p-0001', 'p-0002']);
+    expect(z.konkurrenzen.k!.paare['p-0003']).toBeUndefined();
+    t.e(ART.paarGemeldet, { konkurrenz: 'k', id: 'p-0003', spieler: ['e', 'f'] });
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    z = t.z;
+    k = z.konkurrenzen.k!;
+    expect(k.gruppen[0]!.mitglieder).toHaveLength(3);
+    expect(k.gruppen[0]!.mitglieder[0]).toBe('p-0001'); // höchste TTR-Summe gesetzt
+    // Anna trägt das Spiel ihres Paares ein (zählt als Spielereintrag ihrer Seite)
+    const sp = Object.values(k.spiele).find((s) => [s.a, s.b].includes('p-0001') && [s.a, s.b].includes('p-0002'))!;
+    t.e(ART.spielErgebnis, { konkurrenz: 'k', spiel: sp.id, a: sp.a, b: sp.b, ergebnis: sp.a === 'p-0001' ? s3(5, 6, 7) : s3(-5, -6, -7) }, spielerAutor('a'));
+    z = t.z;
+    const sp2 = z.konkurrenzen.k!.spiele[sp.id]!;
+    expect(sp2.stand).toBe('eingetragen');
+    expect(sp2.eintrag?.seite).toBe(sp.a === 'p-0001' ? 'a' : 'b');
+    // Fin (Paar p3) darf dieses Spiel nicht eintragen
+    t.e(ART.spielErgebnis, { konkurrenz: 'k', spiel: sp.id, a: sp.a, b: sp.b, ergebnis: s3(5, 6, 7) }, spielerAutor('f'));
+    expect(t.z.warnungen.at(-1)?.text).toMatch(/eigenen Spiele/);
+    // Meine Spiele: Anna sieht die Spiele von p1
+    expect(spieleVon(z, 'a').length).toBe(2);
+    // Spieler, der in einer laufenden Doppel-Konkurrenz steckt, lässt sich nicht löschen
+    t.e(ART.spielerEntfernt, { id: 'a' });
+    expect(t.z.spieler.a).toBeDefined();
+  });
+});
+
+describe('Etappe 5: Tische und Spielaufruf', () => {
+  it('Aufruf belegt Tisch, Schiedsrichter, Ergebnis gibt den Tisch frei, Helfer dürfen aufrufen', () => {
+    const t = new Turnier();
+    for (const id of ['a', 'b', 'c', 'd', 'e']) t.spieler(id);
+    t.e(ART.turnierDaten, { tische: 2 });
+    t.konkurrenz('k', { modus: 'jgj' }, ['a', 'b', 'c', 'd']);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    let z = t.z;
+    expect(tische(z).map((x) => x.nr)).toEqual([1, 2]);
+    expect(freierTisch(z)).toBe(1);
+    const an = anstehendeSpiele(z);
+    expect(an.length).toBe(6);
+    expect(an.every((x) => x.bereit)).toBe(true);
+    const erstes = an[0]!.spiel;
+    const helfer: Autor = { rolle: 'helfer', name: 'Helga' };
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: erstes.id, tisch: 1, schiri: { spieler: 'e' } }, helfer);
+    z = t.z;
+    const s = z.konkurrenzen.k!.spiele[erstes.id]!;
+    expect(s.tisch).toBe(1);
+    expect(s.schiri).toEqual({ name: 'E Test', spieler: 'e' });
+    expect(tische(z)[0]!.spiel?.id).toBe(erstes.id);
+    expect(freierTisch(z)).toBe(2);
+    expect(meinAufruf(z, s.a!).spielt?.id).toBe(erstes.id);
+    expect(meinAufruf(z, 'e').pfeift?.id).toBe(erstes.id);
+    // Spiele der Beschäftigten rutschen nach hinten
+    const an2 = anstehendeSpiele(z);
+    expect(an2.length).toBe(5);
+    expect(an2.filter((x) => x.bereit).length).toBe(1); // nur das Spiel der beiden anderen
+    // Tisch 1 ist belegt, Tisch 3 gibt es nicht ohne Angabe > 2? (zahl erlaubt, aber Warnung bei belegt)
+    const zweites = an2.find((x) => x.bereit)!.spiel;
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: zweites.id, tisch: 1 });
+    expect(t.z.warnungen.at(-1)?.text).toMatch(/belegt/);
+    t.e(ART.tischGesperrt, { nr: 2, gesperrt: true });
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: zweites.id, tisch: 2 });
+    expect(t.z.warnungen.at(-1)?.text).toMatch(/gesperrt/);
+    expect(freierTisch(t.z)).toBeNull();
+    t.e(ART.tischGesperrt, { nr: 2, gesperrt: false });
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: zweites.id, tisch: 2 });
+    expect(t.z.konkurrenzen.k!.spiele[zweites.id]!.tisch).toBe(2);
+    // Spieler ohne Helferrecht darf nicht aufrufen
+    t.e(ART.spielAufrufZurueck, { konkurrenz: 'k', spiel: zweites.id }, spielerAutor('a'));
+    expect(t.z.konkurrenzen.k!.spiele[zweites.id]!.tisch).toBe(2);
+    // Ergebnis → Tisch frei, Tisch bleibt am Spiel vermerkt
+    t.ergebnis('k', erstes.id, s3(5, 6, 7));
+    z = t.z;
+    expect(z.konkurrenzen.k!.spiele[erstes.id]!.tisch).toBe(1);
+    expect(tische(z)[0]!.spiel).toBeNull();
+    // Aufruf zurücknehmen
+    t.e(ART.spielAufrufZurueck, { konkurrenz: 'k', spiel: zweites.id });
+    expect(t.z.konkurrenzen.k!.spiele[zweites.id]!.tisch).toBeNull();
+    // beendetes Spiel: Aufruf zurücknehmen geht nicht mehr
+    t.e(ART.spielAufrufZurueck, { konkurrenz: 'k', spiel: erstes.id }, helfer);
+    expect(t.z.konkurrenzen.k!.spiele[erstes.id]!.tisch).toBe(1);
+    // Spieler mit Helferrecht ruft fremde Spiele auf, eigene nicht
+    const sh = (id: string): Autor => ({ ...spielerAutor(id), helfer: true });
+    const eigenes = Object.values(t.z.konkurrenzen.k!.spiele).find((x) => x.status === 'offen' && (x.a === 'a' || x.b === 'a'))!;
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: eigenes.id, tisch: 2 }, sh('a'));
+    expect(t.z.konkurrenzen.k!.spiele[eigenes.id]!.tisch).toBeNull();
+    expect(t.z.warnungen.at(-1)?.text).toMatch(/Eigene Spiele/);
+  });
+});
+
+describe('Robustheit gegen manipulierte Ereignisse', () => {
+  it('Schlüssel wie __proto__ oder constructor legen das Turnier nicht lahm', () => {
+    const t = new Turnier();
+    for (const id of ['a', 'b', 'c', 'd']) t.spieler(id);
+    t.konkurrenz('k', { modus: 'jgj' }, ['a', 'b', 'c', 'd']);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    const helfer: Autor = { rolle: 'helfer', name: 'Helga' };
+    for (const boese of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+      t.e(ART.spielAufrufZurueck, { konkurrenz: boese, spiel: 'x' }, helfer);
+      t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: boese, tisch: 1, schiri: { spieler: boese } }, helfer);
+      t.e(ART.spielErgebnis, { konkurrenz: boese, spiel: boese }, spielerAutor('a'));
+      t.e(ART.paarGemeldet, { konkurrenz: 'k', id: boese, spieler: [boese, 'a'] });
+      t.e(ART.teilnehmerGemeldet, { konkurrenz: 'k', spieler: boese });
+    }
+    const z = t.z;
+    expect(Object.keys(z.konkurrenzen)).toEqual(['k']);
+    expect(z.konkurrenzen.k!.meldungen).toEqual(['a', 'b', 'c', 'd']);
+    expect(z.warnungen.length).toBeGreaterThan(0);
+    // das Turnier bleibt bedienbar
+    const s = Object.values(z.konkurrenzen.k!.spiele)[0]!;
+    t.ergebnis('k', s.id, s3(5, 6, 7));
+    expect(t.z.konkurrenzen.k!.spiele[s.id]!.status).not.toBe('offen');
   });
 });

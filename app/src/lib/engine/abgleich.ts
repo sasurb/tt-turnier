@@ -107,6 +107,9 @@ export class Abgleich {
           if (f instanceof ApiFehler && (f.code === 'nicht_angemeldet' || f.code === 'keine_berechtigung' || f.code === 'gesperrt')) {
             verbindung = 'nicht_angemeldet';
             meldung = f.message;
+          } else if (f instanceof ApiFehler && (f.code === 'zu_viele_versuche' || f.code === 'zu_gross')) {
+            // später erneut senden, Abholen läuft weiter
+            meldung = f.message;
           } else {
             throw f;
           }

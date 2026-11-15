@@ -1,8 +1,9 @@
 import { anzahlGesetzte, anzahlGruppen, gruppenAuslosen, koAuslosen, naechsteZweierpotenz, setzreihe } from './auslosung';
-import { koPlatzierungen, koRunden, type Platzierung } from './ko';
+import { koPlatzierungen, koRunden, rundenName, trostPlatzierungen, type Platzierung } from './ko';
 import {
   gruppenName,
   klasseVon,
+  paarName,
   spielerName,
   ttrBereichName,
   type KonkurrenzZustand,
@@ -12,13 +13,51 @@ import {
   type Zulassung,
 } from './modell';
 import { gruppenTabelle, type Tabelle } from './wertung';
-import { erstePhase, zurueckgezogen, type TurnierZustand } from './zustand';
+import { alleOffenenAufgerufenen, erstePhase, spielerVon, teilnehmerVon, zurueckgezogen, type TurnierZustand } from './zustand';
 
 /** Abfragen für die Oberfläche (rechnen nur, ändern nichts). */
 
-export function name(z: TurnierZustand, id: string | null): string {
+/** Name eines Teilnehmers: Spieler oder Paar („Müller/Schmidt“) */
+export function name(z: TurnierZustand, id: string | null, k?: KonkurrenzZustand): string {
   if (!id) return '–';
-  return spielerName(z.spieler[id]);
+  if (z.spieler[id]) return spielerName(z.spieler[id]);
+  const paar = k?.paare[id] ?? Object.values(z.konkurrenzen).map((x) => x.paare[id]).find(Boolean);
+  if (paar) return paarName(z.spieler[paar.spieler[0]], z.spieler[paar.spieler[1]]);
+  return '?';
+}
+
+/** Langer Name eines Teilnehmers (Paar mit Vornamen) */
+export function nameLang(z: TurnierZustand, id: string | null, k?: KonkurrenzZustand): string {
+  if (!id) return '–';
+  const paar = k?.paare[id] ?? Object.values(z.konkurrenzen).map((x) => x.paare[id]).find(Boolean);
+  if (paar) return `${spielerName(z.spieler[paar.spieler[0]])} / ${spielerName(z.spieler[paar.spieler[1]])}`;
+  return name(z, id, k);
+}
+
+/**
+ * Daten je Teilnehmer für Setzung und Auslosung. Einzel: der Spieler. Doppel: TTR = Summe beider
+ * (fehlt einer, kein TTR), Verein = beide Vereine (gleicher Verein → ein Name), Klasse nur bei Gleichheit.
+ */
+export function teilnehmerDaten(z: TurnierZustand, k: KonkurrenzZustand): Record<string, TurnierSpieler> {
+  if (k.einst.art === 'einzel') return z.spieler;
+  const aus: Record<string, TurnierSpieler> = {};
+  for (const p of Object.values(k.paare)) {
+    const a = z.spieler[p.spieler[0]];
+    const b = z.spieler[p.spieler[1]];
+    if (!a || !b) continue;
+    const vereine = [...new Set([a.verein, b.verein].map((v) => v.trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y, 'de'));
+    aus[p.id] = {
+      id: p.id,
+      vorname: '',
+      nachname: paarName(a, b),
+      verein: vereine.join(' / '),
+      ttr: typeof a.ttr === 'number' && typeof b.ttr === 'number' ? a.ttr + b.ttr : null,
+      klasse: a.klasse && b.klasse && a.klasse.trim().toLowerCase() === b.klasse.trim().toLowerCase() ? a.klasse : null,
+      geschlecht: null,
+      jahrgang: null,
+    };
+  }
+  return aus;
 }
 
 export function tabelle(k: KonkurrenzZustand, nr: number): Tabelle {
@@ -67,15 +106,16 @@ export function gruppenZahlVorschlag(k: KonkurrenzZustand): number {
 /** Klassen der Gemeldeten (Reihenfolge: Klassenbegriffe alphabetisch bzw. TTR-Bereiche aufsteigend, „ohne“ zuletzt) */
 export function klassenDerMeldungen(z: TurnierZustand, k: KonkurrenzZustand): { schluessel: string; name: string; mitglieder: string[] }[] {
   if (k.einst.klassenTrennung === 'keine') return [{ schluessel: '', name: '', mitglieder: [...k.meldungen] }];
+  const daten = teilnehmerDaten(z, k);
   const nachKlasse = new Map<string, string[]>();
   for (const id of k.meldungen) {
-    const kl = klasseVon(z.spieler[id], k.einst);
+    const kl = klasseVon(daten[id], k.einst);
     nachKlasse.set(kl, [...(nachKlasse.get(kl) ?? []), id]);
   }
   const name = (kl: string) => {
     if (kl === '') return 'ohne Angabe';
     if (k.einst.klassenTrennung === 'ttr') return `TTR ${ttrBereichName(Number(kl.slice(3)), k.einst.ttrGrenzen)}`;
-    return z.spieler[nachKlasse.get(kl)![0]!]?.klasse?.trim() ?? kl;
+    return daten[nachKlasse.get(kl)![0]!]?.klasse?.trim() ?? kl;
   };
   return [...nachKlasse.keys()]
     .sort((a, b) => (a === '' ? 1 : b === '' ? -1 : k.einst.klassenTrennung === 'ttr' ? Number(a.slice(3)) - Number(b.slice(3)) : a.localeCompare(b, 'de')))
@@ -95,7 +135,8 @@ export function gruppenKlassen(z: TurnierZustand, k: KonkurrenzZustand, gruppen:
 
 /** Daten für das Ereignis „auslosung.gesetzt“ der ersten Phase */
 export function auslosungErstellen(z: TurnierZustand, k: KonkurrenzZustand, zufall: number, gruppen?: number) {
-  const reihe = setzreihe(k.meldungen, z.spieler, k.einst, k.setzliste);
+  const daten = teilnehmerDaten(z, k);
+  const reihe = setzreihe(k.meldungen, daten, k.einst, k.setzliste);
   if (erstePhase(k) === 'gruppen') {
     if (k.einst.modus !== 'jgj' && k.einst.klassenTrennung !== 'keine') {
       // Je Leistungsklasse eigene Gruppen; Gesetzte und Zufall wie sonst, nur innerhalb der Klasse
@@ -105,7 +146,7 @@ export function auslosungErstellen(z: TurnierZustand, k: KonkurrenzZustand, zufa
         const r = reihe.filter((id) => kl.mitglieder.includes(id));
         const g = Math.max(1, Math.min(anzahlGruppen(r.length, k.einst.gruppenGroesse), Math.floor(r.length / 2) || 1));
         const s = k.einst.setzung === 'keine' ? 0 : Math.min(g, r.length);
-        alle.push(...gruppenAuslosen(r, g, s, z.spieler, k.einst.vereinstrennung, z2));
+        alle.push(...gruppenAuslosen(r, g, s, daten, k.einst.vereinstrennung, z2));
         z2 = (z2 * 1103515245 + 12345) % 2 ** 31;
       }
       return {
@@ -121,7 +162,7 @@ export function auslosungErstellen(z: TurnierZustand, k: KonkurrenzZustand, zufa
       konkurrenz: k.id,
       phase: 'gruppen' as const,
       zufall,
-      gruppen: gruppenAuslosen(reihe, g, Math.min(s, reihe.length), z.spieler, k.einst.vereinstrennung, zufall),
+      gruppen: gruppenAuslosen(reihe, g, Math.min(s, reihe.length), daten, k.einst.vereinstrennung, zufall),
     };
   }
   const s = anzahlGesetzte(k.einst, reihe.length, false);
@@ -132,7 +173,7 @@ export function auslosungErstellen(z: TurnierZustand, k: KonkurrenzZustand, zufa
     plaetze: koAuslosen({
       gesetzte: reihe.slice(0, s),
       stufen: [reihe.slice(s)],
-      spieler: z.spieler,
+      spieler: daten,
       vereinstrennung: k.einst.vereinstrennung,
       zufall,
     }),
@@ -156,7 +197,7 @@ export function endrundeErstellen(z: TurnierZustand, k: KonkurrenzZustand, zufal
     plaetze: koAuslosen({
       gesetzte,
       stufen,
-      spieler: z.spieler,
+      spieler: teilnehmerDaten(z, k),
       vereinstrennung: k.einst.vereinstrennung,
       gruppeVon,
       zufall,
@@ -172,21 +213,117 @@ export function runden(k: KonkurrenzZustand): number {
   return k.auslosungKo ? koRunden(k.auslosungKo.plaetze.length) : 0;
 }
 
+/** Lesbare Runde eines Spiels: „Gruppe A · Runde 2“, „Halbfinale“, „Trostrunde: Endspiel“, „Verliererrunde 3“ */
+export function rundeVon(k: KonkurrenzZustand, s: Spiel): string {
+  if (s.phase === 'gruppen') return `Gruppe ${gruppenName(s.gruppe ?? 0)} · Runde ${s.runde}`;
+  if (s.platz3) return 'Spiel um Platz 3';
+  const R = s.baum === 'haupt' ? runden(k) : s.baum === 'trost' ? runden(k) - 1 : 0;
+  return rundenName(s.runde, R, s.baum);
+}
+
 export function platzierungen(k: KonkurrenzZustand): Platzierung[] {
   return koPlatzierungen(k);
 }
+export function trostPlaetze(k: KonkurrenzZustand): Platzierung[] {
+  return trostPlatzierungen(k);
+}
 
-/** Alle Spiele eines Spielers über alle Konkurrenzen (in Spielfolge) */
+/** Alle Spiele eines Spielers über alle Konkurrenzen (in Spielfolge), auch als Teil eines Paares */
 export function spieleVon(z: TurnierZustand, spieler: string): Spiel[] {
   const aus: Spiel[] = [];
   for (const kid of z.konkurrenzReihe) {
     const k = z.konkurrenzen[kid]!;
     for (const id of k.reihenfolge) {
       const s = k.spiele[id]!;
-      if (s.a === spieler || s.b === spieler) aus.push(s);
+      if (spielerVon(k, s.a).includes(spieler) || spielerVon(k, s.b).includes(spieler)) aus.push(s);
     }
   }
   return aus;
+}
+
+/** Konkurrenzen, in denen ein Spieler gemeldet ist (direkt oder im Paar) */
+export function konkurrenzenVon(z: TurnierZustand, spieler: string): KonkurrenzZustand[] {
+  return z.konkurrenzReihe.map((id) => z.konkurrenzen[id]!).filter((k) => teilnehmerVon(k, spieler));
+}
+
+/* ---------- Tische und Spielaufruf ---------- */
+
+export interface TischStand {
+  nr: number;
+  gesperrt: boolean;
+  /** laufendes Spiel (aufgerufen, noch ohne Ergebnis) */
+  spiel: Spiel | null;
+}
+
+/** Alle Tische mit Belegung (Anzahl aus den Turnierangaben; ohne Angabe: so viele wie benutzt, mindestens 1) */
+export function tische(z: TurnierZustand): TischStand[] {
+  const laufend = alleOffenenAufgerufenen(z);
+  const n = z.tische ?? Math.max(1, ...laufend.map((s) => s.tisch ?? 0), ...z.tischeGesperrt);
+  return Array.from({ length: n }, (_, i) => {
+    const nr = i + 1;
+    return { nr, gesperrt: z.tischeGesperrt.includes(nr), spiel: laufend.find((s) => s.tisch === nr) ?? null };
+  });
+}
+
+/** Spieler-IDs, die gerade an einem Tisch spielen oder pfeifen */
+export function beschaeftigt(z: TurnierZustand): Set<string> {
+  const aus = new Set<string>();
+  for (const s of alleOffenenAufgerufenen(z)) {
+    const k = z.konkurrenzen[s.konkurrenz]!;
+    for (const id of [...spielerVon(k, s.a), ...spielerVon(k, s.b)]) aus.add(id);
+    if (s.schiri?.spieler) aus.add(s.schiri.spieler);
+  }
+  return aus;
+}
+
+export interface Anstehend {
+  spiel: Spiel;
+  /** Beide Seiten frei (niemand spielt oder pfeift gerade) */
+  bereit: boolean;
+  /** Spieler, die noch beschäftigt sind */
+  wartetAuf: string[];
+}
+
+/**
+ * Offene, noch nicht aufgerufene Spiele in sinnvoller Reihenfolge: Runde für Runde über alle
+ * Konkurrenzen hinweg (damit keine Konkurrenz hinterherhinkt), innerhalb der Runde in Spielfolge.
+ * Spiele, deren Teilnehmer gerade spielen oder pfeifen, stehen hinten.
+ */
+export function anstehendeSpiele(z: TurnierZustand): Anstehend[] {
+  const b = beschaeftigt(z);
+  const liste: { s: Spiel; kIndex: number; pos: number }[] = [];
+  z.konkurrenzReihe.forEach((kid, kIndex) => {
+    const k = z.konkurrenzen[kid]!;
+    k.reihenfolge.forEach((id, pos) => {
+      const s = k.spiele[id]!;
+      if (s.status === 'offen' && !s.eintrag && s.tisch === null && !s.gesperrt) liste.push({ s, kIndex, pos });
+    });
+  });
+  const phaseRang = (s: Spiel) => (s.phase === 'gruppen' ? 0 : 1);
+  liste.sort((x, y) => phaseRang(x.s) - phaseRang(y.s) || x.s.runde - y.s.runde || x.kIndex - y.kIndex || x.pos - y.pos);
+  const aus = liste.map(({ s }) => {
+    const k = z.konkurrenzen[s.konkurrenz]!;
+    const wartetAuf = [...spielerVon(k, s.a), ...spielerVon(k, s.b)].filter((id) => b.has(id));
+    return { spiel: s, bereit: wartetAuf.length === 0, wartetAuf };
+  });
+  return [...aus.filter((a) => a.bereit), ...aus.filter((a) => !a.bereit)];
+}
+
+/** Erster freier, nicht gesperrter Tisch */
+export function freierTisch(z: TurnierZustand): number | null {
+  return tische(z).find((t) => !t.gesperrt && !t.spiel)?.nr ?? null;
+}
+
+/** Laufende Spiele und Aufgaben eines Spielers: „Du spielst an Tisch 3“, „Du pfeifst Tisch 2“ */
+export function meinAufruf(z: TurnierZustand, spieler: string): { spielt: Spiel | null; pfeift: Spiel | null } {
+  let spielt: Spiel | null = null;
+  let pfeift: Spiel | null = null;
+  for (const s of alleOffenenAufgerufenen(z)) {
+    const k = z.konkurrenzen[s.konkurrenz]!;
+    if (spielerVon(k, s.a).includes(spieler) || spielerVon(k, s.b).includes(spieler)) spielt = s;
+    if (s.schiri?.spieler === spieler) pfeift = s;
+  }
+  return { spielt, pfeift };
 }
 
 export function alleSpiele(z: TurnierZustand): Spiel[] {

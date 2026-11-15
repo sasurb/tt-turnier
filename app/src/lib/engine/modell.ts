@@ -5,7 +5,13 @@ import type { Autor } from '@shared/protokoll';
  * (siehe zustand.ts); nichts davon wird direkt gespeichert.
  */
 
-export type Modus = 'jgj' | 'gruppen_ko' | 'ko';
+/**
+ * Spielsystem: jeder gegen jeden, Gruppen + K.-o., K.-o. (einfach) oder Doppel-K.-o.
+ * (zweite Chance: Verlierer spielen im Verliererbaum weiter, Endspiel Sieger gegen Sieger).
+ */
+export type Modus = 'jgj' | 'gruppen_ko' | 'ko' | 'doppel_ko';
+/** Einzel, Doppel (zwei Spieler je Teilnehmer) oder Mixed (Doppel aus Frau und Mann) */
+export type KonkurrenzArt = 'einzel' | 'doppel' | 'mixed';
 /** Rangfolge in Gruppen: DTTB-Wettspielordnung D 7.5 oder ITTF-Regel 3.7.5 */
 export type Wertung = 'dttb' | 'ittf';
 /** Rückzug während der Gruppe: nach WO D 7.9 (Spiele streichen) oder „Hobby“ (gespielte bleiben, Rest kampflos) */
@@ -86,6 +92,18 @@ export interface KonkurrenzEinstellungen {
   ttrGrenzen: number[];
   /** Abweichend vom Turnier: null = wie das Turnier */
   veroeffentlichung: Veroeffentlichung | null;
+  /** Einzel, Doppel oder Mixed (ab Etappe 5) */
+  art: KonkurrenzArt;
+  /**
+   * Trostrunde: Wer in der ersten K.-o.-Runde verliert, spielt in einem eigenen Baum weiter
+   * (eigener Trostrunden-Sieger). Nur bei K.-o. und Gruppen + K.-o.
+   */
+  trostrunde: boolean;
+  /**
+   * Doppel-K.-o.: Gewinnt im Endspiel der Sieger des Verliererbaums, hat jeder eine Niederlage –
+   * dann entscheidet ein zweites Endspiel. Aus = ein Endspiel entscheidet.
+   */
+  finaleWiederholung: boolean;
 }
 
 export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
@@ -113,7 +131,21 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
     klassenTrennung: 'keine',
     ttrGrenzen: [],
     veroeffentlichung: null,
+    art: 'einzel',
+    trostrunde: false,
+    finaleWiederholung: false,
   };
+}
+
+/** Teilnehmer einer Doppel-/Mixed-Konkurrenz: zwei Spieler, Teilnehmer-ID „p-…“ */
+export interface Paar {
+  id: string;
+  spieler: [string, string];
+}
+
+/** Hat die Konkurrenz einen K.-o.-Teil? */
+export function mitKo(modus: Modus): boolean {
+  return modus !== 'jgj';
 }
 
 /** Leistungsklasse eines Spielers für die Gruppenbildung; '' = ohne Klasse */
@@ -147,10 +179,20 @@ export const FEST_NACH_START: readonly (keyof KonkurrenzEinstellungen)[] = [
   'gruppenGroesse',
   'klassenTrennung',
   'ttrGrenzen',
+  'art',
 ];
 
 export type PhaseArt = 'gruppen' | 'ko';
 export type Seite = 'a' | 'b';
+/** Welcher Baum im K.-o.-Teil: Hauptrunde, Trostrunde, Verliererbaum (Doppel-K.-o.), Endspiele des Doppel-K.-o. */
+export type Baum = 'haupt' | 'trost' | 'verlierer' | 'finale';
+/** Woher ein Teilnehmer in ein K.-o.-Spiel kommt */
+export type Quelle = { spiel: string; wer: 'sieger' | 'verlierer' } | { platz: number };
+export interface Schiedsrichter {
+  name: string;
+  /** Spieler-ID, wenn ein Spieler pfeift (für „Du pfeifst Tisch 3“) */
+  spieler: string | null;
+}
 
 /** Ergebnis, wie es eingegeben wird (Ereignis „spiel.ergebnis“, Feld daten.ergebnis) */
 export interface ErgebnisEingabe {
@@ -245,6 +287,17 @@ export interface Spiel {
   platz3: boolean;
   /** K.-o.: wartet auf Klärung eines Vorgängerspiels (Anfechtung/Konflikt) */
   gesperrt: boolean;
+  /** K.-o.: Baum, zu dem das Spiel gehört (Gruppen: haupt) */
+  baum: Baum;
+  /** K.-o.: Herkunft der Teilnehmer; Gruppen: null */
+  quelleA: Quelle | null;
+  quelleB: Quelle | null;
+  /** Nur Doppel-K.-o., zweites Endspiel: findet nur statt, wenn im ersten Endspiel Seite b gewinnt */
+  nurWennBGewinnt: boolean;
+  /** Spielaufruf: Tisch, Zeit des Aufrufs, Schiedsrichter */
+  tisch: number | null;
+  aufgerufen: string | null;
+  schiri: Schiedsrichter | null;
 }
 
 export interface Gruppe {
@@ -277,8 +330,10 @@ export type KonkurrenzStatus = 'meldung' | 'gruppen' | 'ko' | 'beendet';
 export interface KonkurrenzZustand {
   id: string;
   einst: KonkurrenzEinstellungen;
-  /** Gemeldete Teilnehmer (Einzel: Teilnehmer-ID = Spieler-ID), in Meldereihenfolge */
+  /** Gemeldete Teilnehmer (Einzel: Teilnehmer-ID = Spieler-ID; Doppel: Paar-ID), in Meldereihenfolge */
   meldungen: string[];
+  /** Paare der Doppel-/Mixed-Konkurrenz */
+  paare: Record<string, Paar>;
   setzliste: string[] | null;
   auslosungGruppen: AuslosungGruppen | null;
   auslosungKo: AuslosungKo | null;
@@ -312,3 +367,14 @@ export function spielerName(s: Pick<SpielerDaten, 'vorname' | 'nachname'> | unde
   if (!s) return '?';
   return `${s.vorname} ${s.nachname}`.trim();
 }
+
+/** Name eines Paares: „Müller/Schmidt“ (Nachnamen; bei gleichem Nachnamen mit Vornamen-Initial) */
+export function paarName(a: SpielerDaten | undefined, b: SpielerDaten | undefined): string {
+  if (!a || !b) return '?';
+  const gleich = a.nachname.trim().toLowerCase() === b.nachname.trim().toLowerCase();
+  const kurz = (s: SpielerDaten) => (gleich && s.vorname ? `${s.vorname[0]}. ${s.nachname}` : s.nachname || s.vorname);
+  return `${kurz(a)}/${kurz(b)}`;
+}
+
+/** Spiel-ID-Präfix je Baum */
+export const BAUM_PRAEFIX: Record<Baum, string> = { haupt: 'ko', trost: 'tr', verlierer: 'vl', finale: 'fi' };

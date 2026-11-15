@@ -28,11 +28,12 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.6.0";
+    public static final String VERSION = "0.7.0";
     public static final int PROTOKOLL = 1;
     public static final String ONLINE_STANDARD = "https://saschaurban.de/tt-turnier/api/index.php";
 
     private static final int MAX_EREIGNISSE = 200;
+    private static final int MAX_JE_TURNIER = 50000;
     private static final int MAX_DATEN_BYTES = 16384;
     private static final long SITZUNG_DAUER = 60L * 60 * 24 * 30;
     private static final long VERSUCHE_FENSTER = 15 * 60;
@@ -42,7 +43,8 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     private static final int MAX_EMPFAENGER = 3;
     private static final String ART_ABGESCHLOSSEN = "turnier.abgeschlossen";
     private static final List<String> ARTEN_SPIELER = Arrays.asList("spiel.ergebnis", "spiel.bestaetigt", "spiel.angefochten");
-    private static final List<String> ARTEN_HELFER = Collections.singletonList("spiel.ergebnis");
+    private static final List<String> ARTEN_HELFER = Arrays.asList("spiel.ergebnis", "spiel.aufgerufen", "spiel.aufruf_zurueck");
+    private static final List<String> ARTEN_SPIELER_HELFER = Arrays.asList("spiel.ergebnis", "spiel.bestaetigt", "spiel.angefochten", "spiel.aufgerufen", "spiel.aufruf_zurueck");
     private static final int MAX_CODES = 400;
     private static final int MAX_POOL = 3000;
     private static final int MAX_UEBERSICHT = 60000;
@@ -851,8 +853,11 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         if (liste == null || liste.size() > MAX_EREIGNISSE) {
             throw new ApiFehler("ungueltig", "Feld „ereignisse“ muss eine Liste mit höchstens " + MAX_EREIGNISSE + " Einträgen sein.");
         }
+        if (t.ereignisse.size() + liste.size() > MAX_JE_TURNIER) {
+            throw new ApiFehler("zu_gross", "Das Turnier hat die Höchstzahl an Einträgen erreicht.");
+        }
         String rolle = istKonto(s) ? "leitung" : srolle;
-        List<String> erlaubt = "spieler".equals(rolle) ? ARTEN_SPIELER : "helfer".equals(rolle) ? ARTEN_HELFER : null;
+        List<String> erlaubt = "spieler".equals(rolle) ? (wahr(s.get("helfer")) ? ARTEN_SPIELER_HELFER : ARTEN_SPIELER) : "helfer".equals(rolle) ? ARTEN_HELFER : null;
         if (erlaubt != null) {
             for (Object o : liste) {
                 Map<String, Object> e = Json.alsObjekt(o);

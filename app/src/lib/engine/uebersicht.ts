@@ -1,6 +1,6 @@
 import { name, platzierungen, runden, tabelle } from './abfragen';
 import { ergebnisText } from './ergebnis';
-import { rundenName } from './ko';
+import { rundenName, baumRunden, trostPlatzierungen } from './ko';
 import { gruppenName, type KonkurrenzZustand, type Spiel } from './modell';
 import type { TurnierZustand } from './zustand';
 
@@ -57,17 +57,32 @@ function konkurrenzText(z: TurnierZustand, k: KonkurrenzZustand): string {
       l.push('', rundenName(r, R));
       for (const id of k.reihenfolge) {
         const s = k.spiele[id]!;
-        if (s.phase === 'ko' && s.runde === r && !s.platz3) l.push(spielZeile(z, s));
+        if (s.phase === 'ko' && s.baum === 'haupt' && s.runde === r && !s.platz3) l.push(spielZeile(z, s));
       }
       if (r === R) {
         const p3 = Object.values(k.spiele).find((s) => s.platz3);
         if (p3) l.push('', 'Spiel um Platz 3', spielZeile(z, p3));
       }
     }
+    for (const baum of ['verlierer', 'finale', 'trost'] as const) {
+      const RB = baumRunden(k, baum);
+      for (let r = 1; r <= RB; r++) {
+        l.push('', rundenName(r, RB, baum));
+        for (const id of k.reihenfolge) {
+          const s = k.spiele[id]!;
+          if (s.phase === 'ko' && s.baum === baum && s.runde === r && s.status !== 'entfallen') l.push(spielZeile(z, s));
+        }
+      }
+    }
     const p = platzierungen(k);
     if (p.length) {
       l.push('', 'Platzierungen');
       for (const x of p) l.push(`  ${rechts(x.bezeichnung, 6)}  ${name(z, x.id)}`);
+    }
+    const tp = trostPlatzierungen(k);
+    if (tp.length) {
+      l.push('', 'Platzierungen der Trostrunde');
+      for (const x of tp) l.push(`  ${rechts(x.bezeichnung, 6)}  ${name(z, x.id)}`);
     }
   }
   l.push('');

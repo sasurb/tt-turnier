@@ -1,11 +1,13 @@
 <script lang="ts">
   import { ART, type PoolSpieler } from '@shared/protokoll';
   import { T } from '../../texte';
-  import { auslosungErstellen, endrundeErstellen, gruppenKlassen, gruppenZahlVorschlag, klassenDerMeldungen, name, qualifikanten, zulassungsHinweise } from '../../engine/abfragen';
+  import { auslosungErstellen, endrundeErstellen, gruppenKlassen, gruppenZahlVorschlag, klassenDerMeldungen, name, nameLang, qualifikanten, teilnehmerDaten, zulassungsHinweise } from '../../engine/abfragen';
   import { setzreihe } from '../../engine/auslosung';
+  import { kurzId } from '../../engine/ids';
   import { spielerName, type KonkurrenzEinstellungen, type KonkurrenzZustand } from '../../engine/modell';
+  import { mischen, zufallAus } from '../../engine/zufall';
   import { neuerZufallswert } from '../../engine/zufall';
-  import { auslosungAktuell, begonnen, erstePhase, zurueckgezogen, type TurnierZustand } from '../../engine/zustand';
+  import { auslosungAktuell, begonnen, erstePhase, teilnehmerVon, zurueckgezogen, type TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
   import AuslosungVorschau from './AuslosungVorschau.svelte';
   import KonkurrenzForm from './KonkurrenzForm.svelte';
@@ -28,7 +30,12 @@
   const n = $derived(k.meldungen.length);
   const vorschlagGruppen = $derived(gruppenZahlVorschlag(k));
   const gZahl = $derived(gruppenZahl ?? vorschlagGruppen);
-  const reihe = $derived(setzreihe(k.meldungen, z.spieler, k.einst, k.setzliste));
+  const reihe = $derived(setzreihe(k.meldungen, teilnehmerDaten(z, k), k.einst, k.setzliste));
+  const doppel = $derived(k.einst.art !== 'einzel');
+  /** Spieler, die in dieser Konkurrenz noch in keinem Paar stehen */
+  const freieSpieler = $derived(z.spielerReihe.filter((id) => !teilnehmerVon(k, id)));
+  let paar1 = $state('');
+  let paar2 = $state('');
   const quali = $derived(k.einst.modus === 'gruppen_ko' && k.gestartet.gruppen && !k.gestartet.ko ? qualifikanten(k) : null);
   const aktive = $derived(k.meldungen.filter((id) => !zurueckgezogen(k).includes(id)));
   const hatErgebnisse = $derived(Object.values(k.spiele).some((s) => s.eintrag));
@@ -56,6 +63,27 @@
   }
   async function alleMelden() {
     for (const id of z.spielerReihe) if (!k.meldungen.includes(id)) await melden(id, true);
+  }
+  async function paarMelden(a: string, b: string) {
+    if (!a || !b || a === b) return;
+    await los(ART.paarGemeldet, { konkurrenz: k.id, id: 'p-' + kurzId(), spieler: [a, b] });
+    paar1 = '';
+    paar2 = '';
+  }
+  /** Übrige Spieler zufällig zu Paaren losen; Mixed: Frau + Mann, soweit bekannt */
+  async function paareLosen() {
+    const zuf = zufallAus(neuerZufallswert());
+    let frei = mischen(freieSpieler, zuf);
+    if (k.einst.art === 'mixed') {
+      const w = frei.filter((id) => z.spieler[id]!.geschlecht === 'w');
+      const m = frei.filter((id) => z.spieler[id]!.geschlecht === 'm');
+      const rest = frei.filter((id) => !w.includes(id) && !m.includes(id));
+      const paare: [string, string][] = [];
+      while (w.length && m.length) paare.push([w.shift()!, m.shift()!]);
+      frei = [...w, ...m, ...rest];
+      for (const [a, b] of paare) await paarMelden(a, b);
+    }
+    for (let i = 0; i + 1 < frei.length; i += 2) await paarMelden(frei[i]!, frei[i + 1]!);
   }
 
   async function setzlisteVerschieben(i: number, um: number) {
@@ -114,12 +142,12 @@
 
 <details class="karte konk" open={k.status !== 'beendet'} data-testid="konkurrenz">
   <summary>
-    <span>{k.einst.name} <span class="leise">· {T.konk.modi[k.einst.modus]} · {T.konk.teilnehmer(n)}</span></span>
+    <span>{k.einst.name} <span class="leise">· {doppel ? T.konk.arten[k.einst.art] + ' · ' : ''}{T.konk.modi[k.einst.modus]} · {doppel ? T.konk.paare(n) : T.konk.teilnehmer(n)}</span></span>
     <span class="marke">{T.konk.status[k.status]}</span>
   </summary>
 
   {#if bearbeiten}
-    <KonkurrenzForm start={k.einst} {gestartet} knopf={T.konk.speichern} {speichern} abbrechen={() => (bearbeiten = false)} />
+    <KonkurrenzForm start={k.einst} {gestartet} mitMeldungen={n > 0} knopf={T.konk.speichern} {speichern} abbrechen={() => (bearbeiten = false)} />
   {:else}
     <div class="reihe">
       <button class="zweit klein" onclick={() => (bearbeiten = true)}>{T.tspieler.bearbeiten}</button>
@@ -132,11 +160,38 @@
     <h3>{T.konk.meldungen} <span class="leise">({n})</span></h3>
     {#if z.spielerReihe.length === 0}
       <p class="leise">{T.konk.keineSpieler}</p>
+    {:else if doppel}
+      <p class="leise">{T.konk.paarHinweis}</p>
+      {#if k.meldungen.length}
+        <ul class="meldeliste">
+          {#each k.meldungen as pid (pid)}
+            <li class="reihe">
+              <span class="wachsen">{nameLang(z, pid, k)} <span class="leise">{teilnehmerDaten(z, k)[pid]?.verein ?? ''}{teilnehmerDaten(z, k)[pid]?.ttr ? ` · ${teilnehmerDaten(z, k)[pid]!.ttr}` : ''}</span></span>
+              <button class="zweit klein" aria-label="{nameLang(z, pid, k)}: {T.app.entfernen}" onclick={() => melden(pid, false)}>✕</button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if freieSpieler.length >= 2}
+        <div class="paar-form">
+          <select bind:value={paar1} aria-label={T.konk.paarErster}>
+            <option value="">{T.konk.paarErster}</option>
+            {#each freieSpieler.filter((id) => id !== paar2) as id (id)}<option value={id}>{spielerName(z.spieler[id])}{z.spieler[id]!.geschlecht ? ` (${z.spieler[id]!.geschlecht})` : ''}</option>{/each}
+          </select>
+          <select bind:value={paar2} aria-label={T.konk.paarZweiter}>
+            <option value="">{T.konk.paarZweiter}</option>
+            {#each freieSpieler.filter((id) => id !== paar1) as id (id)}<option value={id}>{spielerName(z.spieler[id])}{z.spieler[id]!.geschlecht ? ` (${z.spieler[id]!.geschlecht})` : ''}</option>{/each}
+          </select>
+          <button class="zweit" disabled={!paar1 || !paar2} onclick={() => paarMelden(paar1, paar2)} data-testid="paar-melden">{T.konk.paarMelden}</button>
+        </div>
+        <div class="reihe"><button class="zweit klein" onclick={paareLosen}>{T.konk.paarZufall}</button><Hilfe text={T.konk.paarZufallHilfe} /></div>
+      {/if}
     {:else}
       <div class="reihe"><button class="zweit klein" onclick={alleMelden}>{T.konk.alleMelden}</button></div>
       <ul class="meldeliste">
         {#each z.spielerReihe as id (id)}
           {@const h = zulassungsHinweise(daten(id), k.einst.zulassung)}
+          <!-- Einzel -->
           <li>
             <label class="haken">
               <input type="checkbox" checked={k.meldungen.includes(id)} onchange={(e) => melden(id, e.currentTarget.checked)} />
@@ -227,10 +282,15 @@
 <style>
   .konk summary { font-size: 1.05rem; }
   .konk summary > span:first-child { overflow-wrap: anywhere; }
-  h3 { margin-top: 18px; display: flex; align-items: center; }
+  h3 { margin-top: 18px; display: flex; align-items: center; gap: 6px; }
   .haken { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; margin: 0; padding: 8px 0; }
   .haken input { width: 22px; height: 22px; min-height: 0; flex: none; margin-top: 1px; }
   .meldeliste { list-style: none; padding: 0; margin: 8px 0; max-height: 26rem; overflow-y: auto; }
+  .meldeliste li.reihe { padding: 6px 0; border-bottom: 1px solid var(--linie); }
+  .paar-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; margin: 8px 0; }
+  @media (max-width: 560px) {
+    .paar-form { grid-template-columns: 1fr; }
+  }
   .meldeliste li { border-bottom: 1px solid var(--linie); }
   .marke.warn { color: var(--orange); border-color: var(--orange); margin-left: 6px; white-space: normal; }
   .setzliste { list-style: none; padding: 0; margin: 0; }

@@ -513,3 +513,73 @@ test('Administrator: Verwaltung über das Menü', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /Konten/ })).toBeVisible();
   await bild(page, '17-verwaltung');
 });
+
+test('Etappe 5: Doppel mit Trostrunde, Spielaufruf an Tische mit Schiedsrichter', async ({ page }) => {
+  await ohneServer(page);
+  await page.goto('./');
+  await page.getByTestId('neues-turnier').click();
+  await page.getByLabel('Name des Turniers').fill('Doppelturnier');
+  await page.getByLabel(/^Dein Name/).fill('Sascha');
+  await page.getByRole('button', { name: 'Turnier anlegen' }).click();
+  // 2 Tische
+  const angaben = page.locator('details', { hasText: 'Angaben im Turnier' });
+  await angaben.locator('summary').click();
+  await angaben.getByLabel('Anzahl Tische').fill('2');
+  await angaben.getByRole('button', { name: 'Speichern' }).click();
+  await expect(angaben.getByText('Gespeichert.')).toBeVisible();
+  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  for (const v of ['Ali', 'Bea', 'Cid', 'Dan', 'Eva', 'Fin', 'Gil', 'Hal', 'Ida']) {
+    await page.getByLabel('Vorname').fill(v);
+    await page.getByLabel('Nachname').fill(v + 'son');
+    await page.getByRole('button', { name: 'Hinzufügen' }).click();
+    await expect(page.getByText(`${v} ${v}son ✓`)).toBeVisible();
+  }
+  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Herren-Doppel');
+  await page.getByRole('radio', { name: 'Doppel', exact: true }).check();
+  await page.getByRole('radio', { name: /^K\.-o\.-System/ }).check();
+  await page.getByRole('checkbox', { name: 'Trostrunde' }).check();
+  await bild(page, '23-doppel-form');
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+  const konk = page.getByTestId('konkurrenz').filter({ hasText: 'Herren-Doppel' });
+  // ein Paar von Hand, der Rest zufällig (einer bleibt übrig)
+  await konk.getByLabel('Spieler 1').selectOption({ label: 'Ali Alison' });
+  await konk.getByLabel('Spieler 2').selectOption({ label: 'Bea Beason' });
+  await konk.getByTestId('paar-melden').click();
+  await expect(konk.getByText('Ali Alison / Bea Beason')).toBeVisible();
+  await konk.getByRole('button', { name: /zufällig zu Paaren/ }).click();
+  await expect(konk.getByText('4 Paare')).toBeVisible();
+  await bild(page, '24-doppel-paare');
+  await konk.getByRole('button', { name: 'Auslosen' }).click();
+  page.once('dialog', (d) => void d.accept());
+  await konk.getByTestId('starten').click();
+
+  // Tische: erstes Spiel an Tisch 1 mit Schiedsrichter
+  await page.getByRole('link', { name: 'Tische' }).click();
+  await expect(page.getByTestId('tische').locator('li')).toHaveCount(2);
+  await page.getByTestId('naechste').getByRole('button', { name: 'An Tisch 1' }).first().click();
+  // Schiedsrichter: der erste vorgeschlagene freie Spieler (Paare sind zufällig)
+  const srAuswahl = page.getByTestId('aufruf').getByLabel('Schiedsrichter');
+  const sr = (await srAuswahl.locator('option').nth(1).textContent())!.trim();
+  await srAuswahl.selectOption({ label: sr });
+  await page.getByTestId('aufrufen').click();
+  const tisch1 = page.getByTestId('tische').locator('li').first();
+  await expect(tisch1).toContainText(`SR: ${sr}`);
+  await expect(tisch1).toContainText('/');
+  await bild(page, '25-tische');
+  // Ergebnis direkt vom Tisch aus
+  await tisch1.getByRole('button', { name: 'Ergebnis eintragen' }).click();
+  const dlg = page.getByRole('dialog');
+  for (const sz of [1, 2, 3]) {
+    await dlg.getByTestId(`satz-${sz}`).getByRole('radio').first().click();
+    await dlg.getByLabel(`Punkte des Verlierers Satz ${sz}`).fill('7');
+  }
+  await dlg.getByRole('button', { name: 'Ergebnis speichern' }).click();
+  await expect(dlg).toBeHidden();
+  await expect(tisch1).toContainText('frei');
+
+  // Tabellen: Hauptrunde und Trostrunde
+  await page.getByRole('link', { name: 'Tabellen' }).click();
+  await expect(page.getByRole('heading', { name: 'Trostrunde', exact: true })).toBeVisible();
+  await bild(page, '26-trostrunde');
+});

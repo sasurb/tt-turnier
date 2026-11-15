@@ -11,7 +11,8 @@
     ich = null,
     nurMeine = false,
     oeffnen,
-  }: { z: TurnierZustand; leitung: boolean; ich?: string | null; nurMeine?: boolean; oeffnen: (s: Spiel) => void } = $props();
+    mitSchiri = false,
+  }: { z: TurnierZustand; leitung: boolean; ich?: string | null; nurMeine?: boolean; mitSchiri?: boolean; oeffnen: (s: Spiel) => void } = $props();
 
   let filter = $state<'offen' | 'fertig' | 'alle'>('offen');
   let konkurrenz = $state('');
@@ -36,7 +37,7 @@
     <h2>{T.spiele.pruefliste} <span class="leise">({pruef.length})</span></h2>
     <p class="leise">{T.spiele.prueflisteText}</p>
     {#each pruef as s (s.konkurrenz + s.id)}
-      <SpielKarte {z} k={z.konkurrenzen[s.konkurrenz]!} spiel={s} oeffnen={() => oeffnen(s)} />
+      <SpielKarte {z} k={z.konkurrenzen[s.konkurrenz]!} spiel={s} {mitSchiri} oeffnen={() => oeffnen(s)} />
     {/each}
   </section>
 {/if}
@@ -61,7 +62,7 @@
     <p class="leise">{T.spiele.leer}</p>
   {:else}
     {#each sortiert as s (s.konkurrenz + s.id)}
-      <SpielKarte {z} k={z.konkurrenzen[s.konkurrenz]!} spiel={s} {ich} mitKonkurrenz={z.konkurrenzReihe.length > 1} oeffnen={() => oeffnen(s)} />
+      <SpielKarte {z} k={z.konkurrenzen[s.konkurrenz]!} spiel={s} {ich} {mitSchiri} mitKonkurrenz={z.konkurrenzReihe.length > 1} oeffnen={() => oeffnen(s)} />
     {/each}
   {/if}
 {/if}

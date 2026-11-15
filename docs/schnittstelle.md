@@ -73,8 +73,10 @@ Eigentümer-Konto oder der Administrator.
 
 **Schreibrecht für ein Turnier** haben Tokens mit Rolle `leitung`, `helfer` oder `spieler` für dieses
 Turnier sowie das Konto (Turnierleitung), dem das Turnier gehört. Ab Server 0.4 dürfen Spieler nur
-`spiel.ergebnis`, `spiel.bestaetigt` und `spiel.angefochten` senden, Helfer nur `spiel.ergebnis`
+`spiel.ergebnis`, `spiel.bestaetigt` und `spiel.angefochten` senden, Helfer `spiel.ergebnis`,
+`spiel.aufgerufen` und `spiel.aufruf_zurueck` (ab 0.7); Spieler mit Helferrecht beide Listen
 (`ARTEN_SPIELER`/`ARTEN_HELFER` in `shared/protokoll.ts`); alles andere lehnt der Server mit 403 ab.
+`tisch.gesperrt` und `paar.gemeldet` darf nur die Leitung senden.
 Bei Spielern setzt der Server `autor.spieler` (Spieler-ID aus dem Code). Ob ein Spieler zu einem Spiel
 gehört, prüft die Turnier-Logik auf den Geräten – der Server kennt keine Spiele.
 
@@ -99,9 +101,12 @@ Unbekannte Arten werden von Geräten übersprungen (Vorwärtskompatibilität).
 Arten: siehe `ART` in `shared/protokoll.ts`. Turnier: `turnier.angelegt`, `turnier.umbenannt`,
 `turnier.daten`, `turnier.abgeschlossen`, `turnier.wiedereroeffnet`, `turnier.wiederhergestellt`.
 Spieler: `spieler.angelegt|geaendert|entfernt`. Konkurrenzen: `konkurrenz.angelegt|geaendert|entfernt`,
-`teilnehmer.gemeldet|abgemeldet`, `konkurrenz.setzliste`, `auslosung.gesetzt`, `phase.gestartet`,
+`teilnehmer.gemeldet|abgemeldet`, `paar.gemeldet` (Doppel/Mixed, ab 0.7), `konkurrenz.setzliste`, `auslosung.gesetzt`, `phase.gestartet`,
 `phase.zurueckgenommen`, `gruppe.los`. Spiele: `spiel.ergebnis`, `spiel.bestaetigt`, `spiel.angefochten`,
-`spiel.entschieden`, `spiel.zurueckgesetzt`. Der Server wertet nur `turnier.abgeschlossen` aus (letzte Sicherung).
+`spiel.entschieden`, `spiel.zurueckgesetzt`, `spiel.aufgerufen` (`{konkurrenz, spiel, tisch, schiri?}`,
+`schiri` = `{spieler}` oder `{name}`, höchstens 80 Zeichen), `spiel.aufruf_zurueck`. Tische: `tisch.gesperrt`
+(`{tisch, gesperrt}`). K.-o.-Varianten (Trostrunde, Doppel-K.-o., zweites Endspiel) und Doppel/Mixed
+stehen in den Konkurrenz-Einstellungen (`art`, `trostrunde`, `finaleWiederholung`, Modus `doppel_ko`). Der Server wertet nur `turnier.abgeschlossen` aus (letzte Sicherung).
 
 Die Auslosung wird mit ihrem Ergebnis gespeichert (nicht nur mit dem Zufallswert), damit spätere
 App-Versionen mit geänderten Verfahren alte Turniere unverändert anzeigen.

@@ -31,6 +31,8 @@
   import Mitmachen from './turnier/Mitmachen.svelte';
   import ErgebnisDialog from './turnier/ErgebnisDialog.svelte';
   import QrCode from './turnier/QrCode.svelte';
+  import Tische from './turnier/Tische.svelte';
+  import { meinAufruf, name as tnName } from '../engine/abfragen';
 
   let { id, reiter = null, code = null }: { id: string; reiter?: string | null; code?: string | null } = $props();
 
@@ -120,16 +122,25 @@
     lokal && zustand !== null && eintrag !== null && erinnerungFaellig(lokaleSicherung(id), zustand.anzahlEreignisse, ereignisse[0]?.zeit ?? eintrag.zuletzt, jetzt),
   );
 
-  type Reiter = 'meine' | 'spiele' | 'tabellen' | 'spieler' | 'konkurrenzen' | 'zugaenge' | 'einstellungen';
+  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'spieler' | 'konkurrenzen' | 'zugaenge' | 'einstellungen';
+  /** „Tische“ erscheint, sobald eine Konkurrenz läuft */
+  const mitTischen = $derived(!!zustand && Object.values(zustand.konkurrenzen).some((k) => k.gestartet.gruppen || k.gestartet.ko));
   const reiterListe = $derived<Reiter[]>(
     leitung
-      ? ['spiele', 'tabellen', 'spieler', 'konkurrenzen', ...(lokal ? [] : ['zugaenge' as const]), 'einstellungen']
+      ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', 'spieler', 'konkurrenzen', ...(lokal ? [] : ['zugaenge' as const]), 'einstellungen']
       : rolle === 'spieler'
-        ? ['meine', 'spiele', 'tabellen']
+        ? ['meine', 'spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen']
         : rolle === 'helfer'
-          ? ['spiele', 'tabellen']
-          : ['tabellen', 'spiele'],
+          ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen']
+          : ['tabellen', 'spiele', ...(mitTischen ? ['tische' as const] : [])],
   );
+  const aufrufIch = $derived(zustand && ich ? meinAufruf(zustand, ich) : null);
+  function gegnerVon(sp: Spiel): string {
+    const k = zustand!.konkurrenzen[sp.konkurrenz]!;
+    const p = k.paare;
+    const meins = (t: string | null) => !!t && (t === ich || !!p[t]?.spieler.includes(ich!));
+    return tnName(zustand!, meins(sp.a) ? sp.b : sp.a);
+  }
   const standardReiter = $derived<Reiter>(
     leitung ? (!zustand?.spielerReihe.length ? 'spieler' : !zustand.konkurrenzReihe.length ? 'konkurrenzen' : 'spiele') : rolle === 'spieler' ? 'meine' : rolle === 'helfer' ? 'spiele' : 'tabellen',
   );
@@ -434,9 +445,17 @@
 
   {#if zustand}
     {#if aktiv === 'meine'}
-      <SpieleListe z={zustand} leitung={false} {ich} nurMeine {oeffnen} />
+      {#if aufrufIch?.spielt}
+        <div class="meldung aufruf" role="status" data-testid="mein-aufruf">{T.spiele.duSpielst(aufrufIch.spielt.tisch!, gegnerVon(aufrufIch.spielt))}</div>
+      {/if}
+      {#if aufrufIch?.pfeift}
+        <div class="meldung info" role="status">{T.spiele.duPfeifst(aufrufIch.pfeift.tisch!, `${tnName(zustand, aufrufIch.pfeift.a)} – ${tnName(zustand, aufrufIch.pfeift.b)}`)}</div>
+      {/if}
+      <SpieleListe z={zustand} leitung={false} {ich} nurMeine mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
+    {:else if aktiv === 'tische'}
+      <Tische z={zustand} darfAufrufen={leitung || helferRecht} mitSchiri={rolle !== 'zuschauer'} {eintragen} {oeffnen} />
     {:else if aktiv === 'spiele'}
-      <SpieleListe z={zustand} leitung={leitung || helferRecht} {ich} {oeffnen} />
+      <SpieleListe z={zustand} leitung={leitung || helferRecht} {ich} mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
     {:else if aktiv === 'tabellen'}
       {#if leitung && verdeckt}
         <div class="meldung info reihe" role="status">
@@ -563,5 +582,6 @@
   }
   .code-gross { font-family: ui-monospace, monospace; font-size: 1.8rem; letter-spacing: 0.12em; color: var(--blau); }
   .qr-gross { margin: 6px 0 12px; }
+  .meldung.aufruf { background: color-mix(in srgb, var(--gruen) 14%, var(--flaeche)); border: 2px solid var(--gruen); font-weight: 700; font-size: 1.1rem; }
   .warnungen { margin-bottom: 12px; }
 </style>

@@ -84,6 +84,7 @@ final class ApiFehler extends \RuntimeException
         'keine_berechtigung' => 403,
         'nicht_gefunden' => 404,
         'konflikt' => 409,
+        'zu_gross' => 413,
         'zu_viele_versuche' => 429,
         'serverfehler' => 500,
         'nicht_eingerichtet' => 503,

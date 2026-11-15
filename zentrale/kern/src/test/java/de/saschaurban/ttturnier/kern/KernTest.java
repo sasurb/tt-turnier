@@ -224,6 +224,8 @@ public final class KernTest {
         pruefe(a.s == 403, "Spieler: nur Ergebnisse");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000002", "spiel.ergebnis", Json.obj("spiel", "g1-a-b")))), sp, q("turnier", tid), false);
         pruefe(a.s == 200, "Spieler: Ergebnis");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000009", "spiel.aufgerufen", Json.obj()))), sp, q("turnier", tid), false);
+        pruefe(a.s == 403, "Spieler: kein Aufruf");
         a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "203"), false);
         Map<String, Object> autor = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor"));
         pruefe("spieler".equals(autor.get("rolle")) && "sp1".equals(autor.get("spieler")) && "Anna".equals(autor.get("name")), "Autor mit Spieler-ID");
@@ -240,6 +242,8 @@ public final class KernTest {
         a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("sp2")), null);
         pruefe(a.s == 200 && Boolean.TRUE.equals(a.g("helfer")), "Zugang: Spieler mit Helfer-Recht");
         String spH = a.t("token");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000010", "tisch.gesperrt", Json.obj()))), spH, q("turnier", tid), false);
+        pruefe(a.s == 403, "Spieler-Helfer: keine Tische sperren");
         rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000004", "spiel.ergebnis", Json.obj()))), spH, q("turnier", tid), false);
         a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "204"), false);
         autor = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor"));

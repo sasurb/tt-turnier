@@ -122,6 +122,7 @@ export type FehlerCode =
   | 'keine_berechtigung' // 403
   | 'nicht_gefunden' // 404
   | 'konflikt' // 409 z. B. E-Mail schon vergeben
+  | 'zu_gross' // 413 Höchstzahl an Einträgen im Turnier erreicht
   | 'zu_viele_versuche' // 429
   | 'nicht_eingerichtet' // 503 Einrichtung fehlt
   | 'serverfehler'; // 500
@@ -372,9 +373,12 @@ export interface CodeHelferAnfrage {
 }
 export const MAX_CODES_JE_TURNIER = 400;
 
-/** Arten, die mit Spieler- bzw. Helfer-Kennung gesendet werden dürfen. Alles andere nur die Leitung. */
+/**
+ * Arten, die mit Spieler- bzw. Helfer-Kennung gesendet werden dürfen. Alles andere nur die Leitung.
+ * Eine Spielerkennung mit Helferrecht darf beides.
+ */
 export const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'] as const;
-export const ARTEN_HELFER = ['spiel.ergebnis'] as const;
+export const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf_zurueck'] as const;
 
 /* ---------- Einstellungen des Kontos (ab 0.6) ---------- */
 /** GET konto.einstellungen / POST konto.einstellungen – eigenes Konto */
@@ -456,8 +460,10 @@ export const ART = {
   konkurrenzAngelegt: 'konkurrenz.angelegt',
   konkurrenzGeaendert: 'konkurrenz.geaendert',
   konkurrenzEntfernt: 'konkurrenz.entfernt',
-  /** Meldung eines Spielers zu einer Konkurrenz */
+  /** Meldung eines Spielers zu einer Einzel-Konkurrenz */
   teilnehmerGemeldet: 'teilnehmer.gemeldet',
+  /** Meldung eines Paares zu einer Doppel-/Mixed-Konkurrenz (Daten: { konkurrenz, id, spieler: [a, b] }) */
+  paarGemeldet: 'paar.gemeldet',
   /** Vor dem Start: Meldung streichen. Nach dem Start: Rückzug. */
   teilnehmerAbgemeldet: 'teilnehmer.abgemeldet',
   /** Manuelle Setzliste */
@@ -474,6 +480,12 @@ export const ART = {
   /** Leitung entscheidet einen Konflikt / eine Anfechtung zugunsten eines Eintrags */
   spielEntschieden: 'spiel.entschieden',
   spielZurueckgesetzt: 'spiel.zurueckgesetzt',
+  /** Spielaufruf: Tisch und Schiedsrichter (Daten: { konkurrenz, spiel, tisch, schiri?: { name, spieler? } }) – Leitung und Helfer */
+  spielAufgerufen: 'spiel.aufgerufen',
+  /** Aufruf zurücknehmen (Tisch wieder frei) */
+  spielAufrufZurueck: 'spiel.aufruf_zurueck',
+  /** Tisch sperren/freigeben (Daten: { nr, gesperrt }) */
+  tischGesperrt: 'tisch.gesperrt',
 } as const;
 
 /* ---------- Android-Zentrale (ab 0.5) ----------

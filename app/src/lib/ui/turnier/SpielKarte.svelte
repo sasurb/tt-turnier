@@ -1,10 +1,9 @@
 <script lang="ts">
   import { T } from '../../texte';
-  import { name, runden } from '../../engine/abfragen';
+  import { name, rundeVon } from '../../engine/abfragen';
   import { ergebnisText } from '../../engine/ergebnis';
-  import { rundenName } from '../../engine/ko';
-  import { gruppenName, type KonkurrenzZustand, type Spiel } from '../../engine/modell';
-  import type { TurnierZustand } from '../../engine/zustand';
+  import type { KonkurrenzZustand, Spiel } from '../../engine/modell';
+  import { seiteVon, type TurnierZustand } from '../../engine/zustand';
 
   let {
     z,
@@ -12,16 +11,12 @@
     spiel,
     ich = null,
     mitKonkurrenz = true,
+    mitSchiri = false,
     oeffnen,
-  }: { z: TurnierZustand; k: KonkurrenzZustand; spiel: Spiel; ich?: string | null; mitKonkurrenz?: boolean; oeffnen: () => void } = $props();
+  }: { z: TurnierZustand; k: KonkurrenzZustand; spiel: Spiel; ich?: string | null; mitKonkurrenz?: boolean; mitSchiri?: boolean; oeffnen: () => void } = $props();
 
-  const ort = $derived(
-    spiel.phase === 'gruppen'
-      ? `${T.konk.gruppe(gruppenName(spiel.gruppe ?? 0))} · ${T.spiele.runde(spiel.runde)}`
-      : spiel.platz3
-        ? T.konk.platz3
-        : rundenName(spiel.runde, runden(k)),
-  );
+  const ort = $derived(rundeVon(k, spiel));
+  const amTisch = $derived(spiel.tisch !== null && spiel.status === 'offen');
   const statusText = $derived.by(() => {
     if (spiel.status === 'wartet') return spiel.gesperrt ? T.spiele.gesperrt : T.spiele.wartet;
     if (spiel.status === 'freilos') return T.spiele.freilos;
@@ -29,12 +24,15 @@
     if (spiel.status === 'offen') return T.spiele.offen;
     return '';
   });
-  const bitteBestaetigen = $derived(!!ich && spiel.stand === 'eingetragen' && !!spiel.eintrag && !spiel.eintrag.amtlich && spiel.eintrag.von?.spieler !== ich);
-  const seiteIch = $derived(ich ? (spiel.a === ich ? 'a' : spiel.b === ich ? 'b' : null) : null);
+  const seiteIch = $derived(seiteVon(k, spiel, ich));
+  const bitteBestaetigen = $derived(!!seiteIch && spiel.stand === 'eingetragen' && !!spiel.eintrag && !spiel.eintrag.amtlich && spiel.eintrag.seite !== seiteIch);
 </script>
 
-<button class="spiel" class:fertig={spiel.status === 'gespielt'} class:hinweis={bitteBestaetigen || spiel.stand === 'angefochten' || spiel.stand === 'konflikt'} onclick={oeffnen} data-testid="spiel">
-  <span class="ort leise">{mitKonkurrenz ? `${k.einst.name} · ` : ''}{ort}</span>
+<button class="spiel" class:amtisch={amTisch} class:fertig={spiel.status === 'gespielt'} class:hinweis={bitteBestaetigen || spiel.stand === 'angefochten' || spiel.stand === 'konflikt'} onclick={oeffnen} data-testid="spiel">
+  <span class="ort leise">
+    {#if amTisch}<strong class="tisch">{T.spiele.tisch(spiel.tisch!)}</strong> ·{/if}
+    {mitKonkurrenz ? `${k.einst.name} · ` : ''}{ort}{#if amTisch && mitSchiri && spiel.schiri} · {T.spiele.schiri(spiel.schiri.name)}{/if}
+  </span>
   <span class="namen">
     <span class:sieger={spiel.gewinner === 'a'} class:ich={seiteIch === 'a'}>{spiel.aFrei ? T.konk.freilos : name(z, spiel.a)}</span>
     <span class="leise">–</span>
@@ -44,7 +42,7 @@
     {#if spiel.ergebnis}
       <strong>{ergebnisText(spiel.ergebnis)}</strong>
     {:else}
-      <span class="leise">{statusText}</span>
+      <span class="leise">{amTisch ? T.tische.laeuft : statusText}</span>
     {/if}
     {#if bitteBestaetigen}<span class="marke warn">{T.spiele.bestaetigenNoetig}</span>
     {:else if spiel.stand === 'angefochten' || spiel.stand === 'konflikt'}<span class="marke warn">{T.spiele[spiel.stand]}</span>
@@ -73,6 +71,8 @@
   .spiel:hover { background: var(--grund); }
   .spiel.fertig { border-left-color: var(--linie); }
   .spiel.hinweis { border-left-color: var(--orange); }
+  .spiel.amtisch { border-left-color: var(--gruen); background: color-mix(in srgb, var(--gruen) 6%, var(--flaeche)); }
+  .tisch { color: var(--gruen); }
   .namen { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 1.05rem; font-weight: 600; }
   .sieger { color: var(--gruen); }
   .ich { text-decoration: underline; text-underline-offset: 3px; }

@@ -10,9 +10,10 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.6.0';
+    public const VERSION = '0.7.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
+    private const MAX_JE_TURNIER = 50000;
     private const MAX_DATEN_BYTES = 16384;
     private const SITZUNG_DAUER = 60 * 60 * 24 * 30;      // 30 Tage
     private const VERSUCHE_FENSTER = 15 * 60;             // 15 Minuten
@@ -36,7 +37,7 @@ final class Api
     private const ART_ABGESCHLOSSEN = 'turnier.abgeschlossen';
     /** shared/protokoll.ts ARTEN_SPIELER / ARTEN_HELFER */
     private const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'];
-    private const ARTEN_HELFER = ['spiel.ergebnis'];
+    private const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf_zurueck'];
     private const MAX_CODES = 400;
     private const MAX_POOL = 3000;
     private const MAX_UEBERSICHT = 60000;
@@ -755,8 +756,18 @@ final class Api
             throw new ApiFehler('ungueltig', 'Feld „ereignisse“ muss eine Liste mit höchstens ' . self::MAX_EREIGNISSE . ' Einträgen sein.');
         }
         $rolle = $s['rolle'] === 'admin' || $s['rolle'] === 'veranstalter' ? 'leitung' : $s['rolle'];
+        // Obergrenze je Turnier (128 Spieler brauchen einige tausend Einträge)
+        $bisher = (int)($this->db->eine('SELECT COUNT(*) AS n FROM ereignisse WHERE turnier_id = ?', [$t['id']])['n'] ?? 0);
+        if ($bisher + count($liste) > self::MAX_JE_TURNIER) {
+            throw new ApiFehler('zu_gross', 'Das Turnier hat die Höchstzahl an Einträgen erreicht.');
+        }
+        // Helfer und Spieler: höchstens 60 Sendungen pro Minute je Kennung (Schutz vor Dauerschleifen)
+        if ($rolle === 'helfer' || $rolle === 'spieler') {
+            $this->begrenzen('ev:' . substr(hash('sha256', (string)$a->token), 0, 24), 60, 60, 'Zu viele Einträge in kurzer Zeit. Bitte kurz warten.');
+        }
         $erlaubt = match ($rolle) {
-            'spieler' => self::ARTEN_SPIELER,
+            // Spielerkennung mit Helferrecht darf beides
+            'spieler' => (int)($s['helfer'] ?? 0) === 1 ? array_values(array_unique([...self::ARTEN_SPIELER, ...self::ARTEN_HELFER])) : self::ARTEN_SPIELER,
             'helfer' => self::ARTEN_HELFER,
             default => null,
         };

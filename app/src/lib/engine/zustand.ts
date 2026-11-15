@@ -9,6 +9,7 @@ import {
   ALLES_OEFFENTLICH,
   FEST_NACH_START,
   STANDARD_ANGABEN,
+  mitKo,
   standardEinstellungen,
   type Angabe,
   type Veroeffentlichung,
@@ -16,6 +17,7 @@ import {
   type ErgebnisEintrag,
   type KonkurrenzEinstellungen,
   type KonkurrenzZustand,
+  type Schiedsrichter,
   type Seite,
   type Spiel,
   type SpielerDaten,
@@ -33,6 +35,8 @@ export interface TurnierZustand {
   datum: string | null;
   ort: string;
   tische: number | null;
+  /** Tische, die gerade nicht bespielt werden (defekt, Siegerehrung …) */
+  tischeGesperrt: number[];
   /** Angaben neben Name und Verein, die im Turnier geführt werden */
   angaben: Angabe[];
   /** Welche Stände alle sehen dürfen (Konkurrenzen können abweichen) */
@@ -60,14 +64,15 @@ export function leererZustand(): TurnierZustand {
     datum: null,
     ort: '',
     tische: null,
+    tischeGesperrt: [],
     angaben: [...STANDARD_ANGABEN],
     veroeffentlichung: { ...ALLES_OEFFENTLICH },
     abgeschlossen: false,
     notizen: [],
     anzahlEreignisse: 0,
-    spieler: {},
+    spieler: leer(),
     spielerReihe: [],
-    konkurrenzen: {},
+    konkurrenzen: leer(),
     konkurrenzReihe: [],
     warnungen: [],
   };
@@ -85,6 +90,11 @@ function veroeffentlichungLesen(v: unknown): Veroeffentlichung | null | undefine
   const x = v as Record<string, unknown>;
   if (typeof x.tabellen !== 'boolean' || typeof x.ko !== 'boolean') return undefined;
   return { tabellen: x.tabellen, ko: x.ko };
+}
+
+/** Map ohne Prototyp: Schlüssel aus Ereignisdaten wie „__proto__“ oder „constructor“ finden nichts */
+function leer<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
 }
 
 function text(v: unknown, max = 80): string | undefined {
@@ -121,7 +131,10 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
   const x = d as Record<string, unknown>;
   const n = text(x.name, 80);
   if (n) e.name = n;
-  if (x.modus === 'jgj' || x.modus === 'gruppen_ko' || x.modus === 'ko') e.modus = x.modus;
+  if (x.modus === 'jgj' || x.modus === 'gruppen_ko' || x.modus === 'ko' || x.modus === 'doppel_ko') e.modus = x.modus;
+  if (x.art === 'einzel' || x.art === 'doppel' || x.art === 'mixed') e.art = x.art;
+  if (typeof x.trostrunde === 'boolean') e.trostrunde = x.trostrunde;
+  if (typeof x.finaleWiederholung === 'boolean') e.finaleWiederholung = x.finaleWiederholung;
   if (x.bestOf === 3 || x.bestOf === 5 || x.bestOf === 7) e.bestOf = x.bestOf;
   if (x.eingabe === 'punkte' || x.eingabe === 'saetze') e.eingabe = x.eingabe;
   if (x.wertung === 'dttb' || x.wertung === 'ittf') e.wertung = x.wertung;
@@ -167,13 +180,14 @@ function neueKonkurrenz(id: string, einst: KonkurrenzEinstellungen): KonkurrenzZ
     id,
     einst,
     meldungen: [],
+    paare: leer(),
     setzliste: null,
     auslosungGruppen: null,
     auslosungKo: null,
     gestartet: { gruppen: false, ko: false },
     status: 'meldung',
     gruppen: [],
-    spiele: {},
+    spiele: leer(),
     reihenfolge: [],
     rueckzuege: [],
   };
@@ -186,7 +200,28 @@ export function begonnen(k: KonkurrenzZustand): boolean {
 
 /** Erste Phase der Konkurrenz */
 export function erstePhase(k: KonkurrenzZustand): 'gruppen' | 'ko' {
-  return k.einst.modus === 'ko' ? 'ko' : 'gruppen';
+  return k.einst.modus === 'ko' || k.einst.modus === 'doppel_ko' ? 'ko' : 'gruppen';
+}
+
+/** Spieler-IDs eines Teilnehmers (Einzel: er selbst; Doppel: beide) */
+export function spielerVon(k: KonkurrenzZustand, teilnehmer: string | null): string[] {
+  if (!teilnehmer) return [];
+  const p = k.paare[teilnehmer];
+  return p ? [...p.spieler] : [teilnehmer];
+}
+
+/** Auf welcher Seite eines Spiels steht dieser Spieler (auch als Teil eines Paares)? */
+export function seiteVon(k: KonkurrenzZustand, s: Spiel, spieler: string | null | undefined): Seite | null {
+  if (!spieler) return null;
+  if (spielerVon(k, s.a).includes(spieler)) return 'a';
+  if (spielerVon(k, s.b).includes(spieler)) return 'b';
+  return null;
+}
+
+/** Teilnehmer-ID, mit der ein Spieler in dieser Konkurrenz gemeldet ist (null = nicht gemeldet) */
+export function teilnehmerVon(k: KonkurrenzZustand, spieler: string): string | null {
+  if (k.meldungen.includes(spieler)) return spieler;
+  return Object.values(k.paare).find((p) => p.spieler.includes(spieler) && k.meldungen.includes(p.id))?.id ?? null;
 }
 
 /** Teilnehmer, die zurückgezogen haben (ausdrücklich oder – WO D 7.9 – durch kampflos/Aufgabe in der Gruppe), in Reihenfolge */
@@ -273,7 +308,7 @@ export function auslosungAktuell(k: KonkurrenzZustand): boolean {
 
 function gruppenAnlegen(k: KonkurrenzZustand) {
   const gruppen = k.auslosungGruppen!.gruppen;
-  k.gruppen = gruppen.map((m, nr) => ({ nr, mitglieder: [...m], los: {} }));
+  k.gruppen = gruppen.map((m, nr) => ({ nr, mitglieder: [...m], los: leer() }));
   const plaene = gruppen.map((m) => rundenplan(m.length));
   const maxRunden = Math.max(0, ...plaene.map((p) => p.length));
   let index = 0;
@@ -307,6 +342,13 @@ function gruppenAnlegen(k: KonkurrenzZustand) {
           verliererWeiter: null,
           platz3: false,
           gesperrt: false,
+          baum: 'haupt',
+          quelleA: null,
+          quelleB: null,
+          nurWennBGewinnt: false,
+          tisch: null,
+          aufgerufen: null,
+          schiri: null,
         };
         k.reihenfolge.push(id);
       }
@@ -475,14 +517,16 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (!nurLeitung()) break;
       const id = typeof d.id === 'string' ? d.id : '';
       if (!z.spieler[id]) break;
-      const inBetrieb = Object.values(z.konkurrenzen).find((k) => begonnen(k) && k.meldungen.includes(id));
+      const inBetrieb = Object.values(z.konkurrenzen).find((k) => begonnen(k) && teilnehmerVon(k, id));
       if (inBetrieb) {
         warnen(`Spieler spielt schon in „${inBetrieb.einst.name}“ und kann nicht entfernt werden.`);
         break;
       }
       for (const k of Object.values(z.konkurrenzen)) {
-        k.meldungen = k.meldungen.filter((x) => x !== id);
-        if (k.setzliste) k.setzliste = k.setzliste.filter((x) => x !== id);
+        const paare = Object.values(k.paare).filter((p) => p.spieler.includes(id)).map((p) => p.id);
+        for (const pid of paare) delete k.paare[pid];
+        k.meldungen = k.meldungen.filter((x) => x !== id && !paare.includes(x));
+        if (k.setzliste) k.setzliste = k.setzliste.filter((x) => x !== id && !paare.includes(x));
       }
       delete z.spieler[id];
       z.spielerReihe = z.spielerReihe.filter((x) => x !== id);
@@ -513,7 +557,15 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         const fest = FEST_NACH_START.filter((f) => JSON.stringify(neu[f]) !== JSON.stringify(k.einst[f]));
         if (fest.length) warnen('Nach dem Start lassen sich Spielsystem, Sätze, Eingabe und Setzung nicht mehr ändern.');
         for (const f of fest) (neu as unknown as Record<string, unknown>)[f] = k.einst[f];
-        if (k.gestartet.ko) neu.platz3 = k.einst.platz3;
+        if (k.gestartet.ko) {
+          neu.platz3 = k.einst.platz3;
+          neu.trostrunde = k.einst.trostrunde;
+          neu.finaleWiederholung = k.einst.finaleWiederholung;
+        }
+      }
+      if (neu.art !== k.einst.art && (k.meldungen.length || Object.keys(k.paare).length)) {
+        warnen('Einzel/Doppel lässt sich nur ohne Meldungen umstellen.');
+        neu.art = k.einst.art;
       }
       k.einst = neu;
       statusAktualisieren(k);
@@ -537,6 +589,10 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       const k = konkurrenz();
       const id = typeof d.id === 'string' ? d.id : '';
       if (!k) break;
+      if (k.einst.art !== 'einzel') {
+        warnen('Im Doppel werden Paare gemeldet.');
+        break;
+      }
       if (!z.spieler[id]) {
         warnen('Spieler nicht gefunden.');
         break;
@@ -549,6 +605,40 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       k.meldungen.push(id);
       break;
     }
+    case ART.paarGemeldet: {
+      if (!nurLeitung()) break;
+      const k = konkurrenz();
+      if (!k) break;
+      const id = typeof d.id === 'string' && /^p-[A-Za-z0-9-]{4,38}$/.test(d.id) ? d.id : undefined;
+      const sp = Array.isArray(d.spieler) ? d.spieler.filter((x): x is string => typeof x === 'string') : [];
+      if (k.einst.art === 'einzel') {
+        warnen('Diese Konkurrenz ist ein Einzel.');
+        break;
+      }
+      if (!id || k.paare[id] || sp.length !== 2 || sp[0] === sp[1] || !z.spieler[sp[0]!] || !z.spieler[sp[1]!]) {
+        warnen('Paar konnte nicht gemeldet werden.');
+        break;
+      }
+      if (begonnen(k)) {
+        warnen(`„${k.einst.name}“ hat schon begonnen – Nachmelden ist nicht mehr möglich.`);
+        break;
+      }
+      const belegt = sp.find((x) => teilnehmerVon(k, x));
+      if (belegt) {
+        warnen(`${z.spieler[belegt]!.vorname} ${z.spieler[belegt]!.nachname} ist in „${k.einst.name}“ schon gemeldet.`);
+        break;
+      }
+      if (k.einst.art === 'mixed') {
+        const g = sp.map((x) => z.spieler[x]!.geschlecht).filter((x): x is 'm' | 'w' | 'd' => !!x);
+        if (g.length === 2 && g[0] === g[1] && g[0] !== 'd') {
+          warnen('Ein Mixed besteht aus einer Spielerin und einem Spieler.');
+          break;
+        }
+      }
+      k.paare[id] = { id, spieler: [sp[0]!, sp[1]!] };
+      k.meldungen.push(id);
+      break;
+    }
     case ART.teilnehmerAbgemeldet: {
       if (!nurLeitung()) break;
       const k = konkurrenz();
@@ -557,6 +647,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (!begonnen(k)) {
         k.meldungen = k.meldungen.filter((x) => x !== id);
         if (k.setzliste) k.setzliste = k.setzliste.filter((x) => x !== id);
+        delete k.paare[id];
         break;
       }
       if (!k.rueckzuege.some((r) => r.teilnehmer === id)) {
@@ -588,7 +679,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (!k) break;
       const zufall = typeof d.zufall === 'number' ? d.zufall : 0;
       if (d.phase === 'gruppen') {
-        if (k.einst.modus === 'ko' || k.gestartet.gruppen) {
+        if (erstePhase(k) === 'ko' || k.gestartet.gruppen) {
           warnen('Die Gruppen lassen sich jetzt nicht mehr auslosen.');
           break;
         }
@@ -605,7 +696,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         }
         k.auslosungGruppen = { zufall, gruppen: g as string[][] };
       } else if (d.phase === 'ko') {
-        if (k.gestartet.ko || (k.einst.modus === 'gruppen_ko' && !k.gestartet.gruppen) || k.einst.modus === 'jgj') {
+        if (k.gestartet.ko || (k.einst.modus === 'gruppen_ko' && !k.gestartet.gruppen) || !mitKo(k.einst.modus)) {
           warnen('Der K.-o.-Baum lässt sich jetzt nicht auslosen.');
           break;
         }
@@ -632,7 +723,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       const k = konkurrenz();
       if (!k) break;
       if (d.phase === 'gruppen') {
-        if (k.gestartet.gruppen || k.einst.modus === 'ko') break;
+        if (k.gestartet.gruppen || erstePhase(k) === 'ko') break;
         if (!auslosungAktuell(k)) {
           warnen('Die Auslosung passt nicht zu den Meldungen – bitte neu auslosen.');
           break;
@@ -640,12 +731,12 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         gruppenAnlegen(k);
         k.gestartet.gruppen = true;
       } else if (d.phase === 'ko') {
-        if (k.gestartet.ko || k.einst.modus === 'jgj' || !k.auslosungKo) break;
-        if (k.einst.modus === 'ko' && !auslosungAktuell(k)) {
+        if (k.gestartet.ko || !mitKo(k.einst.modus) || !k.auslosungKo) break;
+        if (erstePhase(k) === 'ko' && !auslosungAktuell(k)) {
           warnen('Die Auslosung passt nicht zu den Meldungen – bitte neu auslosen.');
           break;
         }
-        k.reihenfolge.push(...koAnlegen(k, k.einst.platz3));
+        k.reihenfolge.push(...koAnlegen(k));
         k.gestartet.ko = true;
       }
       statusAktualisieren(k);
@@ -687,6 +778,65 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       break;
     }
 
+    case ART.tischGesperrt: {
+      if (!nurLeitung()) break;
+      const nr = zahl(d.nr, 1, 200);
+      if (!nr) break;
+      z.tischeGesperrt = d.gesperrt === true ? [...new Set([...z.tischeGesperrt, nr])].sort((a, b) => a - b) : z.tischeGesperrt.filter((x) => x !== nr);
+      break;
+    }
+    case ART.spielAufgerufen:
+    case ART.spielAufrufZurueck: {
+      const k = konkurrenz();
+      if (!k) break;
+      const s = typeof d.spiel === 'string' ? k.spiele[d.spiel] : undefined;
+      if (!s) {
+        warnen('Spiel nicht gefunden.');
+        break;
+      }
+      const rolle = e.autor?.rolle ?? 'leitung';
+      if (!leitung && rolle !== 'helfer' && !(rolle === 'spieler' && e.autor?.helfer === true)) {
+        warnen('Spiele aufrufen dürfen Turnierleitung und Helfer.');
+        break;
+      }
+      if (rolle === 'spieler' && seiteVon(k, s, e.autor?.spieler)) {
+        warnen('Eigene Spiele ruft die Turnierleitung oder ein Helfer auf.');
+        break;
+      }
+      if (s.status !== 'offen') {
+        warnen('Das Spiel ist schon beendet.');
+        break;
+      }
+      if (e.art === ART.spielAufrufZurueck) {
+        s.tisch = null;
+        s.aufgerufen = null;
+        s.schiri = null;
+        break;
+      }
+      if (s.status !== 'offen' || s.eintrag) {
+        warnen('Nur offene Spiele lassen sich aufrufen.');
+        break;
+      }
+      const tisch = zahl(d.tisch, 1, 200);
+      if (tisch === undefined || tisch === null) {
+        warnen('Tisch fehlt.');
+        break;
+      }
+      if (z.tischeGesperrt.includes(tisch)) {
+        warnen(`Tisch ${tisch} ist gesperrt.`);
+        break;
+      }
+      const belegt = alleOffenenAufgerufenen(z).find((x) => x.tisch === tisch && x.id !== s.id);
+      if (belegt) {
+        warnen(`Tisch ${tisch} ist belegt.`);
+        break;
+      }
+      s.tisch = tisch;
+      s.aufgerufen = e.zeit;
+      s.schiri = schiriLesen(z, d.schiri);
+      break;
+    }
+
     case ART.spielErgebnis:
     case ART.spielBestaetigt:
     case ART.spielAngefochten:
@@ -712,11 +862,26 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
   return z;
 }
 
+function schiriLesen(z: TurnierZustand, v: unknown): Schiedsrichter | null {
+  if (!v || typeof v !== 'object') return null;
+  const x = v as Record<string, unknown>;
+  const spieler = typeof x.spieler === 'string' && z.spieler[x.spieler] ? x.spieler : null;
+  const name = text(x.name, 80) || (spieler ? `${z.spieler[spieler]!.vorname} ${z.spieler[spieler]!.nachname}`.trim() : '');
+  return name ? { name, spieler } : null;
+}
+
+/** Spiele, die aufgerufen und noch nicht beendet sind (belegen einen Tisch) */
+export function alleOffenenAufgerufenen(z: TurnierZustand): Spiel[] {
+  const aus: Spiel[] = [];
+  for (const k of Object.values(z.konkurrenzen)) for (const s of Object.values(k.spiele)) if (s.tisch !== null && s.status === 'offen') aus.push(s);
+  return aus;
+}
+
 function spielEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, e: LokalesEreignis, d: Record<string, unknown>, leitung: boolean): Pruefung {
   void z;
   const rolle = e.autor?.rolle ?? 'leitung';
   const ich = e.autor?.spieler;
-  const meineSeite: Seite | null = rolle === 'spieler' && ich ? (s.a === ich ? 'a' : s.b === ich ? 'b' : null) : null;
+  const meineSeite: Seite | null = rolle === 'spieler' ? seiteVon(k, s, ich) : null;
   // Spieler mit Helfer-Recht: fremde Spiele amtlich wie ein Helfer, eigene wie jeder Spieler (Gegner bestätigt)
   const amtlich = leitung || rolle === 'helfer' || (rolle === 'spieler' && e.autor?.helfer === true && !meineSeite);
   if (!amtlich && !meineSeite) return 'Spieler dürfen nur ihre eigenen Spiele eintragen.';
@@ -784,6 +949,16 @@ function spielEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, e: Lok
   return null;
 }
 
+/** Ein fehlerhaftes Ereignis darf das Turnier nie unlesbar machen: es wird übersprungen und gemeldet. */
+function sicherAnwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand {
+  try {
+    return anwenden(z, e);
+  } catch {
+    z.warnungen.push({ ereignis: e.id, text: 'Eintrag konnte nicht verarbeitet werden und wurde übersprungen.', zeit: e.zeit, von: e.autor?.name ?? '' });
+    return z;
+  }
+}
+
 export function berechnen(ereignisse: LokalesEreignis[]): TurnierZustand {
-  return ereignisse.reduce(anwenden, leererZustand());
+  return ereignisse.reduce(sicherAnwenden, leererZustand());
 }

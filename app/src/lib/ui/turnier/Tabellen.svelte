@@ -1,7 +1,8 @@
 <script lang="ts">
   import { ART } from '@shared/protokoll';
   import { T } from '../../texte';
-  import { gruppenKlassen, name, platzierungen, sichtbar, tabelle } from '../../engine/abfragen';
+  import { gruppenKlassen, name, platzierungen, sichtbar, tabelle, trostPlaetze } from '../../engine/abfragen';
+  import { baumRunden } from '../../engine/ko';
   import { gruppenName, type Spiel } from '../../engine/modell';
   import { mischen, neuerZufallswert, zufallAus } from '../../engine/zufall';
   import type { TurnierZustand } from '../../engine/zustand';
@@ -68,7 +69,7 @@
               <tr class:raus={r.zurueckgezogen} class:weiter={k.einst.modus === 'gruppen_ko' && !r.zurueckgezogen && r.platz <= k.einst.aufsteiger}>
                 <td class="z">{r.platz}{r.losNoetig && t.fertig ? '*' : ''}</td>
                 <td>
-                  <span class="name">{name(z, r.id)}</span>
+                  <span class="name">{name(z, r.id, k)}</span>
                   {#if z.spieler[r.id]?.verein}<span class="leise verein">{z.spieler[r.id]!.verein}</span>{/if}
                   {#if r.zurueckgezogen}<span class="marke">{T.tab.zurueckgezogen}</span>{/if}
                 </td>
@@ -99,14 +100,33 @@
     {:else if k.gestartet.ko}
       <h3>{k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko}</h3>
       <KoBaum {z} {k} {oeffnen} />
+      {#if baumRunden(k, 'verlierer')}
+        <h3>{T.konk.baeume.verlierer}</h3>
+        <KoBaum {z} {k} baum="verlierer" {oeffnen} />
+        <h3>{T.konk.baeume.finale}</h3>
+        <KoBaum {z} {k} baum="finale" {oeffnen} />
+      {/if}
       {@const p = zeige.tabellen ? platzierungen(k) : []}
       {#if p.length}
         <h3>{T.tab.platzierungen}</h3>
         <ol class="plaetze">
           {#each p as x (x.id)}
-            <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id)}</li>
+            <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}</li>
           {/each}
         </ol>
+      {/if}
+      {#if baumRunden(k, 'trost')}
+        <h3>{T.konk.baeume.trost}</h3>
+        <KoBaum {z} {k} baum="trost" {oeffnen} />
+        {@const tp = zeige.tabellen ? trostPlaetze(k) : []}
+        {#if tp.length}
+          <h3>{T.konk.trostPlatzierungen}</h3>
+          <ol class="plaetze">
+            {#each tp as x (x.id)}
+              <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}</li>
+            {/each}
+          </ol>
+        {/if}
       {/if}
     {/if}
   </section>

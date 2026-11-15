@@ -45,7 +45,10 @@
   }
 
   function verein(id: string | null) {
-    return id ? (z.spieler[id]?.verein ?? '') : '';
+    if (!id) return '';
+    if (z.spieler[id]) return z.spieler[id]!.verein ?? '';
+    const p = Object.values(z.konkurrenzen).map((k) => k.paare[id]).find(Boolean);
+    return p ? [...new Set(p.spieler.map((x) => z.spieler[x]?.verein ?? '').filter(Boolean))].join(' / ') : '';
   }
 </script>
 

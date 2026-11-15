@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { seiteVon } from '../../engine/zustand';
   import { ART, type Rolle } from '@shared/protokoll';
   import { T } from '../../texte';
   import { name } from '../../engine/abfragen';
@@ -28,7 +29,7 @@
   } = $props();
 
   const leitung = $derived(rolle === 'leitung' || rolle === 'admin' || rolle === 'veranstalter');
-  const meineSeite = $derived<Seite | null>(rolle === 'spieler' && ich ? (spiel.a === ich ? 'a' : spiel.b === ich ? 'b' : null) : null);
+  const meineSeite = $derived<Seite | null>(rolle === 'spieler' ? seiteVon(k, spiel, ich) : null);
   const amtlich = $derived(leitung || rolle === 'helfer' || (helfer && meineSeite === null));
   const darf = $derived(amtlich || meineSeite !== null);
   const nurSaetze = $derived(k.einst.eingabe === 'saetze');
