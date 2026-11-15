@@ -783,7 +783,7 @@ final class Api
         $helfer = $rolle === 'spieler' && $s['helfer'];
 
         $angenommen = [];
-        $this->db->pdo->beginTransaction();
+        $this->db->anfangen();
         try {
             // Schreibvorgänge je Turnier nacheinander: so werden Laufnummern in genau der
             // Reihenfolge sichtbar, in der sie vergeben wurden. Sonst könnte ein Gerät, das
@@ -796,9 +796,9 @@ final class Api
                 $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug, $helfer);
                 $angenommen[] = ['id' => (string)$e['id'], 'seq' => $seq];
             }
-            $this->db->pdo->commit();
+            $this->db->festschreiben();
         } catch (\Throwable $x) {
-            $this->db->pdo->rollBack();
+            $this->db->zurueckrollen();
             throw $x;
         }
         $hoechste = (int)($this->db->eine('SELECT MAX(seq) AS m FROM ereignisse WHERE turnier_id = ?', [$t['id']])['m'] ?? 0);
@@ -988,12 +988,12 @@ final class Api
             $this->fehlversuch($bremse);
             throw new ApiFehler('falsche_zugangsdaten', 'Das Passwort ist falsch.');
         }
-        $this->db->pdo->beginTransaction();
+        $this->db->anfangen();
         try {
             $this->turnierEntfernen((string)$t['id']);
-            $this->db->pdo->commit();
+            $this->db->festschreiben();
         } catch (\Throwable $e) {
-            $this->db->pdo->rollBack();
+            $this->db->zurueckrollen();
             throw $e;
         }
         return ['ok' => true];
@@ -1010,7 +1010,7 @@ final class Api
     /** Konto mit allen Turnieren, Ereignissen und Sitzungen endgültig löschen. */
     private function kontoEntfernen(int $kontoId): void
     {
-        $this->db->pdo->beginTransaction();
+        $this->db->anfangen();
         try {
             foreach ($this->db->alle('SELECT id FROM turniere WHERE konto_id = ?', [$kontoId]) as $t) {
                 $this->db->ausfuehren('DELETE FROM ereignisse WHERE turnier_id = ?', [$t['id']]);
@@ -1022,9 +1022,9 @@ final class Api
             $this->db->ausfuehren('DELETE FROM sitzungen WHERE konto_id = ?', [$kontoId]);
             $this->db->ausfuehren('DELETE FROM rueckstellungen WHERE konto_id = ?', [$kontoId]);
             $this->db->ausfuehren('DELETE FROM konten WHERE id = ?', [$kontoId]);
-            $this->db->pdo->commit();
+            $this->db->festschreiben();
         } catch (\Throwable $x) {
-            $this->db->pdo->rollBack();
+            $this->db->zurueckrollen();
             throw $x;
         }
     }
@@ -1356,7 +1356,7 @@ final class Api
             throw new ApiFehler('ungueltig', 'Feld „ereignisse“ muss eine Liste mit höchstens ' . self::MAX_EREIGNISSE . ' Einträgen sein.');
         }
         $angenommen = [];
-        $this->db->pdo->beginTransaction();
+        $this->db->anfangen();
         try {
             if ($this->db->treiber === 'mysql') {
                 $this->db->eine('SELECT id FROM turniere WHERE id = ? FOR UPDATE', [$t['id']]);
@@ -1376,9 +1376,9 @@ final class Api
                 $seq = $this->einEreignis((string)$t['id'], $e, $rolle, $name, $bezug, $rolle === 'spieler' && ($au['helfer'] ?? false) === true);
                 $angenommen[] = ['id' => (string)$e['id'], 'seq' => $seq];
             }
-            $this->db->pdo->commit();
+            $this->db->festschreiben();
         } catch (\Throwable $x) {
-            $this->db->pdo->rollBack();
+            $this->db->zurueckrollen();
             throw $x;
         }
         $hoechste = (int)($this->db->eine('SELECT MAX(seq) AS m FROM ereignisse WHERE turnier_id = ?', [$t['id']])['m'] ?? 0);
@@ -1395,7 +1395,7 @@ final class Api
             throw new ApiFehler('konflikt', 'Das Turnier wurde inzwischen von „' . $t['zentrale'] . '“ übernommen.');
         }
         $r = $a->rumpf ?? [];
-        $this->db->pdo->beginTransaction();
+        $this->db->anfangen();
         try {
             if (array_key_exists('codes', $r)) {
                 $liste = $r['codes'];
@@ -1451,9 +1451,9 @@ final class Api
                 $this->db->ausfuehren('UPDATE turniere SET uebersicht = ?, uebersicht_zeit = ? WHERE id = ?', [$ueb['text'], $this->jetzt(), $t['id']]);
             }
             $this->db->ausfuehren('UPDATE turniere SET zentrale = NULL, zentrale_id = NULL, zentrale_seit = NULL WHERE id = ?', [$t['id']]);
-            $this->db->pdo->commit();
+            $this->db->festschreiben();
         } catch (\Throwable $x) {
-            $this->db->pdo->rollBack();
+            $this->db->zurueckrollen();
             throw $x;
         }
         return ['turnier' => self::turnierAusgabe($this->turnierLaden((string)$t['id']))];
@@ -1619,7 +1619,7 @@ final class Api
         if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_CODES) {
             throw new ApiFehler('ungueltig', 'Feld „eintraege“ muss eine Liste sein.');
         }
-        $this->db->pdo->beginTransaction();
+        $this->db->anfangen();
         try {
             foreach ($liste as $e) {
                 $e = $e instanceof \stdClass ? get_object_vars($e) : $e;
@@ -1639,9 +1639,9 @@ final class Api
                 }
                 $this->codeAnlegen($t, $rolle, $bezug, $name);
             }
-            $this->db->pdo->commit();
+            $this->db->festschreiben();
         } catch (\Throwable $x) {
-            $this->db->pdo->rollBack();
+            $this->db->zurueckrollen();
             throw $x;
         }
         return $this->codesListe((string)$t['id']);
@@ -1806,7 +1806,7 @@ final class Api
             throw new ApiFehler('ungueltig', 'Feld „spieler“ muss eine Liste mit höchstens 500 Einträgen sein.');
         }
         $eintraege = array_map([self::class, 'poolEintrag'], $liste);
-        $this->db->pdo->beginTransaction();
+        $this->db->anfangen();
         try {
             foreach ($eintraege as [$id, $d]) {
                 $json = json_encode($d, JSON_UNESCAPED_UNICODE);
@@ -1819,9 +1819,9 @@ final class Api
                     $this->db->ausfuehren('INSERT INTO pool (konto_id, id, daten, geaendert) VALUES (?, ?, ?, ?)', [$s['konto_id'], $id, $json, $this->jetzt()]);
                 }
             }
-            $this->db->pdo->commit();
+            $this->db->festschreiben();
         } catch (\Throwable $x) {
-            $this->db->pdo->rollBack();
+            $this->db->zurueckrollen();
             throw $x;
         }
         return $this->pool($a);

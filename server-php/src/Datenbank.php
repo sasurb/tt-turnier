@@ -26,6 +26,43 @@ final class Datenbank
         if ($this->treiber === 'sqlite') {
             $this->pdo->exec('PRAGMA foreign_keys = ON');
             $this->pdo->exec('PRAGMA journal_mode = WAL');
+            $this->pdo->exec('PRAGMA busy_timeout = 5000');
+        }
+    }
+
+    /**
+     * Schreibtransaktion. SQLite: BEGIN IMMEDIATE holt die Schreibsperre sofort; eine
+     * aufgeschobene Transaktion, die erst liest und dann schreibt, scheitert bei gleichzeitigen
+     * Schreibern sonst sofort mit „database is locked“ (der Busy-Timeout greift dort nicht).
+     */
+    public function anfangen(): void
+    {
+        if ($this->treiber === 'sqlite') {
+            $this->pdo->exec('BEGIN IMMEDIATE');
+        } else {
+            $this->pdo->beginTransaction();
+        }
+    }
+
+    public function festschreiben(): void
+    {
+        if ($this->treiber === 'sqlite') {
+            $this->pdo->exec('COMMIT');
+        } else {
+            $this->pdo->commit();
+        }
+    }
+
+    public function zurueckrollen(): void
+    {
+        if ($this->treiber === 'sqlite') {
+            try {
+                $this->pdo->exec('ROLLBACK');
+            } catch (\PDOException) {
+                // keine offene Transaktion
+            }
+        } else {
+            $this->pdo->rollBack();
         }
     }
 
