@@ -23,6 +23,10 @@ export interface EreignisSpeicher {
   setzeSicht(turnier: string, sicht: Sicht): Promise<void>;
   /** Alle vom Server bestätigten Ereignisse verwerfen (ausstehende bleiben), Laufnummer auf 0 – für neues Abholen */
   bestaetigteVerwerfen(turnier: string): Promise<void>;
+  /** Vom Server abgelehnte eigene Einträge markieren (Status „abgelehnt“, mit Grund) */
+  ablehnen(turnier: string, liste: { id: string; meldung: string }[]): Promise<void>;
+  /** Einzelne Einträge dieses Geräts entfernen (z. B. abgelehnte verwerfen) */
+  entfernen(turnier: string, ids: string[]): Promise<void>;
   /** Alles zu einem Turnier löschen. */
   loeschen(turnier: string): Promise<void>;
 }
@@ -58,8 +62,17 @@ export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
     this.sichten.set(turnier, sicht);
   }
   async bestaetigteVerwerfen(turnier: string) {
-    for (const [id, e] of this.ereignisse) if (e.turnier === turnier && e.status !== 'ausstehend') this.ereignisse.delete(id);
+    for (const [id, e] of this.ereignisse) if (e.turnier === turnier && e.status === 'bestaetigt') this.ereignisse.delete(id);
     this.meta.set(turnier, 0);
+  }
+  async ablehnen(turnier: string, liste: { id: string; meldung: string }[]) {
+    for (const { id, meldung } of liste) {
+      const e = this.ereignisse.get(id);
+      if (e && e.turnier === turnier && e.status === 'ausstehend') this.ereignisse.set(id, { ...e, status: 'abgelehnt', fehler: meldung });
+    }
+  }
+  async entfernen(turnier: string, ids: string[]) {
+    for (const id of ids) if (this.ereignisse.get(id)?.turnier === turnier && this.ereignisse.get(id)?.status !== 'bestaetigt') this.ereignisse.delete(id);
   }
   async loeschen(turnier: string) {
     for (const [id, e] of this.ereignisse) if (e.turnier === turnier) this.ereignisse.delete(id);
@@ -173,11 +186,41 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     const store = tx.objectStore('ereignisse');
     const r = store.index('turnier').getAll(turnier);
     r.onsuccess = () => {
-      for (const e of r.result as LokalesEreignis[]) if (e.status !== 'ausstehend') store.delete(e.id);
+      for (const e of r.result as LokalesEreignis[]) if (e.status === 'bestaetigt') store.delete(e.id);
     };
     const meta = tx.objectStore('meta');
     const m = meta.get(turnier);
     m.onsuccess = () => meta.put({ ...((m.result as object | undefined) ?? {}), turnier, seq: 0 });
+    await fertig(tx);
+  }
+
+  async ablehnen(turnier: string, liste: { id: string; meldung: string }[]) {
+    if (liste.length === 0) return;
+    const db = await this.db;
+    const tx = db.transaction('ereignisse', 'readwrite');
+    const store = tx.objectStore('ereignisse');
+    for (const { id, meldung } of liste) {
+      const r = store.get(id);
+      r.onsuccess = () => {
+        const e = r.result as LokalesEreignis | undefined;
+        if (e && e.turnier === turnier && e.status === 'ausstehend') store.put({ ...e, status: 'abgelehnt', fehler: meldung });
+      };
+    }
+    await fertig(tx);
+  }
+
+  async entfernen(turnier: string, ids: string[]) {
+    if (ids.length === 0) return;
+    const db = await this.db;
+    const tx = db.transaction('ereignisse', 'readwrite');
+    const store = tx.objectStore('ereignisse');
+    for (const id of ids) {
+      const r = store.get(id);
+      r.onsuccess = () => {
+        const e = r.result as LokalesEreignis | undefined;
+        if (e && e.turnier === turnier && e.status !== 'bestaetigt') store.delete(id);
+      };
+    }
     await fertig(tx);
   }
 

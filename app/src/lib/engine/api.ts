@@ -1,4 +1,11 @@
 import type {
+  Aufgabe,
+  AnmeldeStatus,
+  AnmeldungEinstellungen,
+  AnmeldungenAntwort,
+  AnmeldungInfo,
+  AnmeldungSendenAnfrage,
+  AnmeldungStand,
   AbholenAntwort,
   TurnierInfo,
   CodeEintrag,
@@ -223,7 +230,7 @@ export class Api {
       query: { turnier },
     });
   }
-  codesAnlegen(token: string, turnier: string, eintraege: { rolle: CodeRolle; bezug: string; name: string }[]) {
+  codesAnlegen(token: string, turnier: string, eintraege: { rolle: CodeRolle; bezug: string; name: string; aufgaben?: Aufgabe[] }[]) {
     return this.rufe<CodesAntwort>('POST', 'codes.anlegen', {
       token,
       rumpf: { turnier, eintraege },
@@ -252,6 +259,43 @@ export class Api {
       token,
       rumpf: { turnier, bezug, helfer },
     });
+  }
+  codeAufgaben(token: string, turnier: string, bezug: string, aufgaben: Aufgabe[]) {
+    return this.rufe<{ code: CodeEintrag }>('POST', 'code.aufgaben', {
+      token,
+      rumpf: { turnier, bezug, aufgaben },
+    });
+  }
+  /* ---------- Online-Anmeldung (ab 0.11) ---------- */
+  anmeldungInfo(turnier: string) {
+    return this.rufe<AnmeldungInfo>('GET', 'anmeldung', { query: { turnier } });
+  }
+  anmeldungSenden(a: AnmeldungSendenAnfrage) {
+    return this.rufe<{ ok: true; mail: boolean }>('POST', 'anmeldung.senden', { rumpf: a });
+  }
+  anmeldungBestaetigen(turnier: string, schluessel: string) {
+    return this.rufe<AnmeldungStand>('POST', 'anmeldung.bestaetigen', { rumpf: { turnier, schluessel } });
+  }
+  anmeldungStand(turnier: string, schluessel: string) {
+    return this.rufe<AnmeldungStand>('POST', 'anmeldung.stand', { rumpf: { turnier, schluessel } });
+  }
+  anmeldungAbmelden(turnier: string, schluessel: string, konkurrenz?: string) {
+    return this.rufe<AnmeldungStand>('POST', 'anmeldung.abmelden', { rumpf: { turnier, schluessel, ...(konkurrenz ? { konkurrenz } : {}) } });
+  }
+  anmeldungen(token: string, turnier: string) {
+    return this.rufe<AnmeldungenAntwort>('GET', 'anmeldungen', { token, query: { turnier } });
+  }
+  anmeldungEinstellungen(token: string, turnier: string, e: AnmeldungEinstellungen) {
+    return this.rufe<AnmeldungenAntwort>('POST', 'anmeldung.einstellungen', { token, rumpf: { turnier, ...e } });
+  }
+  anmeldungAendern(token: string, turnier: string, id: string, konkurrenz: string, status: AnmeldeStatus) {
+    return this.rufe<AnmeldungenAntwort>('POST', 'anmeldung.aendern', { token, rumpf: { turnier, id, konkurrenz, status } });
+  }
+  anmeldungUebernommen(token: string, turnier: string, ids: string[]) {
+    return this.rufe<{ ok: true }>('POST', 'anmeldung.uebernommen', { token, rumpf: { turnier, ids } });
+  }
+  anmeldungLoeschen(token: string, turnier: string, id: string) {
+    return this.rufe<AnmeldungenAntwort>('POST', 'anmeldung.loeschen', { token, rumpf: { turnier, id } });
   }
   /** Turnier endgültig löschen (Eigentümer-Konto/Admin, mit Passwort) */
   turnierLoeschen(token: string, turnier: string, passwort: string) {

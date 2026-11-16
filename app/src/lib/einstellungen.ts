@@ -1,4 +1,4 @@
-import type { Konto, Rolle } from '@shared/protokoll';
+import type { Aufgabe, Konto, Rolle } from '@shared/protokoll';
 import { neueId } from './engine/ids';
 
 /**
@@ -20,6 +20,8 @@ export interface GemerktesTurnier {
   spieler?: string | null;
   /** Spielerkennung mit Helfer-Recht */
   helfer?: boolean | null;
+  /** Helferkennung: Aufgaben (ab 0.11; fehlt = Ergebnisse und Spielaufruf) */
+  aufgaben?: Aufgabe[] | null;
   /** Name, unter dem dieses Gerät einträgt (von der Kennung) */
   wer?: string | null;
   /** Über das eigene Konto geöffnet: Rechte kommen vom Konto (solange es angemeldet ist) */
@@ -93,6 +95,7 @@ export function turnierMerken(t: Omit<GemerktesTurnier, 'zuletzt'>) {
     token: t.token ?? alt?.token ?? null,
     spieler: t.spieler !== undefined ? t.spieler : (alt?.spieler ?? null),
     helfer: t.helfer !== undefined ? t.helfer : (alt?.helfer ?? null),
+    aufgaben: t.aufgaben !== undefined ? t.aufgaben : (alt?.aufgaben ?? null),
     wer: t.wer !== undefined ? t.wer : (alt?.wer ?? null),
     konto: t.konto !== undefined ? t.konto : (alt?.konto ?? null),
     zuletzt: new Date().toISOString(),
@@ -125,6 +128,7 @@ export function turnierAbmelden(id: string) {
           token: null,
           spieler: null,
           helfer: null,
+          aufgaben: null,
           wer: null,
         }
       : t,

@@ -1,6 +1,10 @@
 <script lang="ts">
   import qrcode from 'qrcode-generator';
 
+  // UTF-8 statt Latin-1: Umlaute in WLAN-Namen, Vereinsnamen (GiroCode) und Links bleiben lesbar
+  const q = qrcode as unknown as { stringToBytes: unknown; stringToBytesFuncs: Record<string, unknown> };
+  if (q.stringToBytesFuncs?.['UTF-8']) q.stringToBytes = q.stringToBytesFuncs['UTF-8'];
+
   let { text, groesse = 160, label = '' }: { text: string; groesse?: number; label?: string } = $props();
 
   const svg = $derived.by(() => {

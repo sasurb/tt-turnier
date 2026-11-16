@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.10.0';
+    public const VERSION = '0.11.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_JE_TURNIER = 50000;
@@ -39,6 +39,16 @@ final class Api
     private const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'];
     private const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf_zurueck'];
     private const MAX_CODES = 400;
+    /** shared/protokoll.ts ALLE_AUFGABEN, HELFER_STANDARD, ARTEN_JE_AUFGABE, NUR_VOLLE_SICHT */
+    private const AUFGABEN = ['ergebnisse', 'aufruf', 'kasse', 'oberschiri'];
+    private const HELFER_STANDARD = ['ergebnisse', 'aufruf'];
+    private const ARTEN_JE_AUFGABE = [
+        'ergebnisse' => ['spiel.ergebnis'],
+        'aufruf' => ['spiel.aufgerufen', 'spiel.aufruf_zurueck'],
+        'kasse' => ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'],
+        'oberschiri' => ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt'],
+    ];
+    private const NUR_VOLLE_SICHT = ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'];
     private const MAX_POOL = 3000;
     private const MAX_UEBERSICHT = 60000;
     private const MAX_SICHERUNG_BYTES = 6 * 1024 * 1024;
@@ -48,6 +58,7 @@ final class Api
     /** Anschluss der laufenden Anfrage (für Bremsen) */
     private string $ip = '';
     private readonly Mailer $mailer;
+    private readonly Anmeldung $anmeldung;
 
     /**
      * @param array{setup_code?:string,app_url?:string,mail?:array{absender?:string,admin?:string},ohne_warten?:bool} $config
@@ -61,10 +72,11 @@ final class Api
     ) {
         $this->uhr = $uhr ?? static fn(): int => time();
         $this->mailer = $mailer ?? new KeinMailer();
+        $this->anmeldung = new Anmeldung($this, $db);
     }
 
     /** Adresse der App mit abschließendem „/“, z. B. https://saschaurban.de/tt-turnier/ */
-    private function appUrl(): string
+    public function appUrl(): string
     {
         $u = trim((string)($this->config['app_url'] ?? ''));
         return $u === '' ? '' : rtrim($u, '/') . '/';
@@ -76,29 +88,30 @@ final class Api
     }
 
     /** Mails mit Links sind nur sinnvoll, wenn Versand und Adresse der App eingerichtet sind. */
-    private function mailBereit(): bool
+    public function mailBereit(): bool
     {
         return $this->mailer->bereit() && $this->appUrl() !== '';
     }
 
     /** System-Mail an eine Person. Antworten gehen an den Administrator. Scheitert still (protokolliert). */
-    private function mail(string $an, string $betreff, string $text, ?string $anhangName = null, ?string $anhang = null): bool
+    /** @param string|null $antwortAn Antworten an diese Adresse (z. B. Turnierleitung) statt an den Betreiber */
+    public function mail(string $an, string $betreff, string $text, ?string $anhangName = null, ?string $anhang = null, ?string $antwortAn = null): bool
     {
         $fuss = "\n\n-- \nTischtennis-Turnier · " . $this->appUrl()
-            . "\nDiese Mail wurde automatisch versendet. Antworten erreichen den Betreiber.";
-        $ok = $this->mailer->senden(new Mail($an, $betreff, $text . $fuss, $this->adminMail() ?: null, $anhangName, $anhang));
+            . "\nDiese Mail wurde automatisch versendet. Antworten erreichen " . ($antwortAn !== null ? 'die Turnierleitung.' : 'den Betreiber.');
+        $ok = $this->mailer->senden(new Mail($an, $betreff, $text . $fuss, $antwortAn ?? ($this->adminMail() ?: null), $anhangName, $anhang));
         if (!$ok) {
             error_log("tt-turnier: Mail an {$an} konnte nicht gesendet werden ({$betreff})");
         }
         return $ok;
     }
 
-    private function jetzt(): int
+    public function jetzt(): int
     {
         return ($this->uhr)();
     }
 
-    private static function iso(?int $ts): ?string
+    public static function iso(?int $ts): ?string
     {
         return $ts === null ? null : gmdate('Y-m-d\TH:i:s\Z', $ts);
     }
@@ -142,6 +155,17 @@ final class Api
                 'POST code.sperren' => $this->codeSperren($a),
                 'POST code.entfernen' => $this->codeEntfernen($a),
                 'POST code.helfer' => $this->codeHelfer($a),
+                'POST code.aufgaben' => $this->codeAufgaben($a),
+                'GET anmeldung' => $this->anmeldung->info($a),
+                'POST anmeldung.senden' => $this->anmeldung->senden($a),
+                'POST anmeldung.bestaetigen' => $this->anmeldung->bestaetigen($a),
+                'POST anmeldung.stand' => $this->anmeldung->standAbrufen($a),
+                'POST anmeldung.abmelden' => $this->anmeldung->abmelden($a),
+                'GET anmeldungen' => $this->anmeldung->liste($a),
+                'POST anmeldung.einstellungen' => $this->anmeldung->einstellungenSetzen($a),
+                'POST anmeldung.aendern' => $this->anmeldung->aendern($a),
+                'POST anmeldung.uebernommen' => $this->anmeldung->uebernommen($a),
+                'POST anmeldung.loeschen' => $this->anmeldung->loeschen($a),
                 'GET konto.einstellungen' => $this->kontoEinstellungen($a),
                 'POST konto.einstellungen' => $this->kontoEinstellungenSetzen($a),
                 'GET pool' => $this->pool($a),
@@ -167,13 +191,15 @@ final class Api
 
     /* ---------------- Hilfen ---------------- */
 
-    private function text(Anfrage $a, string $feld, int $min = 1, int $max = 190): string
+    /** @param bool $einzeilig Steuerzeichen/Zeilenumbrüche entfernen (Standard; nur Nachrichtentexte sind mehrzeilig) */
+    public function text(Anfrage $a, string $feld, int $min = 1, int $max = 190, bool $einzeilig = true): string
     {
         $wert = $a->rumpf[$feld] ?? null;
         if (!is_string($wert)) {
             throw new ApiFehler('ungueltig', "Feld „{$feld}“ fehlt.");
         }
-        $wert = trim($wert);
+        // Steuerzeichen und Zeilenumbrüche entfernen (Namen landen in Mails – kein frei gestalteter Mailtext)
+        $wert = $einzeilig ? trim(preg_replace('/[\p{Cc}\p{Cf}\x{2028}\x{2029}]+/u', ' ', $wert) ?? '') : trim($wert);
         $laenge = mb_strlen($wert);
         if ($laenge < $min || $laenge > $max) {
             throw new ApiFehler('ungueltig', "Feld „{$feld}“ muss {$min} bis {$max} Zeichen lang sein.");
@@ -181,7 +207,7 @@ final class Api
         return $wert;
     }
 
-    private function email(Anfrage $a): string
+    public function email(Anfrage $a): string
     {
         $email = mb_strtolower($this->text($a, 'email', 3, 190));
         if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
@@ -199,21 +225,21 @@ final class Api
         return $pw;
     }
 
-    private function bremse(string $schluessel): void
+    public function bremse(string $schluessel): void
     {
         if ($this->anzahlVersuche($schluessel, self::VERSUCHE_FENSTER) >= self::VERSUCHE_MAX) {
             throw new ApiFehler('zu_viele_versuche', 'Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.');
         }
     }
 
-    private function anzahlVersuche(string $schluessel, int $fenster): int
+    public function anzahlVersuche(string $schluessel, int $fenster): int
     {
         $grenze = $this->jetzt() - $fenster;
         return (int)($this->db->eine('SELECT COUNT(*) AS n FROM versuche WHERE schluessel = ? AND zeit >= ?', [$schluessel, $grenze])['n'] ?? 0);
     }
 
     /** Höchstens $max Vorgänge je Fenster (z. B. neue Konten je IP und Stunde); zählt diesen Vorgang mit. */
-    private function begrenzen(string $schluessel, int $max, int $fenster, string $meldung): void
+    public function begrenzen(string $schluessel, int $max, int $fenster, string $meldung): void
     {
         if ($this->anzahlVersuche($schluessel, $fenster) >= $max) {
             throw new ApiFehler('zu_viele_versuche', $meldung);
@@ -222,7 +248,7 @@ final class Api
     }
 
     /** Fangfeld für Bots: echte Nutzer sehen das Feld nicht und lassen es leer. */
-    private function fangfeld(Anfrage $a): void
+    public function fangfeld(Anfrage $a): void
     {
         $w = $a->rumpf['website'] ?? '';
         if (!is_string($w) || trim($w) !== '') {
@@ -282,12 +308,12 @@ final class Api
         }
     }
 
-    private function fehlversuch(string $schluessel): void
+    public function fehlversuch(string $schluessel): void
     {
         $this->db->ausfuehren('INSERT INTO versuche (schluessel, zeit) VALUES (?, ?)', [$schluessel, $this->jetzt()]);
     }
 
-    private function versucheLoeschen(string $schluessel): void
+    public function versucheLoeschen(string $schluessel): void
     {
         $this->db->ausfuehren('DELETE FROM versuche WHERE schluessel = ?', [$schluessel]);
     }
@@ -303,7 +329,7 @@ final class Api
     }
 
     /** @return array{konto_id:?int,turnier_id:?string,rolle:string,name:string,bezug:?string,helfer:bool}|null */
-    private function sitzung(Anfrage $a): ?array
+    public function sitzung(Anfrage $a): ?array
     {
         if ($a->token === null || !preg_match('/^[a-f0-9]{64}$/', $a->token)) {
             return null;
@@ -399,7 +425,7 @@ final class Api
      * Turnier zur Kennung. Unbekannte Kennungen werden je Anschluss gezählt: Wer viele durchprobiert,
      * wird für eine Viertelstunde gebremst (Kennungen sind 8 Ziffern, Turniere sollen nicht auffindbar sein).
      */
-    private function turnierLaden(string $id): array
+    public function turnierLaden(string $id): array
     {
         $t = preg_match(self::TURNIER_ID_MUSTER, $id)
             ? $this->db->eine('SELECT t.*, k.name AS veranstalter FROM turniere t JOIN konten k ON k.id = t.konto_id WHERE t.id = ?', [$id])
@@ -432,6 +458,28 @@ final class Api
         return $vorsilbe . '-' . bin2hex(random_bytes(5));
     }
 
+    /** Aufgaben aus der Datenbank (JSON-Liste) bzw. Anfrage; ungültige fallen weg, Reihenfolge fest */
+    private static function aufgabenLesen(mixed $roh): array
+    {
+        if (is_string($roh)) {
+            $roh = json_decode($roh, true);
+        }
+        if (!is_array($roh)) {
+            return self::HELFER_STANDARD;
+        }
+        return array_values(array_filter(self::AUFGABEN, static fn(string $x): bool => in_array($x, $roh, true)));
+    }
+
+    /** Aufgaben einer Helfer-Sitzung – live aus der Kennung, damit Änderungen sofort gelten */
+    private function aufgabenDerSitzung(array $s): array
+    {
+        if ($s['rolle'] !== 'helfer' || $s['turnier_id'] === null || $s['bezug'] === null) {
+            return [];
+        }
+        $c = $this->db->eine("SELECT aufgaben FROM codes WHERE turnier_id = ? AND rolle = 'helfer' AND bezug = ?", [$s['turnier_id'], $s['bezug']]);
+        return $c === null ? [] : self::aufgabenLesen($c['aufgaben']);
+    }
+
     /* ---------------- Endpunkte ---------------- */
 
     private function info(): array
@@ -446,6 +494,8 @@ final class Api
             'mail' => $this->mailBereit(),
             'codes' => true,
             'kennungen' => true,
+            'aufgaben' => true,
+            'anmeldung' => $this->mailBereit(),
         ];
     }
 
@@ -529,6 +579,9 @@ final class Api
             if ($s['helfer']) {
                 $antwort['helfer'] = true;
             }
+        }
+        if ($s['rolle'] === 'helfer') {
+            $antwort['aufgaben'] = $this->aufgabenDerSitzung($s);
         }
         if ($s['konto_id'] !== null) {
             $k = $this->db->eine('SELECT * FROM konten WHERE id = ?', [$s['konto_id']]);
@@ -654,6 +707,9 @@ final class Api
         if ($a->token !== null) {
             $s = $this->sitzung($a);
             $aus['rechte'] = $s === null ? null : $this->rechte($s, $t);
+            if ($aus['rechte'] === 'helfer') {
+                $aus['aufgaben'] = $this->aufgabenDerSitzung($s);
+            }
         }
         return ['turnier' => $aus];
     }
@@ -705,6 +761,9 @@ final class Api
                 $antwort['helfer'] = true;
             }
         }
+        if ($rolle === 'helfer') {
+            $antwort['aufgaben'] = self::aufgabenLesen($c['aufgaben'] ?? null);
+        }
         return $antwort;
     }
 
@@ -720,6 +779,8 @@ final class Api
         if ($mehr) {
             array_pop($zeilen);
         }
+        // Bis hierher gelesen (auch wenn der Datenschutz-Filter Einträge weglässt)
+        $bis = $zeilen === [] ? $ab : (int)$zeilen[count($zeilen) - 1]['seq'];
         $hoechste = (int)($this->db->eine('SELECT MAX(seq) AS m FROM ereignisse WHERE turnier_id = ?', [$t['id']])['m'] ?? 0);
         $this->sicherungPruefen($t, $hoechste, false);
         $sicht = $this->sicht($a, $t);
@@ -734,13 +795,17 @@ final class Api
             'autor' => self::autorAusgabe($z),
         ], $zeilen);
         if ($sicht !== 'voll') {
-            $liste = array_map(static fn(array $e): array => self::gefiltert($e, $sicht), $liste);
+            $liste = array_values(array_map(
+                static fn(array $e): array => self::gefiltert($e, $sicht),
+                array_filter($liste, static fn(array $e): bool => !in_array($e['art'], self::NUR_VOLLE_SICHT, true))
+            ));
         }
         return [
             'ereignisse' => $liste,
             'hoechsteSeq' => $hoechste,
             'mehr' => $mehr,
             'sicht' => $sicht,
+            'bis' => $bis,
         ];
     }
 
@@ -760,8 +825,12 @@ final class Api
                 $s = null; // gesperrtes Konto: wie Zuschauer
             }
             $r = $s === null ? null : $this->rechte($s, $t);
-            if ($r === 'leitung' || $r === 'helfer' || ($r === 'spieler' && $s['helfer'])) {
+            if ($r === 'leitung' || ($r === 'helfer' && in_array('kasse', $this->aufgabenDerSitzung($s), true))) {
                 return 'voll';
+            }
+            // Helfer ohne Aufgabe „Kasse“: alles außer Zahlungen, Check-in und Bankverbindung (ab 0.11)
+            if ($r === 'helfer' || ($r === 'spieler' && $s['helfer'])) {
+                return 'helfer';
             }
             if ($r === 'spieler') {
                 return 'spieler';
@@ -797,11 +866,19 @@ final class Api
     /** @param array<string,mixed> $e */
     private static function gefiltert(array $e, string $sicht): array
     {
+        if ($sicht === 'helfer') {
+            if ($e['art'] === 'turnier.daten' && $e['daten'] instanceof \stdClass && property_exists($e['daten'], 'kasse')) {
+                $d = clone $e['daten'];
+                unset($d->kasse);
+                $e['daten'] = $d;
+            }
+            return $e;
+        }
         $kurz = $sicht === 'kurz';
         $zuschauer = $sicht !== 'spieler';
         if ($zuschauer) {
             $autor = ['rolle' => $e['autor']['rolle'], 'name' => ''];
-            foreach (['spieler', 'helfer'] as $f) {
+            foreach (['spieler', 'helfer', 'aufgaben'] as $f) {
                 if (isset($e['autor'][$f])) {
                     $autor[$f] = $e['autor'][$f];
                 }
@@ -813,7 +890,9 @@ final class Api
             return $e;
         }
         $d = clone $d;
-        if ($e['art'] === 'spieler.angelegt' || $e['art'] === 'spieler.geaendert') {
+        if ($e['art'] === 'turnier.daten') {
+            unset($d->kasse); // Kasse und Bankverbindung nur für Leitung und Helfer
+        } elseif ($e['art'] === 'spieler.angelegt' || $e['art'] === 'spieler.geaendert') {
             unset($d->jahrgang, $d->geschlecht, $d->pool);
             if ($kurz && isset($d->nachname) && is_string($d->nachname)) {
                 $d->nachname = self::kurzname($d->nachname);
@@ -857,24 +936,18 @@ final class Api
         if ($rolle === 'helfer' || $rolle === 'spieler') {
             $this->begrenzen('ev:' . substr(hash('sha256', (string)$a->token), 0, 24), 60, 60, 'Zu viele Einträge in kurzer Zeit. Bitte kurz warten.');
         }
+        $aufgaben = $rolle === 'helfer' ? $this->aufgabenDerSitzung($s) : null;
         $erlaubt = match ($rolle) {
             // Spielerkennung mit Helferrecht darf beides
             'spieler' => (int)($s['helfer'] ?? 0) === 1 ? array_values(array_unique([...self::ARTEN_SPIELER, ...self::ARTEN_HELFER])) : self::ARTEN_SPIELER,
-            'helfer' => self::ARTEN_HELFER,
+            'helfer' => array_values(array_unique(array_merge([], ...array_map(static fn(string $x): array => self::ARTEN_JE_AUFGABE[$x], $aufgaben ?? [])))),
             default => null,
         };
-        if ($erlaubt !== null) {
-            foreach ($liste as $e) {
-                $art = is_array($e) ? ($e['art'] ?? null) : ($e instanceof \stdClass ? ($e->art ?? null) : null);
-                if (!in_array($art, $erlaubt, true)) {
-                    throw new ApiFehler('keine_berechtigung', 'Mit diesem Code dürfen nur Ergebnisse eingetragen werden.');
-                }
-            }
-        }
-        $bezug = $rolle === 'spieler' ? $s['bezug'] : null;
+        $bezug = $rolle === 'spieler' || $rolle === 'helfer' ? $s['bezug'] : null;
         $helfer = $rolle === 'spieler' && $s['helfer'];
 
         $angenommen = [];
+        $abgelehnt = [];
         $this->db->anfangen();
         try {
             // Schreibvorgänge je Turnier nacheinander: so werden Laufnummern in genau der
@@ -885,7 +958,24 @@ final class Api
             }
             foreach ($liste as $e) {
                 $e = $e instanceof \stdClass ? get_object_vars($e) : $e;
-                $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug, $helfer);
+                $eid = is_array($e) && is_string($e['id'] ?? null) ? mb_substr($e['id'], 0, 64) : '';
+                // Einzelne Einträge ablehnen statt den ganzen Block: die übrigen gelten, das Gerät
+                // sendet den abgelehnten nicht erneut (ab 0.11)
+                if ($erlaubt !== null && !in_array(is_array($e) ? ($e['art'] ?? null) : null, $erlaubt, true)) {
+                    $abgelehnt[] = ['id' => $eid, 'fehler' => 'keine_berechtigung', 'meldung' => $rolle === 'helfer'
+                        ? 'Diese Aufgabe hat deine Helferkennung nicht.'
+                        : 'Mit dieser Kennung dürfen nur Ergebnisse eingetragen werden.'];
+                    continue;
+                }
+                try {
+                    $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug, $helfer, $aufgaben);
+                } catch (ApiFehler $f) {
+                    if ($f->code_ !== 'ungueltig') {
+                        throw $f;
+                    }
+                    $abgelehnt[] = ['id' => $eid, 'fehler' => 'ungueltig', 'meldung' => $f->getMessage()];
+                    continue;
+                }
                 $angenommen[] = ['id' => (string)$e['id'], 'seq' => $seq];
             }
             $this->db->festschreiben();
@@ -900,10 +990,53 @@ final class Api
             $abschluss = $abschluss || (is_array($e) && ($e['art'] ?? '') === self::ART_ABGESCHLOSSEN);
         }
         $this->sicherungPruefen($t, $hoechste, $abschluss);
-        return ['angenommen' => $angenommen, 'hoechsteSeq' => $hoechste];
+        $this->bankAenderungMelden($t, $liste, $angenommen, $s);
+        $antwort = ['angenommen' => $angenommen, 'hoechsteSeq' => $hoechste];
+        if ($abgelehnt !== []) {
+            $antwort['abgelehnt'] = $abgelehnt;
+        }
+        return $antwort;
     }
 
-    private function einEreignis(string $turnierId, mixed $e, string $rolle, string $name, ?string $bezug = null, bool $helfer = false): int
+    /**
+     * Neue Bankverbindung (turnier.daten.kasse.iban) von jemand anderem als dem Eigentümer-Konto:
+     * Das Konto bekommt eine Mail (Schutz gegen das Umleiten von Startgeldern über eine weitergegebene Kennung).
+     */
+    private function bankAenderungMelden(array $t, array $liste, array $angenommen, array $s): void
+    {
+        if (!$this->mailBereit() || $s['konto_id'] === (int)$t['konto_id']) {
+            return;
+        }
+        $ok = array_column($angenommen, 'id');
+        foreach ($liste as $e) {
+            $e = $e instanceof \stdClass ? get_object_vars($e) : $e;
+            $d = is_array($e) ? ($e['daten'] ?? null) : null;
+            $d = $d instanceof \stdClass ? get_object_vars($d) : $d;
+            $k = is_array($d) ? ($d['kasse'] ?? null) : null;
+            $k = $k instanceof \stdClass ? get_object_vars($k) : $k;
+            if (($e['art'] ?? '') === 'turnier.daten' && in_array($e['id'] ?? '', $ok, true) && is_array($k) && trim((string)($k['iban'] ?? '')) !== '') {
+                $this->bankAenderungMailen($t, (string)$k['iban'], $s['name']);
+                return;
+            }
+        }
+    }
+
+    public function bankAenderungMailen(array $t, string $iban, string $wer): void
+    {
+        $konto = $this->db->eine('SELECT email, name FROM konten WHERE id = ?', [(int)$t['konto_id']]);
+        if ($konto === null) {
+            return;
+        }
+        $iban = strtoupper(preg_replace('/\s+/', '', $iban) ?? '');
+        $this->mail((string)$konto['email'], "Bankverbindung geändert: {$t['name']}", "Hallo {$konto['name']},\n\n"
+            . "im Turnier „{$t['name']}“ wurde die Bankverbindung für Startgelder geändert.\n\n"
+            . "Neue IBAN: " . trim(chunk_split($iban, 4, ' ')) . "\nGeändert von: {$wer}\nZeit: " . gmdate('d.m.Y H:i', $this->jetzt()) . " UTC\n\n"
+            . "Warst das nicht du oder jemand aus deiner Turnierleitung? Dann prüfe bitte sofort die Einstellungen\n"
+            . "des Turniers und gib die Leitungskennungen unter „Zugänge“ neu aus:\n" . $this->appUrl() . '#/t/' . $t['id']);
+    }
+
+    /** @param list<string>|null $aufgaben Helfer: Aufgaben der Kennung (im Autor gespeichert) */
+    private function einEreignis(string $turnierId, mixed $e, string $rolle, string $name, ?string $bezug = null, bool $helfer = false, ?array $aufgaben = null): int
     {
         if ($e instanceof \stdClass) {
             $e = get_object_vars($e);
@@ -944,9 +1077,10 @@ final class Api
             return (int)$vorhanden['seq'];
         }
         $this->db->ausfuehren(
-            'INSERT INTO ereignisse (turnier_id, event_id, art, daten, zeit, geraet, autor_rolle, autor_name, empfangen, autor_bezug, autor_helfer)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [$turnierId, $id, $art, $json, $zeit, $geraet, $rolle, $name, $this->jetzt(), $bezug, $helfer ? 1 : 0]
+            'INSERT INTO ereignisse (turnier_id, event_id, art, daten, zeit, geraet, autor_rolle, autor_name, empfangen, autor_bezug, autor_helfer, autor_aufgaben)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [$turnierId, $id, $art, $json, $zeit, $geraet, $rolle, $name, $this->jetzt(), $bezug, $helfer ? 1 : 0,
+             $rolle === 'helfer' && $aufgaben !== null ? json_encode(array_values($aufgaben)) : null]
         );
         return (int)$this->db->pdo->lastInsertId();
     }
@@ -1096,6 +1230,7 @@ final class Api
         $this->db->ausfuehren('DELETE FROM ereignisse WHERE turnier_id = ?', [$id]);
         $this->db->ausfuehren('DELETE FROM sitzungen WHERE turnier_id = ?', [$id]);
         $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ?', [$id]);
+        $this->db->ausfuehren('DELETE FROM anmeldungen WHERE turnier_id = ?', [$id]);
         $this->db->ausfuehren('DELETE FROM turniere WHERE id = ?', [$id]);
     }
 
@@ -1108,6 +1243,7 @@ final class Api
                 $this->db->ausfuehren('DELETE FROM ereignisse WHERE turnier_id = ?', [$t['id']]);
                 $this->db->ausfuehren('DELETE FROM sitzungen WHERE turnier_id = ?', [$t['id']]);
                 $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ?', [$t['id']]);
+                $this->db->ausfuehren('DELETE FROM anmeldungen WHERE turnier_id = ?', [$t['id']]);
             }
             $this->db->ausfuehren('DELETE FROM pool WHERE konto_id = ?', [$kontoId]);
             $this->db->ausfuehren('DELETE FROM turniere WHERE konto_id = ?', [$kontoId]);
@@ -1133,7 +1269,7 @@ final class Api
         if (!is_string($art) || !isset($arten[$art])) {
             throw new ApiFehler('ungueltig', 'Bitte die Art der Nachricht wählen.');
         }
-        $text = $this->text($a, 'text', 5, 4000);
+        $text = $this->text($a, 'text', 5, 4000, false);
         $s = null;
         try {
             $s = $this->sitzung($a);
@@ -1167,7 +1303,7 @@ final class Api
     /* ---------------- Turnier-Einstellungen und Sicherung ---------------- */
 
     /** Leitung dieses Turniers, Eigentümer-Konto oder Administrator. */
-    private function leitungsRecht(?array $s, array $t): bool
+    public function leitungsRecht(?array $s, array $t): bool
     {
         if ($s === null) {
             return false;
@@ -1176,7 +1312,7 @@ final class Api
             || ($s['konto_id'] !== null && ($s['konto_id'] === (int)$t['konto_id'] || $s['rolle'] === 'admin'));
     }
 
-    private function leitungPruefen(Anfrage $a, array $t): void
+    public function leitungPruefen(Anfrage $a, array $t): void
     {
         $s = $this->sitzung($a);
         if ($s === null) {
@@ -1206,6 +1342,21 @@ final class Api
         $r = $a->rumpf ?? [];
         if (array_key_exists('sicherungAn', $r)) {
             $this->db->ausfuehren('UPDATE turniere SET sicherung_an = ? WHERE id = ?', [json_encode($this->empfaengerFeld($r['sicherungAn'])), $t['id']]);
+        }
+        // Name und Datum (ab 0.11; die App trägt zusätzlich turnier.umbenannt ein). Das Datum zählt für die
+        // Löschfrist der Online-Anmeldung.
+        if (array_key_exists('name', $r)) {
+            $this->db->ausfuehren('UPDATE turniere SET name = ? WHERE id = ?', [$this->text($a, 'name', 2, 160), $t['id']]);
+        }
+        if (array_key_exists('datum', $r)) {
+            $datum = $r['datum'];
+            if ($datum !== null && (!is_string($datum) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum))) {
+                throw new ApiFehler('ungueltig', 'Datum im Format JJJJ-MM-TT angeben.');
+            }
+            if ($datum === null && $this->db->eine('SELECT id FROM anmeldungen WHERE turnier_id = ? LIMIT 1', [$t['id']]) !== null) {
+                throw new ApiFehler('konflikt', 'Es gibt Online-Anmeldungen – das Datum bleibt gesetzt (die Löschfrist richtet sich danach).');
+            }
+            $this->db->ausfuehren('UPDATE turniere SET datum = ? WHERE id = ?', [$datum, $t['id']]);
         }
         if (array_key_exists('sicherungTakt', $r)) {
             $takt = $r['sicherungTakt'];
@@ -1465,7 +1616,8 @@ final class Api
                 $name = is_string($au['name'] ?? null) && trim($au['name']) !== '' ? mb_substr(trim($au['name']), 0, 120) : 'Zentrale';
                 $bezug = $rolle === 'spieler' && is_string($au['spieler'] ?? null) && preg_match('/^[A-Za-z0-9_-]{1,64}$/', $au['spieler'])
                     ? $au['spieler'] : null;
-                $seq = $this->einEreignis((string)$t['id'], $e, $rolle, $name, $bezug, $rolle === 'spieler' && ($au['helfer'] ?? false) === true);
+                $auf = $rolle === 'helfer' && is_array($au['aufgaben'] ?? null) ? self::aufgabenLesen($au['aufgaben']) : null;
+                $seq = $this->einEreignis((string)$t['id'], $e, $rolle, $name, $bezug, $rolle === 'spieler' && ($au['helfer'] ?? false) === true, $auf);
                 $angenommen[] = ['id' => (string)$e['id'], 'seq' => $seq];
             }
             $this->db->festschreiben();
@@ -1512,7 +1664,8 @@ final class Api
                     }
                     $vergeben[$code] = true;
                     $helfer = $rolle === 'spieler' && ($c['helfer'] ?? false) === true ? 1 : 0;
-                    $neu[$rolle . '|' . $bezug] = [$rolle, $bezug, $name, $code, ($c['gesperrt'] ?? false) === true ? 1 : 0, $helfer];
+                    $auf = $rolle === 'helfer' && is_array($c['aufgaben'] ?? null) ? json_encode(self::aufgabenLesen($c['aufgaben'])) : null;
+                    $neu[$rolle . '|' . $bezug] = [$rolle, $bezug, $name, $code, ($c['gesperrt'] ?? false) === true ? 1 : 0, $helfer, $auf];
                 }
                 foreach ($alt as $k => $c) {
                     if (!isset($neu[$k]) || $neu[$k][3] !== (string)$c['code'] || $neu[$k][4] === 1 || $neu[$k][5] !== (int)$c['helfer']) {
@@ -1520,10 +1673,10 @@ final class Api
                     }
                 }
                 $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ?', [$t['id']]);
-                foreach ($neu as [$rolle, $bezug, $name, $code, $gesperrt, $helfer]) {
+                foreach ($neu as [$rolle, $bezug, $name, $code, $gesperrt, $helfer, $auf]) {
                     $this->db->ausfuehren(
-                        'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt, helfer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                        [$t['id'], $rolle, $bezug, $name, $code, $gesperrt, $this->jetzt(), $helfer]
+                        'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt, helfer, aufgaben) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        [$t['id'], $rolle, $bezug, $name, $code, $gesperrt, $this->jetzt(), $helfer, $auf]
                     );
                 }
             }
@@ -1612,6 +1765,9 @@ final class Api
                 $a['helfer'] = true;
             }
         }
+        if ($z['autor_rolle'] === 'helfer' && ($z['autor_aufgaben'] ?? null) !== null) {
+            $a['aufgaben'] = self::aufgabenLesen($z['autor_aufgaben']);
+        }
         return $a;
     }
 
@@ -1626,6 +1782,9 @@ final class Api
         ];
         if ($z['rolle'] === 'spieler') {
             $aus['helfer'] = (int)($z['helfer'] ?? 0) === 1;
+        }
+        if ($z['rolle'] === 'helfer') {
+            $aus['aufgaben'] = self::aufgabenLesen($z['aufgaben'] ?? null);
         }
         return $aus;
     }
@@ -1667,15 +1826,16 @@ final class Api
     }
 
     /** Eine Kennung anlegen (Zeile aus der Datenbank zurück) */
-    private function codeAnlegen(array $t, string $rolle, string $bezug, string $name): array
+    private function codeAnlegen(array $t, string $rolle, string $bezug, string $name, ?array $aufgaben = null): array
     {
         $anzahl = (int)($this->db->eine('SELECT COUNT(*) AS n FROM codes WHERE turnier_id = ?', [$t['id']])['n'] ?? 0);
         if ($anzahl >= self::MAX_CODES) {
             throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_CODES . ' Kennungen je Turnier.');
         }
         $this->db->ausfuehren(
-            'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt, helfer) VALUES (?, ?, ?, ?, ?, 0, ?, 0)',
-            [$t['id'], $rolle, $bezug, $name, $this->freierCode($t), $this->jetzt()]
+            'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt, helfer, aufgaben) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?)',
+            [$t['id'], $rolle, $bezug, $name, $this->freierCode($t), $this->jetzt(),
+             $rolle === 'helfer' && $aufgaben !== null ? json_encode(self::aufgabenLesen($aufgaben)) : null]
         );
         return $this->codeLaden($t, $rolle, $bezug);
     }
@@ -1729,7 +1889,11 @@ final class Api
                     }
                     continue;
                 }
-                $this->codeAnlegen($t, $rolle, $bezug, $name);
+                $auf = $e['aufgaben'] ?? null;
+                if ($auf !== null && (!is_array($auf) || !array_is_list($auf) || self::aufgabenLesen($auf) === [])) {
+                    throw new ApiFehler('ungueltig', 'Bitte mindestens eine Aufgabe wählen.');
+                }
+                $this->codeAnlegen($t, $rolle, $bezug, $name, $auf);
             }
             $this->db->festschreiben();
         } catch (\Throwable $x) {
@@ -1813,6 +1977,26 @@ final class Api
         return ['code' => self::codeAusgabe($this->codeLaden($t, 'spieler', $bezug))];
     }
 
+    /** Aufgaben einer Helferkennung ändern – gilt ab dem nächsten Eintrag (ohne neue Anmeldung) */
+    private function codeAufgaben(Anfrage $a): array
+    {
+        $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        $this->leitungPruefen($a, $t);
+        self::nichtAufZentrale($t);
+        $bezug = $a->rumpf['bezug'] ?? null;
+        if (!is_string($bezug) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $bezug)) {
+            throw new ApiFehler('ungueltig', 'Bezug ungültig.');
+        }
+        $this->codeLaden($t, 'helfer', $bezug);
+        $roh = $a->rumpf['aufgaben'] ?? null;
+        $aufgaben = is_array($roh) && array_is_list($roh) ? self::aufgabenLesen($roh) : [];
+        if ($aufgaben === []) {
+            throw new ApiFehler('ungueltig', 'Bitte mindestens eine Aufgabe wählen.');
+        }
+        $this->db->ausfuehren("UPDATE codes SET aufgaben = ? WHERE turnier_id = ? AND rolle = 'helfer' AND bezug = ?", [json_encode($aufgaben), $t['id'], $bezug]);
+        return ['code' => self::codeAusgabe($this->codeLaden($t, 'helfer', $bezug))];
+    }
+
     /* ---------------- Einstellungen des Kontos ---------------- */
 
     private function kontoEinstellungen(Anfrage $a): array
@@ -1821,25 +2005,73 @@ final class Api
         $k = $this->db->eine('SELECT daten FROM konten WHERE id = ?', [$s['konto_id']]);
         $d = json_decode((string)($k['daten'] ?? ''), true);
         $klassen = is_array($d) && is_array($d['klassen'] ?? null) ? array_values(array_filter($d['klassen'], 'is_string')) : [];
-        return ['klassen' => $klassen];
+        $kasse = is_array($d) && is_array($d['kasse'] ?? null) ? $d['kasse'] : null;
+        return ['klassen' => $klassen, 'kasse' => $kasse];
+    }
+
+    /** Kasse/Quittung (shared/protokoll.ts KasseEinstellungen) – Felder gekürzt, IBAN geprüft */
+    public static function kasseLesen(mixed $k): ?array
+    {
+        $k = $k instanceof \stdClass ? get_object_vars($k) : $k;
+        if (!is_array($k)) {
+            return null;
+        }
+        $t = static fn(string $f, int $max): string => is_string($k[$f] ?? null) ? mb_substr(trim($k[$f]), 0, $max) : '';
+        $iban = strtoupper(preg_replace('/\s+/', '', $t('iban', 40)) ?? '');
+        if ($iban !== '' && !self::ibanGueltig($iban)) {
+            throw new ApiFehler('ungueltig', 'Die IBAN ist ungültig.');
+        }
+        $bic = strtoupper(preg_replace('/\s+/', '', $t('bic', 11)) ?? '');
+        if ($bic !== '' && !preg_match('/^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/', $bic)) {
+            throw new ApiFehler('ungueltig', 'Die BIC ist ungültig.');
+        }
+        $ust = in_array($k['ust'] ?? null, ['keiner', 'befreit', 'enthalten'], true) ? $k['ust'] : 'keiner';
+        $satz = in_array($k['ustSatz'] ?? null, [7, 19], true) ? $k['ustSatz'] : 19;
+        return [
+            'aussteller' => $t('aussteller', 160), 'anschrift' => $t('anschrift', 300), 'ust' => $ust, 'ustSatz' => $satz,
+            'fusstext' => $t('fusstext', 500), 'empfaenger' => $t('empfaenger', 70), 'iban' => $iban, 'bic' => $bic,
+        ];
+    }
+
+    /** IBAN-Prüfziffer (ISO 13616, mod 97) */
+    public static function ibanGueltig(string $iban): bool
+    {
+        if (!preg_match('/^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/', $iban) || (str_starts_with($iban, 'DE') && strlen($iban) !== 22)) {
+            return false;
+        }
+        $u = substr($iban, 4) . substr($iban, 0, 4);
+        $rest = 0;
+        foreach (str_split($u) as $z) {
+            $w = ctype_alpha($z) ? (string)(ord($z) - 55) : $z;
+            foreach (str_split($w) as $ziffer) {
+                $rest = ($rest * 10 + (int)$ziffer) % 97;
+            }
+        }
+        return $rest === 1;
     }
 
     private function kontoEinstellungenSetzen(Anfrage $a): array
     {
         $s = $this->konto($a);
-        $liste = $a->rumpf['klassen'] ?? null;
-        if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_KLASSEN) {
-            throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_KLASSEN . ' Leistungsklassen.');
-        }
-        $klassen = [];
-        foreach ($liste as $k) {
-            $k = is_string($k) ? mb_substr(trim($k), 0, 40) : '';
-            if ($k !== '' && !in_array($k, $klassen, true)) {
-                $klassen[] = $k;
+        $alt = $this->kontoEinstellungen($a);
+        $r = $a->rumpf ?? [];
+        $klassen = $alt['klassen'];
+        if (array_key_exists('klassen', $r)) {
+            $liste = $r['klassen'];
+            if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_KLASSEN) {
+                throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_KLASSEN . ' Leistungsklassen.');
+            }
+            $klassen = [];
+            foreach ($liste as $k) {
+                $k = is_string($k) ? mb_substr(trim($k), 0, 40) : '';
+                if ($k !== '' && !in_array($k, $klassen, true)) {
+                    $klassen[] = $k;
+                }
             }
         }
-        $this->db->ausfuehren('UPDATE konten SET daten = ? WHERE id = ?', [json_encode(['klassen' => $klassen], JSON_UNESCAPED_UNICODE), $s['konto_id']]);
-        return ['klassen' => $klassen];
+        $kasse = array_key_exists('kasse', $r) ? self::kasseLesen($r['kasse']) : $alt['kasse'];
+        $this->db->ausfuehren('UPDATE konten SET daten = ? WHERE id = ?', [json_encode(['klassen' => $klassen, 'kasse' => $kasse], JSON_UNESCAPED_UNICODE), $s['konto_id']]);
+        return ['klassen' => $klassen, 'kasse' => $kasse];
     }
 
     /* ---------------- Spielerpool des Kontos ---------------- */
@@ -1976,6 +2208,7 @@ final class Api
             $this->db->ausfuehren('DELETE FROM sitzungen WHERE ablauf < ?', [$jetzt]);
             $this->db->ausfuehren('DELETE FROM rueckstellungen WHERE ablauf < ?', [$jetzt]);
             $this->db->ausfuehren('DELETE FROM versuche WHERE zeit < ?', [$jetzt - self::TAG]);
+            $this->anmeldung->aufraeumen();
 
             // Erinnerung 30 Tage vor der Löschung
             $erinnern = $this->db->alle(

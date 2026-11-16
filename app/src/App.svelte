@@ -25,6 +25,7 @@
   import Zentrale from './lib/ui/Zentrale.svelte';
   import LiveAnsicht from './lib/ui/LiveAnsicht.svelte';
   import DruckAnsicht from './lib/ui/DruckAnsicht.svelte';
+  import Meldung from './lib/ui/Meldung.svelte';
 
   onMount(() => void serverLaden());
 </script>
@@ -32,7 +33,7 @@
 {#if route.seite === 'live' && route.param}
   {#key route.param}<LiveAnsicht id={route.param} />{/key}
 {:else if route.seite === 'druck' && route.param}
-  {#key route.param}<DruckAnsicht id={route.param} art={route.rest[0] ?? ''} />{/key}
+  {#key route.param}<DruckAnsicht id={route.param} art={route.rest[0] ?? ''} param={route.rest[1] ?? null} />{/key}
 {:else}
 <Kopf />
 
@@ -71,6 +72,8 @@
     <Pool />
   {:else if route.seite === 'zentrale'}
     <Zentrale />
+  {:else if route.seite === 'meldung' && route.param}
+    {#key `${route.param}/${route.rest[0] ?? ''}`}<Meldung turnier={route.param} schluessel={route.rest[0] ?? null} />{/key}
   {:else if (route.seite === 't' || route.seite === 'c') && route.param}
     {#key route.param}
       <TurnierAnsicht

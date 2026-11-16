@@ -250,3 +250,64 @@ Dafür kennt der **Online-Server** (Schema 4: `turniere.zentrale`, `zentrale_id`
 Solange ein Turnier gesperrt ist, lehnt der Online-Server Änderungen (`events`, Codes, Einstellungen,
 Übersicht, Sicherung) mit **409** ab. Die Geräte behalten ihre Einträge als „ausstehend“ und senden sie
 nach der Rückgabe; Lesen bleibt möglich. `TurnierInfo.zentrale` nennt die Zentrale.
+
+## Etappe 9 (ab 0.11, Schema 7)
+
+### Aufgaben der Helferkennungen
+
+Helferkennungen haben Aufgaben (`codes.aufgaben`, fehlt = `["ergebnisse","aufruf"]`). Der Server liest sie bei
+jedem Senden aus der Kennung – Änderungen über `POST code.aufgaben {turnier, bezug, aufgaben}` (nur Leitung)
+gelten sofort, ohne neue Anmeldung. Erlaubte Arten je Aufgabe (`ARTEN_JE_AUFGABE`):
+
+| Aufgabe | Arten |
+|---|---|
+| `ergebnisse` | `spiel.ergebnis` |
+| `aufruf` (Sprecher) | `spiel.aufgerufen`, `spiel.aufruf_zurueck` |
+| `kasse` | `startgeld.gebucht`, `startgeld.storniert`, `teilnehmer.eingecheckt` |
+| `oberschiri` | `spiel.ergebnis`, `spiel.entschieden`, `spiel.zurueckgesetzt` |
+
+`codes.anlegen` nimmt je Helfer `aufgaben` an; `turnier.zugang`, `GET turnier` (mit Token) und `GET ich` liefern
+sie; der Autor eines Helfer-Eintrags enthält `aufgaben`. Die Engine prüft dieselben Regeln.
+
+### Einzeln abgelehnte Einträge
+
+`POST events` lehnt ungültige oder für die Kennung nicht erlaubte Einträge **einzeln** ab: Antwort 200 mit
+`angenommen` (die übrigen) und `abgelehnt: [{id, fehler, meldung}]`. Das Gerät markiert sie als „abgelehnt“,
+zählt sie nicht und sendet sie nicht erneut (die Oberfläche bietet „Verwerfen“). Fehler der ganzen Anfrage
+(nicht angemeldet, falsches Turnier, Zentrale-Sperre, Bremse, Höchstzahl) bleiben wie bisher.
+
+### Datenschutz-Filter (Ergänzung)
+
+Nur in der vollen Sicht (Leitung und Helfer mit Aufgabe `kasse`): `startgeld.gebucht`, `startgeld.storniert`,
+`teilnehmer.eingecheckt` und das Feld `kasse` in `turnier.daten`. Andere Helfer und Spieler mit Helfer-Recht
+bekommen die neue Sicht `helfer` (sonst wie `voll`). Ändert jemand anderes als das Eigentümer-Konto die IBAN
+(Kasse oder Anmeldung), geht eine Mail an das Konto. Weil dadurch ganze Einträge fehlen können, liefert `GET events` zusätzlich `bis`
+(bis zu dieser Laufnummer gelesen); die Geräte holen ab dort weiter ab.
+
+### Online-Anmeldung (nur Online-Server, `info.anmeldung`)
+
+| Methode | Route | Zugang | Zweck |
+|---|---|---|---|
+| GET | `anmeldung&turnier=` | öffentlich | Turnier, Einstellungen (ohne `vorab`), `moeglich`, Belegung je Konkurrenz (nur Zahlen) |
+| POST | `anmeldung.senden` | öffentlich | Anmeldung (Fangfeld `website`; 30/h je Anschluss, 60/h je Turnier, 300/Tag je Konto, höchstens 200 unbestätigte je Turnier; 5 Mails/h je Adresse – darüber gleiche Antwort ohne Mail) → Mail mit Link `#/meldung/<turnier>/<schlüssel>` (24 h); Namen ohne Steuerzeichen, erste Mail ohne frei eingegebenen Text, Antworten an die Turnierleitung |
+| POST | `anmeldung.stand` | Schlüssel | Stand ansehen, ohne zu bestätigen (Mail-Scanner öffnen Links) |
+| POST | `anmeldung.bestaetigen` | Schlüssel | bestätigt per Knopf (vergibt Platz/Warteliste, einmalig) bzw. liefert den Stand |
+| POST | `anmeldung.abmelden` | Schlüssel | `{konkurrenz?}` – abmelden bis zum Vortag; Warteliste rückt nach (Mail) |
+| GET | `anmeldungen&turnier=` | Leitung | Einstellungen mit `vorab` und alle Anmeldungen mit E-Mail |
+| POST | `anmeldung.einstellungen` | Leitung | öffnen/schließen, Meldeschluss, Konkurrenzen (`max`, `startgeld`, `vorab`), Pflichtangaben, Bank, Hinweis; öffnen nur mit Turnierdatum |
+| POST | `anmeldung.aendern` | Leitung | `{id, konkurrenz, status}` (Mail an die Person, Nachrücken) |
+| POST | `anmeldung.uebernommen` | Leitung | `{ids}` – als Spieler im Turnier vermerkt |
+| POST | `anmeldung.loeschen` | Leitung | `{id}` – ohne Mail |
+
+Die Schlüssel stehen nur als SHA-256 in der Datenbank; spätere Mails enthalten deshalb keinen neuen Link.
+Unbestätigte Anmeldungen werden nach 24 Stunden gelöscht, alle Anmeldungen eines Turniers 30 Tage nach dem
+Turniertag, spätestens 180 Tage nach der Anmeldung (tägliche Wartung). Solange es Anmeldungen gibt, lässt sich
+das Turnierdatum nicht entfernen. Die Bankverbindung liefert nur der Stand einer bestätigten Anmeldung. Die App übernimmt Anmeldungen als `spieler.angelegt` mit fester Ereignis-ID
+`anm-<id>-sp` (Spieler-ID = Anmelde-ID) und `teilnehmer.gemeldet` für Einzel-Konkurrenzen mit Platz.
+
+### Weiteres
+
+- `turnier.einstellungen` (POST) nimmt `name` und `datum` an (dazu trägt die App `turnier.umbenannt` ein).
+- `konto.einstellungen` speichert zusätzlich `kasse` (Vorgabe für Quittungen, IBAN wird geprüft).
+- Spieler- und Konkurrenz-IDs: `/^[a-z0-9]{1,16}$/` (Engine).
+- Neuer Fehlercode `abgelaufen` (410): Bestätigungslink abgelaufen bzw. Anmeldung geschlossen.

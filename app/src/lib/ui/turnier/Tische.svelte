@@ -4,7 +4,7 @@
   import { T } from '../../texte';
   import { anstehendeSpiele, automatischeAufrufe, beschaeftigt, freierTisch, name, rundeVon, tische, verliererAmTisch } from '../../engine/abfragen';
   import { spielerName, uhrzeitText, type Spiel } from '../../engine/modell';
-  import { gelernteSatzMinuten, zeitplan } from '../../engine/zeitplan';
+  import { gelernteSatzMinuten, zeitplanGedrosselt, zeitplanSofort } from '../../engine/zeitplan';
   import { spielerVon, type TurnierZustand } from '../../engine/zustand';
   import { Ansager, ansageText, aufrufeVon, aufrufGeraet, neueAufrufe, setzeAufrufGeraet, type AufrufGeraet } from '../../ansage';
   import Hilfe from '../Hilfe.svelte';
@@ -163,7 +163,14 @@
   onDestroy(() => ansager.stoppen());
 
   /* ---------- Zeitplan ---------- */
-  const plan = $derived(zeitplan(z, jetzt));
+  // Gedrosselt: bei großen Turnieren nicht bei jedem Eintrag neu rechnen (siehe zeitplanGedrosselt)
+  // svelte-ignore state_referenced_locally
+  let plan = $state.raw(zeitplanSofort(z, jetzt));
+  $effect(() => {
+    const zz = z;
+    const jj = jetzt;
+    zeitplanGedrosselt(zz, jj, (p) => (plan = p));
+  });
   const gelernt = $derived(gelernteSatzMinuten(z));
   const offeneKonkurrenzen = $derived(z.konkurrenzReihe.filter((id) => plan.konkurrenzEnde.get(id) !== null));
   function planName(e: { spiel: string | null; konkurrenz: string; titel: string }): string {

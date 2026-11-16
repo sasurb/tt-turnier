@@ -82,7 +82,7 @@ export function stimmeLaden(): Promise<SpeechSynthesisVoice | null> {
 
 let ton: AudioContext | null = null;
 /** Kurzer Gong vor der Ansage (zwei Töne), damit die Halle aufhorcht */
-function gong(): Promise<void> {
+export function gong(): Promise<void> {
   try {
     const Ctx = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
     if (!Ctx) return Promise.resolve();

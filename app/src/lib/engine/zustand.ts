@@ -1,4 +1,4 @@
-import { ART, type Autor, type NamenFuerZuschauer } from '@shared/protokoll';
+import { ALLE_AUFGABEN, ART, HELFER_STANDARD, ID_MUSTER, UST_SAETZE, type Aufgabe, type Autor, type KasseEinstellungen, type NamenFuerZuschauer } from '@shared/protokoll';
 import type { LokalesEreignis } from './typen';
 import { eingabeTauschen, ergebnisGleich, ergebnisWerten } from './ergebnis';
 import { abhaengigeMitErgebnis, koAktualisieren, koAnlegen } from './ko';
@@ -56,6 +56,12 @@ export interface TurnierZustand {
   satzMinuten: number | null;
   /** Rückgängig gemachte Einträge (IDs, siehe eintrag.zurueckgenommen) */
   zurueckgenommen: string[];
+  /** Kasse und Quittungen (nur volle Sicht; null = nicht eingerichtet) */
+  kasse: KasseEinstellungen | null;
+  /** Check-in am Turniertag: Spieler-ID → da (nur volle Sicht) */
+  checkin: Record<string, boolean>;
+  /** Startgeld-Buchungen in Reihenfolge (Quittungsnummer = nr; nur volle Sicht) */
+  buchungen: Buchung[];
   abgeschlossen: boolean;
   notizen: {
     id: string;
@@ -73,6 +79,18 @@ export interface TurnierZustand {
   warnungen: Warnung[];
 }
 
+export interface Buchung {
+  id: string;
+  /** Laufende Nummer im Turnier (Quittungsnummer) */
+  nr: number;
+  spieler: string;
+  betrag: number;
+  art: 'bar' | 'ueberweisung' | 'erlassen';
+  zeit: string;
+  von: string;
+  storniert: { zeit: string; von: string } | null;
+}
+
 export function leererZustand(): TurnierZustand {
   return {
     name: '',
@@ -87,6 +105,9 @@ export function leererZustand(): TurnierZustand {
     beginn: null,
     satzMinuten: null,
     zurueckgenommen: [],
+    kasse: null,
+    checkin: leer(),
+    buchungen: [],
     abgeschlossen: false,
     notizen: [],
     anzahlEreignisse: 0,
@@ -100,8 +121,41 @@ export function leererZustand(): TurnierZustand {
 
 /* ---------------- Hilfen ---------------- */
 
-function istLeitung(a: Autor | null): boolean {
-  return !a || a.rolle === 'leitung' || a.rolle === 'admin' || a.rolle === 'veranstalter';
+/**
+ * Turnierleitung? Ohne Autor nur bei Einträgen dieses Geräts im Einzelgerät-Betrieb (lokal) – vom Server
+ * kommt immer ein Autor, ein fehlender darf dort keine Leitungsrechte geben.
+ */
+function istLeitung(a: Autor | null, status: LokalesEreignis['status'] | undefined): boolean {
+  if (!a) return status === 'lokal';
+  return a.rolle === 'leitung' || a.rolle === 'admin' || a.rolle === 'veranstalter';
+}
+
+/** Aufgaben eines Autors (Helferkennung bzw. Spielerkennung mit Helfer-Recht); Leitung hat alle */
+export function aufgabenVon(a: Autor | null): readonly Aufgabe[] {
+  if (!a) return [];
+  if (a.rolle === 'leitung' || a.rolle === 'admin' || a.rolle === 'veranstalter') return ALLE_AUFGABEN;
+  if (a.rolle === 'helfer') return Array.isArray(a.aufgaben) ? ALLE_AUFGABEN.filter((x) => a.aufgaben!.includes(x)) : HELFER_STANDARD;
+  if (a.rolle === 'spieler' && a.helfer === true) return HELFER_STANDARD;
+  return [];
+}
+
+function kasseLesen(v: unknown, alt: KasseEinstellungen | null): KasseEinstellungen | null {
+  if (v === null) return null;
+  if (!v || typeof v !== 'object') return alt;
+  const x = v as Record<string, unknown>;
+  const t = (f: string, max: number) => (typeof x[f] === 'string' ? (x[f] as string).trim().slice(0, max) : '');
+  const ust = x.ust === 'befreit' || x.ust === 'enthalten' ? x.ust : 'keiner';
+  const satz = (UST_SAETZE as readonly number[]).includes(x.ustSatz as number) ? (x.ustSatz as number) : 19;
+  return {
+    aussteller: t('aussteller', 160),
+    anschrift: t('anschrift', 300),
+    ust,
+    ustSatz: satz,
+    fusstext: t('fusstext', 500),
+    empfaenger: t('empfaenger', 70),
+    iban: t('iban', 34).replace(/\s+/g, '').toUpperCase(),
+    bic: t('bic', 11).replace(/\s+/g, '').toUpperCase(),
+  };
 }
 
 function veroeffentlichungLesen(v: unknown): Veroeffentlichung | null | undefined {
@@ -182,6 +236,10 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
   if (x.festeSaetze === null || x.festeSaetze === 2 || x.festeSaetze === 4) e.festeSaetze = x.festeSaetze;
   if (typeof x.beschleunigt === 'boolean') e.beschleunigt = x.beschleunigt;
   if (x.beginn === null || (typeof x.beginn === 'string' && UHRZEIT_MUSTER.test(x.beginn))) e.beginn = x.beginn;
+  const sg = zahl(x.startgeld, 0, 100_000);
+  if (sg !== undefined) e.startgeld = sg;
+  const mt = zahl(x.maxTeilnehmer, 2, 1000);
+  if (mt !== undefined) e.maxTeilnehmer = mt;
   const z = x.zulassung as Record<string, unknown> | undefined;
   if (z && typeof z === 'object') {
     for (const f of ['ttrMin', 'ttrMax'] as const) {
@@ -611,7 +669,8 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       zeit: e.zeit,
       von: e.autor?.name ?? '',
     });
-  const leitung = istLeitung(e.autor);
+  const leitung = istLeitung(e.autor, e.status);
+  const aufgaben = leitung ? ALLE_AUFGABEN : aufgabenVon(e.autor);
   const nurLeitung = (): boolean => {
     if (leitung) return true;
     warnen(`Nur die Turnierleitung darf das (${e.art}).`);
@@ -626,6 +685,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
   switch (e.art) {
     case ART.turnierAngelegt:
     case ART.turnierUmbenannt: {
+      if (e.art === ART.turnierUmbenannt && !nurLeitung()) break;
       if (typeof d.name === 'string') z.name = d.name;
       if (typeof d.datum === 'string' || d.datum === null) z.datum = d.datum as string | null;
       break;
@@ -664,6 +724,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (d.beginn === null || (typeof d.beginn === 'string' && UHRZEIT_MUSTER.test(d.beginn))) z.beginn = d.beginn;
       const sm = zahl(d.satzMinuten, 2, 15);
       if (sm !== undefined) z.satzMinuten = sm;
+      if ('kasse' in d) z.kasse = kasseLesen(d.kasse, z.kasse);
       // „Ergebnisse veröffentlichen“: Abweichungen der Konkurrenzen zurücknehmen
       if (d.alleKonkurrenzen === true) for (const k of Object.values(z.konkurrenzen)) k.einst.veroeffentlichung = null;
       break;
@@ -671,7 +732,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
 
     case ART.spielerAngelegt: {
       if (!nurLeitung()) break;
-      const id = text(d.id, 40);
+      const id = typeof d.id === 'string' && ID_MUSTER.test(d.id) ? d.id : undefined;
       const daten = spielerDatenLesen(d);
       if (!id || z.spieler[id] || (!daten.vorname && !daten.nachname)) {
         warnen('Spieler konnte nicht angelegt werden.');
@@ -713,7 +774,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
 
     case ART.konkurrenzAngelegt: {
       if (!nurLeitung()) break;
-      const id = text(d.id, 40);
+      const id = typeof d.id === 'string' && ID_MUSTER.test(d.id) ? d.id : undefined;
       if (!id || z.konkurrenzen[id]) {
         warnen('Konkurrenz konnte nicht angelegt werden.');
         break;
@@ -1031,9 +1092,9 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         warnen('Spiel nicht gefunden.');
         break;
       }
-      const rolle = e.autor?.rolle ?? 'leitung';
-      if (!leitung && rolle !== 'helfer' && !(rolle === 'spieler' && e.autor?.helfer === true)) {
-        warnen('Spiele aufrufen dürfen Turnierleitung und Helfer.');
+      const rolle = e.autor?.rolle ?? (leitung ? 'leitung' : 'zuschauer');
+      if (!aufgaben.includes('aufruf')) {
+        warnen('Spiele aufrufen dürfen die Turnierleitung und Helfer mit der Aufgabe „Spielaufruf“.');
         break;
       }
       if (rolle === 'spieler' && seiteVon(k, s, e.autor?.spieler)) {
@@ -1097,9 +1158,52 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         warnen('Spiel nicht gefunden.');
         break;
       }
-      const f = spielEreignis(z, k, s, e, d, leitung);
+      const f = spielEreignis(z, k, s, e, d, leitung, aufgaben);
       if (f) warnen(f);
       statusAktualisieren(k);
+      break;
+    }
+
+    case ART.teilnehmerEingecheckt: {
+      if (!aufgaben.includes('kasse')) {
+        warnen('Check-in dürfen die Turnierleitung und die Kasse.');
+        break;
+      }
+      const sp = typeof d.spieler === 'string' ? z.spieler[d.spieler] : undefined;
+      if (!sp) {
+        warnen('Spieler nicht gefunden.');
+        break;
+      }
+      z.checkin[sp.id] = d.da !== false;
+      break;
+    }
+    case ART.startgeldGebucht: {
+      if (!aufgaben.includes('kasse')) {
+        warnen('Startgeld buchen dürfen die Turnierleitung und die Kasse.');
+        break;
+      }
+      const id = typeof d.id === 'string' && /^[a-z0-9]{4,16}$/.test(d.id) ? d.id : null;
+      const sp = typeof d.spieler === 'string' ? z.spieler[d.spieler] : undefined;
+      const betrag = zahl(d.betrag, 0, 100_000);
+      const art = d.art === 'bar' || d.art === 'ueberweisung' || d.art === 'erlassen' ? d.art : null;
+      if (!id || z.buchungen.some((b) => b.id === id) || !sp || betrag === undefined || betrag === null || !art) {
+        warnen('Buchung ungültig.');
+        break;
+      }
+      z.buchungen.push({ id, nr: z.buchungen.length + 1, spieler: sp.id, betrag, art, zeit: e.zeit, von: e.autor?.name ?? '', storniert: null });
+      break;
+    }
+    case ART.startgeldStorniert: {
+      if (!aufgaben.includes('kasse')) {
+        warnen('Stornieren dürfen die Turnierleitung und die Kasse.');
+        break;
+      }
+      const b = z.buchungen.find((x) => x.id === d.buchung);
+      if (!b || b.storniert) {
+        warnen('Buchung nicht gefunden oder schon storniert.');
+        break;
+      }
+      b.storniert = { zeit: e.zeit, von: e.autor?.name ?? '' };
       break;
     }
 
@@ -1125,14 +1229,25 @@ export function alleOffenenAufgerufenen(z: TurnierZustand): Spiel[] {
   return aus;
 }
 
-function spielEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, e: LokalesEreignis, d: Record<string, unknown>, leitung: boolean): Pruefung {
+function spielEreignis(
+  z: TurnierZustand,
+  k: KonkurrenzZustand,
+  s: Spiel,
+  e: LokalesEreignis,
+  d: Record<string, unknown>,
+  leitung: boolean,
+  aufgaben: readonly Aufgabe[],
+): Pruefung {
   void z;
-  const rolle = e.autor?.rolle ?? 'leitung';
+  const rolle = e.autor?.rolle ?? (leitung ? 'leitung' : 'zuschauer');
   const ich = e.autor?.spieler;
   const meineSeite: Seite | null = rolle === 'spieler' ? seiteVon(k, s, ich) : null;
-  // Spieler mit Helfer-Recht: fremde Spiele amtlich wie ein Helfer, eigene wie jeder Spieler (Gegner bestätigt)
-  const amtlich = leitung || rolle === 'helfer' || (rolle === 'spieler' && e.autor?.helfer === true && !meineSeite);
-  if (!amtlich && !meineSeite) return 'Spieler dürfen nur ihre eigenen Spiele eintragen.';
+  // Spieler mit Helfer-Recht: fremde Spiele amtlich wie ein Helfer, eigene wie jeder Spieler (Gegner bestätigt).
+  // Helfer brauchen die Aufgabe „Ergebnisse“ oder „Oberschiedsrichter“.
+  const traegtEin = aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri');
+  const oberschiri = leitung || aufgaben.includes('oberschiri');
+  const amtlich = leitung || (rolle === 'helfer' && traegtEin) || (rolle === 'spieler' && e.autor?.helfer === true && !meineSeite);
+  if (!amtlich && !meineSeite) return rolle === 'spieler' ? 'Spieler dürfen nur ihre eigenen Spiele eintragen.' : 'Mit dieser Kennung lassen sich keine Ergebnisse eintragen.';
 
   switch (e.art) {
     case ART.spielErgebnis: {
@@ -1174,7 +1289,7 @@ function spielEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, e: Lok
       return null;
     }
     case ART.spielEntschieden: {
-      if (!leitung) return 'Nur die Turnierleitung entscheidet Anfechtungen.';
+      if (!oberschiri) return 'Anfechtungen entscheiden die Turnierleitung und der Oberschiedsrichter.';
       const wahl = [s.eintrag, ...s.alternativen].find((x) => x && x.ereignis === d.ereignis);
       if (!wahl) return 'Der gewählte Eintrag gehört nicht zu diesem Spiel.';
       const blockiert = folgeBlockiert(k, s, wahl.ergebnis.gewinner);
@@ -1186,7 +1301,7 @@ function spielEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, e: Lok
       return null;
     }
     case ART.spielZurueckgesetzt: {
-      if (!leitung) return 'Nur die Turnierleitung kann Ergebnisse löschen.';
+      if (!oberschiri) return 'Ergebnisse löschen können die Turnierleitung und der Oberschiedsrichter.';
       if (s.phase === 'ko' && abhaengigeMitErgebnis(k, s).length > 0) return 'Das Folgespiel hat schon ein Ergebnis. Bitte zuerst dort zurücksetzen.';
       s.eintrag = null;
       s.stand = null;
@@ -1215,7 +1330,15 @@ function sicherAnwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand {
  * Rückgängigmachen selbst (dafür gibt es „wiederherstellen“).
  */
 /** Nicht rücknehmbare Arten (Turnier anlegen, Rückgängig selbst, Wiederherstellen aus Sicherung, Testnotiz) */
-export const NICHT_RUECKGAENGIG: readonly string[] = [ART.turnierAngelegt, ART.eintragZurueck, ART.turnierWiederhergestellt, ART.testNotiz];
+export const NICHT_RUECKGAENGIG: readonly string[] = [
+  ART.turnierAngelegt,
+  ART.eintragZurueck,
+  ART.turnierWiederhergestellt,
+  ART.testNotiz,
+  // Kassenbuch: Buchungen werden storniert, nie zurückgenommen (Quittungen bleiben gültig)
+  ART.startgeldGebucht,
+  ART.startgeldStorniert,
+];
 
 /**
  * Darf dieser Eintrag zurückgenommen werden? Zusätzlich gesperrt: Turnierangaben mit „Namen für
@@ -1228,14 +1351,14 @@ export function rueckgaengigErlaubt(e: Pick<LokalesEreignis, 'art' | 'daten'>): 
   return true;
 }
 
-export function zurueckgenommeneEintraege(ereignisse: Pick<LokalesEreignis, 'id' | 'art' | 'daten' | 'autor'>[]): Set<string> {
+export function zurueckgenommeneEintraege(ereignisse: (Pick<LokalesEreignis, 'id' | 'art' | 'daten' | 'autor'> & { status?: LokalesEreignis['status'] })[]): Set<string> {
   const pos = new Map<string, number>();
   ereignisse.forEach((e, i) => {
     if (!pos.has(e.id)) pos.set(e.id, i);
   });
   const stand = new Map<string, boolean>();
   ereignisse.forEach((e, i) => {
-    if (e.art !== ART.eintragZurueck || !istLeitung(e.autor)) return;
+    if (e.art !== ART.eintragZurueck || !istLeitung(e.autor, e.status)) return;
     const d = (e.daten ?? {}) as Record<string, unknown>;
     if (!Array.isArray(d.ereignisse)) return;
     const zurueck = d.zurueck !== false;
@@ -1251,7 +1374,9 @@ export function zurueckgenommeneEintraege(ereignisse: Pick<LokalesEreignis, 'id'
   return new Set([...stand].filter(([, v]) => v).map(([id]) => id));
 }
 
-export function berechnen(ereignisse: LokalesEreignis[]): TurnierZustand {
+export function berechnen(alle: LokalesEreignis[]): TurnierZustand {
+  // Vom Server abgelehnte Einträge zählen nie (sie bleiben nur sichtbar, bis das Gerät sie verwirft)
+  const ereignisse = alle.some((e) => e.status === 'abgelehnt') ? alle.filter((e) => e.status !== 'abgelehnt') : alle;
   const weg = zurueckgenommeneEintraege(ereignisse);
   const z = leererZustand();
   for (const e of ereignisse) {

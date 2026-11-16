@@ -34,7 +34,37 @@ export interface Autor {
   spieler?: string;
   /** Spieler, der zusätzlich Helfer ist: darf alle Ergebnisse eintragen (fremde gelten amtlich, eigene wie bei Spielern). */
   helfer?: boolean;
+  /** Ab 0.11, nur Rolle „helfer“: Aufgaben dieser Helferkennung (fehlt = HELFER_STANDARD) */
+  aufgaben?: Aufgabe[];
 }
+
+/**
+ * Aufgaben einer Helferkennung (ab 0.11, „feinere Rechte“):
+ * - ergebnisse: Ergebnisse eintragen (amtlich)
+ * - aufruf: Spiele an Tische aufrufen, Aufruf zurücknehmen (Sprecher)
+ * - kasse: Check-in und Startgeld (Kasse)
+ * - oberschiri: Ergebnisse eintragen, Anfechtungen/Konflikte entscheiden, Ergebnisse zurücksetzen (Oberschiedsrichter)
+ * Spielerkennungen mit Helfer-Recht haben immer HELFER_STANDARD.
+ */
+export type Aufgabe = 'ergebnisse' | 'aufruf' | 'kasse' | 'oberschiri';
+export const ALLE_AUFGABEN: readonly Aufgabe[] = ['ergebnisse', 'aufruf', 'kasse', 'oberschiri'];
+export const HELFER_STANDARD: readonly Aufgabe[] = ['ergebnisse', 'aufruf'];
+/** Ereignis-Arten je Aufgabe (Server-Whitelist und Prüfung in der Engine) */
+export const ARTEN_JE_AUFGABE: Record<Aufgabe, readonly string[]> = {
+  ergebnisse: ['spiel.ergebnis'],
+  aufruf: ['spiel.aufgerufen', 'spiel.aufruf_zurueck'],
+  kasse: ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'],
+  oberschiri: ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt'],
+};
+/**
+ * Diese Arten liefern die Server nur in der vollen Sicht (Leitung, Helfer): Zahlungen und Anwesenheit
+ * sind personenbezogen und für Zuschauer und Spieler nicht nötig. Die Engine darf sie deshalb für nichts
+ * benutzen, was alle Geräte gleich berechnen müssen (Tabellen, Auslosung, Spiele).
+ */
+/** (ab 0.11: volle Sicht = Leitung und Helfer mit Aufgabe „kasse“) */
+export const NUR_VOLLE_SICHT: readonly string[] = ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'];
+/** Spieler- und Konkurrenz-IDs: Kleinbuchstaben und Ziffern (ab 0.11, auch in Spiel-IDs wie g0-<a>-<b> eindeutig) */
+export const ID_MUSTER = /^[a-z0-9]{1,16}$/;
 
 /**
  * Kennungen (ab 0.6): Turnier, Leitung, Helfer und Spieler haben 8-stellige Ziffernkennungen,
@@ -99,6 +129,8 @@ export interface TurnierInfo {
   veranstalter: string;
   /** Mit Anmeldung abgefragt (ab 0.6): Rechte dieser Anmeldung für das Turnier; null = nur lesen */
   rechte?: 'leitung' | 'helfer' | 'spieler' | null;
+  /** Ab 0.11, mit Anmeldung als Helfer: Aufgaben dieser Kennung */
+  aufgaben?: Aufgabe[];
   /** Online-Server (ab 0.5): Name der Zentrale, auf der das Turnier gerade läuft – dann online nur lesbar */
   zentrale?: string | null;
   zentraleId?: string | null;
@@ -123,6 +155,7 @@ export type FehlerCode =
   | 'nicht_gefunden' // 404
   | 'konflikt' // 409 z. B. E-Mail schon vergeben
   | 'zu_gross' // 413 Höchstzahl an Einträgen im Turnier erreicht
+  | 'abgelaufen' // 410 Link abgelaufen bzw. Anmeldung geschlossen
   | 'zu_viele_versuche' // 429
   | 'nicht_eingerichtet' // 503 Einrichtung fehlt
   | 'serverfehler'; // 500
@@ -147,6 +180,10 @@ export interface InfoAntwort {
   codes?: boolean;
   /** 8-stellige Kennungen, Leitungskennungen je Person, Konto-Einstellungen (ab Server 0.6) */
   kennungen?: boolean;
+  /** Aufgaben für Helferkennungen, abgelehnte Einzel-Einträge (ab Server 0.11) */
+  aufgaben?: boolean;
+  /** Online-Anmeldung mit Warteliste (ab Server 0.11; nur online mit Mailversand) */
+  anmeldung?: boolean;
   /** Nur bei der Android-Zentrale (ab 0.5) */
   zentrale?: {
     version: string;
@@ -285,6 +322,9 @@ export interface TurnierEinstellungenAnfrage {
   turnier: string;
   sicherungAn?: string[];
   sicherungTakt?: SicherungTakt;
+  /** Ab 0.11: Name und Datum des Turniers (dazu Ereignis turnier.umbenannt) */
+  name?: string;
+  datum?: string | null;
 }
 /** POST turnier.sichern – Sicherung sofort an die eingetragenen Empfänger senden */
 export interface TurnierSichernAnfrage {
@@ -326,6 +366,8 @@ export interface TurnierZugangAntwort {
   spieler?: string;
   /** Spielerkennung mit Helfer-Recht */
   helfer?: boolean;
+  /** Helferkennung: Aufgaben (ab 0.11) */
+  aufgaben?: Aufgabe[];
 }
 
 /* ---------- Kennungen für Leitung, Helfer und Spieler (ab Server 0.4, 8-stellig ab 0.6) ----------
@@ -343,6 +385,8 @@ export interface CodeEintrag {
   gesperrt: boolean;
   /** Nur bei Spielerkennungen: darf zusätzlich alle Ergebnisse eintragen */
   helfer?: boolean;
+  /** Nur bei Helferkennungen (ab 0.11): Aufgaben; Standard HELFER_STANDARD */
+  aufgaben?: Aufgabe[];
 }
 /** GET codes&turnier=… – nur Leitung */
 export interface CodesAntwort {
@@ -351,7 +395,7 @@ export interface CodesAntwort {
 /** POST codes.anlegen – fehlende Kennungen erzeugen, Namen aktualisieren (vorhandene Kennungen bleiben) */
 export interface CodesAnlegenAnfrage {
   turnier: string;
-  eintraege: { rolle: CodeRolle; bezug: string; name: string }[];
+  eintraege: { rolle: CodeRolle; bezug: string; name: string; aufgaben?: Aufgabe[] }[];
 }
 /** POST code.neu – neue Kennung ausgeben; die alte gilt nicht mehr, Anmeldungen damit enden */
 export interface CodeNeuAnfrage {
@@ -371,11 +415,18 @@ export interface CodeHelferAnfrage {
   bezug: string;
   helfer: boolean;
 }
+/** POST code.aufgaben – Aufgaben einer Helferkennung ändern (ab 0.11). Gilt sofort, ohne neue Anmeldung. */
+export interface CodeAufgabenAnfrage {
+  turnier: string;
+  bezug: string;
+  aufgaben: Aufgabe[];
+}
 export const MAX_CODES_JE_TURNIER = 400;
 
 /**
  * Arten, die mit Spieler- bzw. Helfer-Kennung gesendet werden dürfen. Alles andere nur die Leitung.
- * Eine Spielerkennung mit Helferrecht darf beides.
+ * Eine Spielerkennung mit Helferrecht darf beides. Ab 0.11 richtet sich eine Helferkennung nach ihren
+ * Aufgaben (ARTEN_JE_AUFGABE); ARTEN_HELFER entspricht HELFER_STANDARD.
  */
 export const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'] as const;
 export const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf_zurueck'] as const;
@@ -385,7 +436,29 @@ export const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf
 export interface KontoEinstellungen {
   /** Begriffe für Leistungsklassen, die die App beim Tippen vorschlägt */
   klassen: string[];
+  /** Ab 0.11: Vorgaben für Kasse und Quittungen neuer Turniere */
+  kasse?: KasseEinstellungen | null;
 }
+
+/**
+ * Kasse und Quittungen (ab 0.11): steht im Turnier (turnier.daten, Feld kasse) und als Vorgabe im Konto.
+ * Die Server liefern das Feld nur in der vollen Sicht. Ob und welcher Umsatzsteuer-Hinweis auf die
+ * Quittung gehört, entscheidet die Turnierleitung (steuerlich prüfen lassen).
+ */
+export interface KasseEinstellungen {
+  /** Aussteller der Quittung, z. B. „TTC Musterstadt e. V.“ */
+  aussteller: string;
+  anschrift: string;
+  /** keiner | befreit (§ 4 Nr. 22 b UStG) | enthalten (Satz in ustSatz) */
+  ust: 'keiner' | 'befreit' | 'enthalten';
+  ustSatz: number;
+  fusstext: string;
+  /** Bankverbindung für Überweisungen (GiroCode); leer = keine */
+  empfaenger: string;
+  iban: string;
+  bic: string;
+}
+export const UST_SAETZE = [7, 19] as const;
 export const MAX_KLASSEN = 40;
 
 /* ---------- Spielerpool im Konto der Turnierleitung (ab Server 0.4) ---------- */
@@ -431,6 +504,11 @@ export interface SendenAntwort {
   /** Je gesendetem Ereignis die vergebene Laufnummer (auch bei erneutem Senden). */
   angenommen: { id: string; seq: number }[];
   hoechsteSeq: number;
+  /**
+   * Ab 0.11: Einträge, die der Server einzeln ablehnt (ungültig oder für diese Kennung nicht erlaubt).
+   * Alle anderen sind angenommen; die Geräte senden abgelehnte nicht erneut.
+   */
+  abgelehnt?: { id: string; fehler: FehlerCode; meldung: string }[];
 }
 
 /** GET events&turnier=…&ab=<seq> – öffentlich lesbar */
@@ -446,8 +524,14 @@ export interface AbholenAntwort {
    * Ändert sich die Sicht, holt das Gerät alles neu ab.
    */
   sicht?: Sicht;
+  /**
+   * Ab 0.11: bis zu dieser Laufnummer gelesen. Der Datenschutz-Filter kann Einträge weglassen (z. B.
+   * Startgeld für Zuschauer) – das Gerät holt beim nächsten Mal ab hier ab.
+   */
+  bis?: number;
 }
-export type Sicht = 'voll' | 'spieler' | 'zuschauer' | 'kurz';
+/** „helfer“ (ab 0.11): Helfer ohne Aufgabe „Kasse“ – wie „voll“, aber ohne Zahlungen, Check-in und Bankverbindung */
+export type Sicht = 'voll' | 'helfer' | 'spieler' | 'zuschauer' | 'kurz';
 /** turnier.daten, Feld namen: Wie Zuschauer Spielernamen sehen (Standard voll) */
 export type NamenFuerZuschauer = 'voll' | 'kurz';
 
@@ -512,7 +596,145 @@ export const ART = {
    * Die genannten früheren Einträge zählen nicht mehr (zurueck=true) bzw. wieder (false). Nichts wird gelöscht.
    */
   eintragZurueck: 'eintrag.zurueckgenommen',
+  /**
+   * Ab 0.11 (Leitung oder Helfer mit Aufgabe „kasse“, nur volle Sicht): Zahlung des Startgelds.
+   * Daten: { id: Buchungs-ID, spieler, betrag: Cent (0–100000), art: "bar" | "ueberweisung" | "erlassen" }.
+   * Die Quittungsnummer ist die laufende Nummer der Buchung im Turnier.
+   */
+  startgeldGebucht: 'startgeld.gebucht',
+  /** Buchung stornieren (Daten: { buchung }) – Kasse oder Leitung */
+  startgeldStorniert: 'startgeld.storniert',
+  /** Check-in am Turniertag (Daten: { spieler, da: true|false }) – Kasse oder Leitung, nur volle Sicht */
+  teilnehmerEingecheckt: 'teilnehmer.eingecheckt',
 } as const;
+
+/* ---------- Online-Anmeldung mit Warteliste (ab Server 0.11, nur Online-Server mit Mailversand) ----------
+ * Die Turnierleitung öffnet die Anmeldung je Turnier; Spieler melden sich über den Link #/meldung/<turnier>
+ * an und bestätigen per Mail (Link 24 Stunden gültig). Ist eine Konkurrenz voll, kommen sie auf die
+ * Warteliste und rücken nach, wenn jemand absagt (Mail). Die Leitung übernimmt Anmeldungen ins Turnier
+ * (Ereignisse spieler.angelegt / teilnehmer.gemeldet mit festen IDs „anm-<id>-…“, damit nichts doppelt
+ * entsteht). E-Mail-Adressen stehen nie in den Ereignissen; Anmeldungen werden 30 Tage nach dem
+ * Turniertag gelöscht, unbestätigte nach 24 Stunden.
+ */
+export type AnmeldeStatus = 'platz' | 'warteliste' | 'abgemeldet';
+export interface AnmeldungKonkurrenz {
+  /** Konkurrenz-ID im Turnier */
+  id: string;
+  name: string;
+  art: 'einzel' | 'doppel' | 'mixed';
+  /** Höchstzahl Teilnehmer; null = unbegrenzt */
+  max: number | null;
+  /** Startgeld in Cent; null = keins */
+  startgeld: number | null;
+  /** Nur Leitung: Plätze, die schon von Hand im Turnier vergeben sind (zählen gegen die Höchstzahl) */
+  vorab?: number;
+}
+export interface AnmeldungEinstellungen {
+  offen: boolean;
+  /** Meldeschluss (ISO); null = bis zum Turniertag */
+  schluss: string | null;
+  konkurrenzen: AnmeldungKonkurrenz[];
+  /** Hinweis der Turnierleitung auf der Anmeldeseite */
+  hinweis: string;
+  /** Zusätzliche Pflichtangaben (wie im Turnier geführt) */
+  angaben: ('ttr' | 'klasse' | 'geschlecht' | 'jahrgang')[];
+  /** Für Überweisung und GiroCode; null = keine. Öffentlich (GET anmeldung) immer null – nur nach Bestätigung im Stand */
+  bank: { empfaenger: string; iban: string; bic: string } | null;
+  /** Ort des Turniers (Anzeige) */
+  ort: string;
+}
+export const ANMELDUNG_MAX_KONKURRENZEN = 30;
+export const ANMELDUNG_MAX_JE_TURNIER = 1000;
+/** So viele Tage nach dem Turniertag werden Anmeldungen (mit E-Mail) gelöscht */
+export const ANMELDUNG_LOESCHEN_NACH_TAGEN = 30;
+/** GET anmeldung&turnier=… – öffentlich (wer die Turnierkennung kennt) */
+export interface AnmeldungInfo {
+  turnier: { id: string; name: string; datum: string | null; veranstalter: string };
+  einstellungen: AnmeldungEinstellungen;
+  /** Anmeldung jetzt möglich (offen, vor Meldeschluss und Turniertag) */
+  moeglich: boolean;
+  /** Je Konkurrenz: vergebene Plätze und Länge der Warteliste (ohne Namen) */
+  belegung: Record<string, { plaetze: number; warteliste: number }>;
+}
+/** POST anmeldung.senden – öffentlich, Fangfeld `website`, Bestätigung per Mail */
+export interface AnmeldungSendenAnfrage {
+  turnier: string;
+  vorname: string;
+  nachname: string;
+  verein: string;
+  email: string;
+  ttr?: number | null;
+  klasse?: string | null;
+  geschlecht?: 'm' | 'w' | 'd' | null;
+  jahrgang?: number | null;
+  /** Gewünschte Konkurrenzen; bei Doppel/Mixed optional Partner/in (Name, die Leitung bildet das Paar) */
+  konkurrenzen: { id: string; partner?: string }[];
+  /** Jünger als 18 Jahre: dann muss `einverstanden` (Erziehungsberechtigte) true sein */
+  minderjaehrig: boolean;
+  einverstanden?: boolean;
+  /** Datenschutzhinweis zur Kenntnis genommen */
+  datenschutz: boolean;
+  website?: string;
+}
+/** Sicht der angemeldeten Person auf ihre Anmeldung (nach Bestätigung bzw. über den Link aus der Mail) */
+export interface AnmeldungStand {
+  turnier: { id: string; name: string; datum: string | null };
+  vorname: string;
+  nachname: string;
+  /** status null = noch nicht bestätigt (Plätze werden erst mit der Bestätigung vergeben) */
+  konkurrenzen: { id: string; name: string; status: AnmeldeStatus | null; position: number | null }[];
+  /** Summe der Startgelder der Konkurrenzen mit Platz (Cent) */
+  startgeld: number;
+  bank: AnmeldungEinstellungen['bank'];
+  /** Verwendungszweck für die Überweisung */
+  zweck: string;
+  /** Abmelden über den Link noch möglich */
+  abmeldbar: boolean;
+  /** Per Knopf bestätigt (der Link allein bestätigt nicht – Mail-Scanner öffnen Links) */
+  bestaetigt: boolean;
+}
+/** POST anmeldung.bestaetigen { turnier, schluessel } → AnmeldungStand (Schlüssel aus dem Bestätigungslink) */
+/** POST anmeldung.stand { turnier, schluessel } → AnmeldungStand (Schlüssel aus dem Abmeldelink) */
+/** POST anmeldung.abmelden { turnier, schluessel, konkurrenz? } → AnmeldungStand (ohne konkurrenz: alle) */
+export interface AnmeldungSchluesselAnfrage {
+  turnier: string;
+  schluessel: string;
+  konkurrenz?: string;
+}
+/** Eintrag in der Liste der Turnierleitung (GET anmeldungen&turnier=…) */
+export interface AnmeldungEintrag {
+  /** 10 Zeichen; zugleich die Spieler-ID bei der Übernahme */
+  id: string;
+  vorname: string;
+  nachname: string;
+  verein: string;
+  email: string;
+  ttr: number | null;
+  klasse: string | null;
+  geschlecht: 'm' | 'w' | 'd' | null;
+  jahrgang: number | null;
+  minderjaehrig: boolean;
+  angelegt: string;
+  /** null = noch nicht per Mail bestätigt */
+  bestaetigt: string | null;
+  konkurrenzen: { id: string; status: AnmeldeStatus; position: number | null; partner: string | null }[];
+  /** Ins Turnier übernommen (Spieler-ID) */
+  spieler: string | null;
+}
+export interface AnmeldungenAntwort {
+  einstellungen: AnmeldungEinstellungen;
+  anmeldungen: AnmeldungEintrag[];
+}
+/** POST anmeldung.einstellungen { turnier, ...AnmeldungEinstellungen } – nur Leitung */
+/** POST anmeldung.aendern { turnier, id, konkurrenz, status } – Leitung setzt Platz/Warteliste/abgemeldet (Mail an die Person) */
+export interface AnmeldungAendernAnfrage {
+  turnier: string;
+  id: string;
+  konkurrenz: string;
+  status: AnmeldeStatus;
+}
+/** POST anmeldung.uebernommen { turnier, ids } – Anmeldungen sind als Spieler im Turnier */
+/** POST anmeldung.loeschen { turnier, id } – Anmeldung endgültig löschen */
 
 /* ---------- Android-Zentrale (ab 0.5) ----------
  * Routen „zentrale.*“ beantwortet nur die Zentrale, und nur Anfragen vom Gerät der Zentrale selbst.

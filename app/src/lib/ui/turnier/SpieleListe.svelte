@@ -2,7 +2,7 @@
   import { T } from '../../texte';
   import { alleSpiele, pruefliste, spieleVon } from '../../engine/abfragen';
   import { uhrzeitText, type Spiel } from '../../engine/modell';
-  import { zeitplan } from '../../engine/zeitplan';
+  import { zeitplanGedrosselt, zeitplanSofort } from '../../engine/zeitplan';
   import type { TurnierZustand } from '../../engine/zustand';
   import SpielKarte from './SpielKarte.svelte';
 
@@ -30,7 +30,14 @@
     }),
   );
   /** Geschätzter Beginn je offenem Spiel (Zeitplan) */
-  const plan = $derived(zeitplan(z, Date.now()));
+  // Gedrosselt: bei großen Turnieren nicht bei jedem Eintrag neu rechnen (siehe zeitplanGedrosselt)
+  // svelte-ignore state_referenced_locally
+  let plan = $state.raw(zeitplanSofort(z, Date.now()));
+  $effect(() => {
+    const zz = z;
+    const jj = Date.now();
+    zeitplanGedrosselt(zz, jj, (p) => (plan = p));
+  });
   function beginn(s: Spiel): number | null {
     const e = plan.spiele.get(`${s.konkurrenz}/${s.id}`);
     return e && !e.laeuft ? e.start : null;

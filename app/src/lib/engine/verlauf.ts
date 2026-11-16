@@ -45,7 +45,8 @@ export function rueckgaengigPruefen(ereignisse: LokalesEreignis[], ids: string[]
     status: 'ausstehend',
     seq: null,
     empfangen: null,
-    autor,
+    // Ohne Angabe prüft die Leitung (nur sie darf zurücknehmen; ein fehlender Autor zählt sonst nicht)
+    autor: autor ?? { rolle: 'leitung', name: '' },
     reihe: Number.MAX_SAFE_INTEGER,
   };
   const nachher = berechnen([...ereignisse, probe]);

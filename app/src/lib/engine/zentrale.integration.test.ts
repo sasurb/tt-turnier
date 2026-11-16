@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ART } from '@shared/protokoll';
-import { Api, ApiFehler } from './api';
+import { Api } from './api';
 import { SpeicherImArbeitsspeicher } from './speicher';
 import { TurnierSitzung } from './turnier';
 
@@ -61,18 +61,18 @@ describe.skipIf(!basis)('Integration mit der Zentrale', () => {
     expect(await texte(b)).toEqual(await texte(a));
     expect(await texte(zuschauer)).toEqual(['von A|', 'von B|']); // Zuschauer: keine Namen der Eintragenden
 
-    // Spieler dürfen nur Ergebnisse senden
-    await expect(
-      api.senden(t.turnier.id, anna.token, [
-        {
-          id: 'x-12345678',
-          art: ART.testNotiz,
-          daten: {},
-          zeit: new Date().toISOString(),
-          geraet: 'geraet-s',
-        },
-      ]),
-    ).rejects.toBeInstanceOf(ApiFehler);
+    // Spieler dürfen nur Ergebnisse senden – ab 0.11 wird der Eintrag einzeln abgelehnt
+    const abgelehnt = await api.senden(t.turnier.id, anna.token, [
+      {
+        id: 'x-12345678',
+        art: ART.testNotiz,
+        daten: {},
+        zeit: new Date().toISOString(),
+        geraet: 'geraet-s',
+      },
+    ]);
+    expect(abgelehnt.angenommen).toEqual([]);
+    expect(abgelehnt.abgelehnt?.[0]).toMatchObject({ id: 'x-12345678', fehler: 'keine_berechtigung' });
 
     // Status der Zentrale (nur vom Gerät selbst)
     const st = await api.zentraleStatus();

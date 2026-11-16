@@ -104,11 +104,17 @@ export class Abgleich {
         meldung = 'Für das Senden ist eine Anmeldung nötig.';
       } else if (offen.length > 0 && token) {
         try {
-          await api.senden(
+          const antwort = await api.senden(
             turnier,
             token,
             offen.map(({ id, art, daten, zeit, geraet }) => ({ id, art, daten, zeit, geraet })),
           );
+          // Einzelne Einträge abgelehnt (ab Server 0.11): markieren statt die ganze Warteschlange zu blockieren
+          if (antwort.abgelehnt?.length) {
+            await speicher.ablehnen(turnier, antwort.abgelehnt.map((x) => ({ id: x.id, meldung: x.meldung })));
+            meldung = antwort.abgelehnt.length === 1 ? `Ein Eintrag wurde abgelehnt: ${antwort.abgelehnt[0]!.meldung}` : `${antwort.abgelehnt.length} Einträge wurden abgelehnt.`;
+            neueDaten = true;
+          }
         } catch (f) {
           if (f instanceof ApiFehler && (f.code === 'nicht_angemeldet' || f.code === 'keine_berechtigung' || f.code === 'gesperrt')) {
             verbindung = 'nicht_angemeldet';
@@ -151,9 +157,15 @@ export class Abgleich {
         }
         if (a.ereignisse.length > 0) {
           await speicher.uebernehmen(a.ereignisse.map((e) => ausServer(turnier, e)));
-          ab = a.ereignisse[a.ereignisse.length - 1]!.seq;
-          await speicher.setzeAbgeholtBis(turnier, ab);
           neueDaten = true;
+        }
+        // Lesestand: ab 0.11 meldet der Server, bis wohin er gelesen hat (auch wenn er gefilterte Einträge weglässt)
+        const bis = Math.max(ab, a.bis ?? 0, a.ereignisse.length ? a.ereignisse[a.ereignisse.length - 1]!.seq : 0);
+        if (bis > ab) {
+          ab = bis;
+          await speicher.setzeAbgeholtBis(turnier, ab);
+        } else if (a.mehr) {
+          throw new Error('Der Server meldet weitere Einträge, liefert aber keine.');
         }
         if (!a.mehr) break;
       }

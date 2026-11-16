@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CodeEintrag, CodeRolle } from '@shared/protokoll';
+  import { ALLE_AUFGABEN, HELFER_STANDARD, type Aufgabe, type CodeEintrag, type CodeRolle } from '@shared/protokoll';
   import { T } from '../../texte';
   import { api } from '../../dienste';
   import { codeAnzeige } from '../../code';
@@ -7,6 +7,7 @@
   import { spielerName } from '../../engine/modell';
   import type { TurnierZustand } from '../../engine/zustand';
   import QrCode from './QrCode.svelte';
+  import Hilfe from '../Hilfe.svelte';
   import { appBasis } from '../../zentrale.svelte';
 
   /**
@@ -23,6 +24,8 @@
   let kopiert = $state<string | null>(null);
   let leitungName = $state('');
   let helferName = $state('');
+  let vorlage = $state(0);
+  let aufgabenHinweis = $state('');
   let ausSpielern = $state(false);
   let spielerSuche = $state('');
   let spielerWahl = $state('');
@@ -96,7 +99,8 @@
   async function anlegen(rolle: 'leitung' | 'helfer', n: string) {
     if (!n.trim()) return;
     try {
-      codes = (await api.codesAnlegen(token, id, [{ rolle, bezug: (rolle === 'leitung' ? 'l-' : 'h-') + kurzId(), name: n.trim() }])).codes;
+      const aufgaben = rolle === 'helfer' ? [...T.aufgaben.vorlagen[vorlage]!.aufgaben] : undefined;
+      codes = (await api.codesAnlegen(token, id, [{ rolle, bezug: (rolle === 'leitung' ? 'l-' : 'h-') + kurzId(), name: n.trim(), ...(aufgaben ? { aufgaben } : {}) }])).codes;
       if (rolle === 'leitung') leitungName = '';
       else helferName = '';
     } catch (x) {
@@ -122,6 +126,21 @@
       melden(x);
     }
   }
+  /** Aufgabe einer Helferkennung an- oder abschalten (gilt sofort) */
+  async function aufgabeUmschalten(c: CodeEintrag, a: Aufgabe) {
+    const alt = c.aufgaben ?? [...HELFER_STANDARD];
+    const neu = alt.includes(a) ? alt.filter((x) => x !== a) : [...alt, a];
+    if (!neu.length) {
+      aufgabenHinweis = T.aufgaben.mindestensEine;
+      return;
+    }
+    try {
+      ersetzen((await api.codeAufgaben(token, id, c.bezug, ALLE_AUFGABEN.filter((x) => neu.includes(x)))).code);
+      aufgabenHinweis = T.aufgaben.geaendert;
+    } catch (x) {
+      melden(x);
+    }
+  }
   async function kopieren(c: string) {
     try {
       await navigator.clipboard.writeText(link(c));
@@ -140,7 +159,10 @@
     [
       ...(druckAuswahl === 'alle' || druckAuswahl === 'leitung' ? leitungen.map((c) => ({ titel: `${c.name} (${T.codes.leitung})`, c })) : []),
       ...(druckAuswahl === 'alle' || druckAuswahl === 'helfer'
-        ? [...helfer.map((c) => ({ titel: `${c.name} (${T.codes.helfer})`, c })), ...spielerHelfer.map((c) => ({ titel: `${c.name} (${T.zugang.spielerHelfer})`, c }))]
+        ? [
+            ...helfer.map((c) => ({ titel: `${c.name} (${(c.aufgaben ?? HELFER_STANDARD).map((a) => T.aufgaben.namen[a]).join(', ')})`, c })),
+            ...spielerHelfer.map((c) => ({ titel: `${c.name} (${T.zugang.spielerHelfer})`, c })),
+          ]
         : []),
       ...(druckAuswahl === 'alle' || druckAuswahl === 'spieler'
         ? spielerCodes.filter((x) => x.c && !x.c.helfer).map((x) => ({ titel: spielerName(z.spieler[x.sid]), c: x.c! }))
@@ -169,6 +191,15 @@
         {#if entfernbar}<button class="gefahr klein" disabled={c.rolle === 'leitung' && letzteLeitung} onclick={() => entfernen(c)}>{T.codes.entfernen}</button>{/if}
         {#if c.rolle === 'spieler' && c.helfer}<button class="gefahr klein" onclick={() => helferRecht(c.bezug, false)}>{T.codes.helferRechtEntfernen}</button>{/if}
       </div>
+      {#if c.rolle === 'helfer'}
+        <div class="aufgaben" role="group" aria-label={T.aufgaben.titel} data-testid="aufgaben">
+          <span class="leise">{T.aufgaben.titel}:</span>
+          {#each ALLE_AUFGABEN as a (a)}
+            {@const an = (c.aufgaben ?? HELFER_STANDARD).includes(a)}
+            <button class="chip" class:aktiv={an} aria-pressed={an} onclick={() => aufgabeUmschalten(c, a)}>{an ? '✓ ' : ''}{T.aufgaben.namen[a]}</button>
+          {/each}
+        </div>
+      {/if}
       {#if qrOffen === c.code}
         <div class="qr-gross"><QrCode text={link(c.code)} groesse={220} label="{titel}: {codeAnzeige(c.code)}" /></div>
       {/if}
@@ -199,7 +230,8 @@
 
   <details class="karte" bind:open={offen.helfer} data-testid="zugaenge-helfer">
     <summary>{T.codes.helfer} <span class="leise">({T.codes.anzahl(helfer.length + spielerHelfer.length)})</span></summary>
-    <p class="leise">{T.codes.helferText}</p>
+    <p class="leise">{T.codes.helferText} <Hilfe text={T.aufgaben.hilfe} /></p>
+    {#if aufgabenHinweis}<p class="meldung ok" role="status">{aufgabenHinweis}</p>{/if}
     {#if helfer.length || spielerHelfer.length}
       <ul class="liste">
         {#each helfer as c (c.bezug)}
@@ -222,6 +254,9 @@
     {:else}
       <form class="reihe" onsubmit={(e) => (e.preventDefault(), anlegen('helfer', helferName))}>
         <input class="wachsen" bind:value={helferName} placeholder={T.codes.helferName} aria-label={T.codes.helferName} maxlength="120" autocomplete="off" />
+        <select bind:value={vorlage} aria-label={T.aufgaben.vorlage} data-testid="helfer-vorlage">
+          {#each T.aufgaben.vorlagen as v, i (v.name)}<option value={i}>{v.name}</option>{/each}
+        </select>
         <button type="submit" class="zweit" disabled={!helferName.trim()}>{T.codes.helferAnlegen}</button>
       </form>
     {/if}
@@ -271,6 +306,9 @@
   .code { font-family: ui-monospace, monospace; font-size: 1.3rem; letter-spacing: 0.1em; color: var(--blau); }
   .gesperrt .code { text-decoration: line-through; color: var(--leise); }
   .knoepfe { margin-top: 8px; }
+  .aufgaben { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+  .chip { min-height: 44px; border-radius: 999px; padding: 0 12px; background: var(--flaeche); color: var(--text); border: 1px solid var(--linie); font-weight: 600; }
+  .chip.aktiv { background: var(--blau); color: #fff; border-color: var(--blau); }
   .qr-gross { margin-top: 10px; }
   .drucken { margin-top: 10px; }
   .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; margin: 12px 0 6px; }

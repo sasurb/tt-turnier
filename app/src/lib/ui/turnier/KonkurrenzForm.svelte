@@ -1,6 +1,6 @@
 <script lang="ts">
   import { T } from '../../texte';
-  import { MODI, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
+  import { MODI, centAus, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
   import { klassen as klassenStore } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
   import WertungInfo from './WertungInfo.svelte';
@@ -55,6 +55,10 @@
   let feste = $state<'normal' | '2' | '4'>(start.festeSaetze ? (String(start.festeSaetze) as '2' | '4') : 'normal');
   // svelte-ignore state_referenced_locally
   let beginn = $state(start.beginn ?? '');
+  // svelte-ignore state_referenced_locally
+  let startgeld = $state(start.startgeld ? (start.startgeld / 100).toFixed(2).replace('.', ',') : '');
+  // svelte-ignore state_referenced_locally
+  let maxTeilnehmer = $state(start.maxTeilnehmer === null ? '' : String(start.maxTeilnehmer));
   const mitGruppen = $derived(e.modus === 'jgj' || e.modus === 'gruppen_ko');
   const mitKo = $derived(e.modus !== 'jgj');
   const einfachesKo = $derived(e.modus === 'ko' || e.modus === 'gruppen_ko');
@@ -62,6 +66,12 @@
   async function absenden(ev: SubmitEvent) {
     ev.preventDefault();
     if (e.name.trim().length < 1) return;
+    const geld = centAus(startgeld);
+    if (geld === undefined) {
+      fehler = T.konk.startgeldFalsch;
+      return;
+    }
+    const max = zahl(maxTeilnehmer);
     const aus: KonkurrenzEinstellungen = {
       ...$state.snapshot(e),
       name: e.name.trim(),
@@ -71,6 +81,8 @@
       beschleunigt: e.modus === 'schweizer' && e.beschleunigt,
       beginn: /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(beginn) ? beginn : null,
       vorgabe: mitVorgabe ? vorgabeJe : null,
+      startgeld: geld,
+      maxTeilnehmer: max !== null && max >= 2 && max <= 1000 ? max : null,
       ttrGrenzen: [...new Set(ttrGrenzen.split(',').map((t) => parseInt(t.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 4000))].sort((a, b) => a - b),
       veroeffentlichung: veroeff === 'turnier' ? null : veroeff === 'offen' ? { tabellen: true, ko: true } : { tabellen: false, ko: false },
       zulassung: {
@@ -216,6 +228,16 @@
     {/if}
   {/if}
 
+  <div class="raster">
+    <div>
+      <div class="label-zeile"><label for="sg-{id}">{T.konk.startgeld}</label><Hilfe text={T.konk.startgeldHilfe} /></div>
+      <input id="sg-{id}" bind:value={startgeld} inputmode="decimal" placeholder="0,00" data-testid="startgeld" />
+    </div>
+    <div>
+      <div class="label-zeile"><label for="mt-{id}">{T.konk.maxTeilnehmer}</label><Hilfe text={T.konk.maxTeilnehmerHilfe} /></div>
+      <input id="mt-{id}" bind:value={maxTeilnehmer} inputmode="numeric" placeholder={T.konk.unbegrenzt} data-testid="max-teilnehmer" />
+    </div>
+  </div>
   <details class="weitere">
     <summary>{T.konk.weitere}</summary>
     <div class="raster">

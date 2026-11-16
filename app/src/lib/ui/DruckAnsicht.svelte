@@ -20,13 +20,17 @@
   import { druckEinstellungen, setzeDruckEinstellungen, type DruckEinstellungen, DRUCK_ARTEN, type DruckArt } from '../druck';
   import QrCode from './turnier/QrCode.svelte';
   import Hilfe from './Hilfe.svelte';
+  import { euro } from '../engine/modell';
+  import { enthalteneUst, kassenListe, kassenSumme, postenVon, quittungsNr } from '../engine/kasse';
 
   /**
    * Druckvorlagen: Spielzettel, Gruppenblätter, Turnierbaum, Ergebnisliste, Teilnehmerliste,
    * Aushang mit QR-Code und Urkunden. „Als PDF speichern“ geht über den Druckdialog
    * (Browser bzw. Android in der Zentrale).
    */
-  let { id, art = '' }: { id: string; art?: string } = $props();
+  let { id, art = '', param = null }: { id: string; art?: string; param?: string | null } = $props();
+  /** Kassenliste und Quittungen (nur Leitung und Helfer – volle Sicht) */
+  const kassenArt = $derived<'kasse' | 'quittungen' | null>(art === 'kasse' || art === 'quittungen' ? art : null);
 
   const lokal = $derived(id.startsWith('l'));
   let sitzung: TurnierSitzung | null = null;
@@ -217,7 +221,16 @@
   function datum(d: string | null) {
     return d ? new Date(d).toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
   }
-  const titel = $derived(z ? `${T.druck.arten[aktiv]} – ${z.name}` : T.druck.titel);
+  /* Kasse */
+  const kassenZeilen = $derived(z && kassenArt ? kassenListe(z).filter((x) => x.soll || x.bezahlt || x.erlassen) : []);
+  const summe = $derived(z && kassenArt ? kassenSumme(z) : null);
+  const quittungen = $derived(
+    z && kassenArt === 'quittungen' ? z.buchungen.filter((b) => b.art !== 'erlassen' && (param ? b.id === param : !b.storniert)) : [],
+  );
+  function zeitpunkt(iso: string) {
+    return new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+  const titel = $derived(z ? `${kassenArt ? T.druck.kasseArten[kassenArt] : T.druck.arten[aktiv]} – ${z.name}` : T.druck.titel);
   $effect(() => {
     document.title = titel;
     return () => (document.title = T.app.titel);
@@ -234,18 +247,24 @@
 {:else}
   <div class="werkzeug" data-testid="druck-werkzeug">
     <div class="reihe">
-      <a class="knopf zweit" href={linkZu(`t/${id}/drucken`)}>← {T.app.zurueck}</a>
+      <a class="knopf zweit" href={linkZu(`t/${id}/${kassenArt ? 'kasse' : 'drucken'}`)}>← {T.app.zurueck}</a>
       <strong class="wachsen">{z.name}</strong>
       <button onclick={() => seiteDrucken(titel)} data-testid="drucken">{T.druck.drucken}</button>
     </div>
     <div class="optionen">
       <div>
         <label for="da">{T.druck.was}</label>
-        <select id="da" value={aktiv} onchange={(ev) => artWaehlen(ev.currentTarget.value)} data-testid="druck-art">
+        <select id="da" value={kassenArt ?? aktiv} onchange={(ev) => artWaehlen(ev.currentTarget.value)} data-testid="druck-art">
           {#each DRUCK_ARTEN as a (a)}<option value={a}>{T.druck.arten[a]}</option>{/each}
+          {#if allesSichtbar && z.buchungen.length + z.konkurrenzReihe.filter((k) => z!.konkurrenzen[k]!.einst.startgeld).length > 0}
+            <option value="kasse">{T.druck.kasseArten.kasse}</option>
+            <option value="quittungen">{T.druck.kasseArten.quittungen}</option>
+          {/if}
         </select>
       </div>
-      {#if aktiv !== 'aushang'}
+      {#if kassenArt}
+        <!-- keine weiteren Optionen -->
+      {:else if aktiv !== 'aushang'}
         <div>
           <label for="dk">{T.druck.konkurrenz}</label>
           <select id="dk" value={e.konkurrenz} onchange={(ev) => einstellen({ konkurrenz: ev.currentTarget.value })}>
@@ -254,7 +273,9 @@
           </select>
         </div>
       {/if}
-      {#if aktiv === 'spielzettel'}
+      {#if kassenArt}
+        <!-- Kassenliste und Quittungen: keine weiteren Optionen -->
+      {:else if aktiv === 'spielzettel'}
         <div>
           <label for="dz">{T.druck.welche}</label>
           <select id="dz" value={e.zettel} onchange={(ev) => einstellen({ zettel: ev.currentTarget.value as DruckEinstellungen['zettel'] })}>
@@ -293,11 +314,61 @@
         </div>
       {/if}
     </div>
-    <p class="leise tipp">{T.druck.tipp[aktiv]}</p>
+    <p class="leise tipp">{kassenArt ? T.druck.kasseTipp[kassenArt] : T.druck.tipp[aktiv]}</p>
   </div>
 
-  <div class="dokument" data-art={aktiv} data-testid="druck-dokument">
-    {#if aktiv === 'spielzettel'}
+  <div class="dokument" data-art={kassenArt ?? aktiv} data-testid="druck-dokument">
+    {#if kassenArt === 'kasse' && summe}
+      <section class="seite">
+        <h1>{T.druck.kasseArten.kasse}</h1>
+        <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {T.druck.standAm(new Date().toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}</p>
+        <table class="kassentab">
+          <thead><tr><th>{T.druck.spieler}</th><th>{T.kasse.checkin}</th><th class="z">{T.kasse.soll}</th><th class="z">{T.kasse.arten.bar}</th><th class="z">{T.kasse.arten.ueberweisung}</th><th class="z">{T.kasse.erlassen}</th><th class="z">{T.kasse.offen}</th></tr></thead>
+          <tbody>
+            {#each kassenZeilen as x (x.spieler)}
+              {@const g = x.buchungen.filter((b) => !b.storniert)}
+              <tr>
+                <td>{x.name}{x.verein ? ` (${x.verein})` : ''}</td>
+                <td class="m">{x.da ? '✓' : '☐'}</td>
+                <td class="z">{euro(x.soll)}</td>
+                <td class="z">{euro(g.filter((b) => b.art === 'bar').reduce((s, b) => s + b.betrag, 0))}</td>
+                <td class="z">{euro(g.filter((b) => b.art === 'ueberweisung').reduce((s, b) => s + b.betrag, 0))}</td>
+                <td class="z">{euro(x.erlassen)}</td>
+                <td class="z">{x.offen > 0 ? euro(x.offen) : ''}</td>
+              </tr>
+            {/each}
+          </tbody>
+          <tfoot>
+            <tr><th>{T.druck.summe}</th><th class="m">{summe.da}/{summe.gemeldet}</th><th class="z">{euro(summe.soll)}</th><th class="z">{euro(summe.bar)}</th><th class="z">{euro(summe.ueberweisung)}</th><th class="z">{euro(summe.erlassen)}</th><th class="z">{euro(summe.offen)}</th></tr>
+          </tfoot>
+        </table>
+      </section>
+    {:else if kassenArt === 'quittungen'}
+      {#if !quittungen.length}<p class="leer">{T.quittung.keine}</p>{/if}
+      <div class="quittungen">
+        {#each quittungen as b (b.id)}
+          {@const sp = z.spieler[b.spieler]}
+          <article class="quittung" class:storniert={!!b.storniert} data-testid="quittung">
+            {#if b.storniert}<div class="storno">{T.quittung.storniert}</div>{/if}
+            <header>
+              <div><strong>{z.kasse?.aussteller || z.name}</strong>{#if z.kasse?.anschrift}<div class="klein vor">{z.kasse.anschrift}</div>{/if}</div>
+              <div class="rechts"><div class="q-titel">{T.quittung.titel}</div><div>{T.quittung.nr} {quittungsNr(b)}</div></div>
+            </header>
+            <dl>
+              <dt>{T.quittung.betrag}</dt><dd class="betrag">{euro(b.betrag)}</dd>
+              <dt>{T.quittung.von}</dt><dd>{sp ? `${sp.vorname} ${sp.nachname}`.trim() : '?'}{sp?.verein ? `, ${sp.verein}` : ''}</dd>
+              <dt>{T.quittung.fuer}</dt><dd>{T.quittung.startgeld(z.name)}{postenVon(z, b.spieler).length ? ` (${postenVon(z, b.spieler).map((p) => p.name).join(', ')})` : ''}</dd>
+              <dt>{T.quittung.zahlart}</dt><dd>{T.kasse.arten[b.art]}</dd>
+              <dt>{T.quittung.datum}</dt><dd>{zeitpunkt(b.zeit)}</dd>
+            </dl>
+            {#if z.kasse?.ust === 'befreit'}<p class="klein">{T.quittung.befreit}</p>{/if}
+            {#if z.kasse?.ust === 'enthalten'}<p class="klein">{T.quittung.enthalten(z.kasse.ustSatz, euro(enthalteneUst(b.betrag, z.kasse.ustSatz)))}</p>{/if}
+            {#if z.kasse?.fusstext}<p class="klein">{z.kasse.fusstext}</p>{/if}
+            <div class="unterschrift"><span>{[z.ort, new Date(b.zeit).toLocaleDateString('de-DE')].filter(Boolean).join(', ')}</span><span class="linie">{T.quittung.unterschrift}{b.von ? ` (${b.von})` : ''}</span></div>
+          </article>
+        {/each}
+      </div>
+    {:else if aktiv === 'spielzettel'}
       {#if !zettel.length}
         <p class="leer">{T.druck.keineZettel}</p>
       {:else}
@@ -650,6 +721,23 @@
   .urkunde .platz { font-size: 34pt; font-weight: 800; color: #1f3f6e; }
   .urkunde .fuss { margin-top: auto; width: 100%; display: flex; justify-content: space-between; align-items: flex-end; font-size: 11pt; }
   .urkunde .linie { border-top: 1px solid #000; min-width: 60mm; padding-top: 1mm; }
+
+  .kassentab .z { text-align: right; white-space: nowrap; }
+  .kassentab .m { text-align: center; }
+  .kassentab tfoot th { border-top: 2px solid #000; }
+  .quittungen { display: grid; grid-template-columns: 1fr; gap: 8mm; }
+  .quittung { position: relative; border: 1px solid #000; padding: 6mm; break-inside: avoid; min-height: 120mm; display: flex; flex-direction: column; gap: 3mm; }
+  .quittung header { display: flex; justify-content: space-between; gap: 6mm; }
+  .quittung .rechts { text-align: right; }
+  .quittung .q-titel { font-size: 18pt; font-weight: 800; letter-spacing: 0.06em; }
+  .quittung .vor { white-space: pre-line; }
+  .quittung dl { display: grid; grid-template-columns: max-content 1fr; gap: 2mm 6mm; margin: 2mm 0; }
+  .quittung dt { font-weight: 700; }
+  .quittung dd { margin: 0; overflow-wrap: anywhere; }
+  .quittung .betrag { font-size: 16pt; font-weight: 800; }
+  .quittung .unterschrift { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 6mm; font-size: 10pt; }
+  .quittung .linie { border-top: 1px solid #000; min-width: 60mm; padding-top: 1mm; }
+  .quittung .storno { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 40pt; font-weight: 900; color: rgb(192 57 43 / 45%); transform: rotate(-18deg); pointer-events: none; }
 
   @media (max-width: 640px) {
     .dokument { padding: 4mm; margin: 8px; font-size: 9pt; overflow-x: auto; }

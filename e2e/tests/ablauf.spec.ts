@@ -138,7 +138,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await expect(page.getByLabel('Empfänger (bis zu 3) 1')).toHaveValue(email);
   await page.getByLabel('Wie oft?').selectOption({ label: 'Alle 15 Minuten' });
   await page.getByLabel('Empfänger (bis zu 3) 2').fill(`helfer-${geraet}@example.org`);
-  await page.getByRole('button', { name: 'Speichern' }).first().click();
+  await page.locator('form', { has: page.getByLabel('Wie oft?') }).getByRole('button', { name: 'Speichern' }).click();
   await expect(page.getByText('Gespeichert.')).toBeVisible();
   await page.getByRole('button', { name: 'Jetzt per Mail sichern' }).click();
   await expect(page.getByText(/Sicherung gesendet an/)).toBeVisible();

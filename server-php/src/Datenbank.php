@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 6;
+    public const SCHEMA_VERSION = 7;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -153,7 +153,47 @@ final class Datenbank
             }
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['6', 'schema']);
         }
-        // Spätere Versionen: if ($version < 7) { … UPDATE meta … }
+        if ($version < 7) {
+            foreach ($this->schemaV7() as $sql) {
+                try {
+                    $this->pdo->exec($sql);
+                } catch (\PDOException $e) {
+                    if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                        throw $e;
+                    }
+                }
+            }
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['7', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 8) { … UPDATE meta … }
+    }
+
+    /**
+     * Version 7 (Etappe 9): Aufgaben für Helferkennungen (Sprecher, Kasse, Oberschiedsrichter),
+     * Online-Anmeldung mit Warteliste (Einstellungen je Turnier, Tabelle anmeldungen).
+     * @return list<string>
+     */
+    private function schemaV7(): array
+    {
+        $mysql = $this->treiber === 'mysql';
+        $nach = $mysql ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '';
+        return [
+            'ALTER TABLE codes ADD COLUMN aufgaben VARCHAR(80) NULL',
+            'ALTER TABLE ereignisse ADD COLUMN autor_aufgaben VARCHAR(80) NULL',
+            'ALTER TABLE turniere ADD COLUMN anmeldung TEXT NULL',
+            "CREATE TABLE anmeldungen (
+                turnier_id VARCHAR(16) NOT NULL,
+                id VARCHAR(16) NOT NULL,
+                email VARCHAR(190) NOT NULL,
+                daten TEXT NOT NULL,
+                schluessel_hash CHAR(64) NOT NULL,
+                angelegt BIGINT NOT NULL,
+                bestaetigt BIGINT NULL,
+                spieler VARCHAR(16) NULL,
+                PRIMARY KEY (turnier_id, id)
+            )$nach",
+            'CREATE INDEX idx_anmeldungen_schluessel ON anmeldungen (schluessel_hash)',
+        ];
     }
 
     /**

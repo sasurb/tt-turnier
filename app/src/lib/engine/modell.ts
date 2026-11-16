@@ -128,6 +128,10 @@ export interface KonkurrenzEinstellungen {
   beschleunigt: boolean;
   /** Frühester Beginn dieser Konkurrenz („HH:MM“, für Zeitplan und Spielaufruf); null = sofort */
   beginn: string | null;
+  /** Startgeld je Spieler in Cent (ab 0.11, für Kasse und Online-Anmeldung); null = keins */
+  startgeld: number | null;
+  /** Höchstzahl Teilnehmer für die Online-Anmeldung (danach Warteliste); null = unbegrenzt */
+  maxTeilnehmer: number | null;
 }
 
 export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
@@ -164,6 +168,8 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
     festeSaetze: null,
     beschleunigt: false,
     beginn: null,
+    startgeld: null,
+    maxTeilnehmer: null,
   };
 }
 
@@ -456,6 +462,19 @@ export function paarName(a: SpielerDaten | undefined, b: SpielerDaten | undefine
   const gleich = a.nachname.trim().toLowerCase() === b.nachname.trim().toLowerCase();
   const kurz = (s: SpielerDaten) => (gleich && s.vorname ? `${s.vorname[0]}. ${s.nachname}` : s.nachname || s.vorname);
   return `${kurz(a)}/${kurz(b)}`;
+}
+
+/** Betrag in Cent als „12,50 €“ */
+export function euro(cent: number): string {
+  return `${(cent / 100).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+}
+
+/** Eingabe „12,50“ / „12.5“ / „12“ → Cent; null bei leer, undefined bei ungültig */
+export function centAus(text: string): number | null | undefined {
+  const t = text.trim().replace(/\s*€$/, '').replace(',', '.');
+  if (!t) return null;
+  if (!/^\d{1,4}(\.\d{1,2})?$/.test(t)) return undefined;
+  return Math.round(Number(t) * 100);
 }
 
 /** Spiel-ID-Präfix je Baum */

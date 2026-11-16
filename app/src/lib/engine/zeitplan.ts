@@ -328,3 +328,65 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
     nichtPlanbar: rest.length,
   };
 }
+
+/**
+ * Gedrosselter Zeitplan für die Oberfläche: Bei großen Turnieren kann die Berechnung spürbar dauern.
+ * Ist sie schnell (unter 30 ms), wird sofort gerechnet; sonst höchstens alle `abstandMs` (mindestens
+ * dem Doppelten der letzten Rechenzeit), und die zuletzt angeforderte Lage gewinnt. Gleicher Stand
+ * (dasselbe Zustands-Objekt) wird nicht neu gerechnet – auch nicht von zwei Ansichten.
+ */
+const zuletzt = new WeakMap<TurnierZustand, { jetzt: number; plan: Zeitplan }>();
+let rechenzeit = 0;
+let zuletztGerechnet = 0;
+let geplant: ReturnType<typeof setTimeout> | null = null;
+let anfrage: { z: TurnierZustand; jetzt: number; fertig: Set<(p: Zeitplan) => void> } | null = null;
+
+function rechnen(z: TurnierZustand, jetzt: number): Zeitplan {
+  const t0 = performance.now();
+  const plan = zeitplan(z, jetzt);
+  rechenzeit = performance.now() - t0;
+  zuletztGerechnet = Date.now();
+  zuletzt.set(z, { jetzt, plan });
+  return plan;
+}
+
+/** Sofort (z. B. beim Öffnen einer Ansicht), aber aus dem Zwischenspeicher, wenn der Stand gleich ist */
+export function zeitplanSofort(z: TurnierZustand, jetzt: number): Zeitplan {
+  const da = zuletzt.get(z);
+  return da && Math.abs(da.jetzt - jetzt) < 30_000 ? da.plan : rechnen(z, jetzt);
+}
+
+export function zeitplanGedrosselt(z: TurnierZustand, jetzt: number, fertig: (p: Zeitplan) => void, abstandMs = 1500): void {
+  const da = zuletzt.get(z);
+  if (da && Math.abs(da.jetzt - jetzt) < 30_000) {
+    fertig(da.plan);
+    return;
+  }
+  const warten = Math.max(abstandMs, rechenzeit * 2) - (Date.now() - zuletztGerechnet);
+  if (rechenzeit < 30 || warten <= 0) {
+    if (!geplant) {
+      fertig(rechnen(z, jetzt));
+      return;
+    }
+  }
+  const alle = anfrage?.fertig ?? new Set<(p: Zeitplan) => void>();
+  alle.add(fertig);
+  anfrage = { z, jetzt, fertig: alle };
+  if (geplant) return;
+  geplant = setTimeout(() => {
+    geplant = null;
+    const a = anfrage!;
+    anfrage = null;
+    const plan = rechnen(a.z, a.jetzt);
+    for (const f of a.fertig) f(plan);
+  }, Math.max(50, warten));
+}
+
+/** Nur für Tests: Drossel zurücksetzen */
+export function zeitplanDrosselZuruecksetzen() {
+  if (geplant) clearTimeout(geplant);
+  geplant = null;
+  anfrage = null;
+  rechenzeit = 0;
+  zuletztGerechnet = 0;
+}

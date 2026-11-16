@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { ART, SICHERUNG_MAX_EMPFAENGER, SICHERUNG_TAKTE, type Sicherung, type SicherungTakt, type TurnierEinstellungen } from '@shared/protokoll';
+  import { ART, SICHERUNG_MAX_EMPFAENGER, SICHERUNG_TAKTE, UST_SAETZE, type KasseEinstellungen, type Sicherung, type SicherungTakt, type TurnierEinstellungen } from '@shared/protokoll';
+  import { bicGueltig, ibanAnzeige, ibanGueltig, ibanNormal } from '../engine/girocode';
   import { T } from '../texte';
   import { api, speicher } from '../dienste';
   import { app, fehlerText } from '../app.svelte';
@@ -58,6 +59,52 @@
     }
   }
   const abweichend = $derived(Object.values(z.konkurrenzen).filter((k) => k.einst.veroeffentlichung !== null));
+
+  /* Name und Datum */
+  // svelte-ignore state_referenced_locally
+  let tName = $state(z.name);
+  // svelte-ignore state_referenced_locally
+  let tDatum = $state(z.datum ?? '');
+  async function kopfSpeichern(e: SubmitEvent) {
+    e.preventDefault();
+    const datum = /^\d{4}-\d{2}-\d{2}$/.test(tDatum) ? tDatum : null;
+    try {
+      if (!lokal && token) await api.einstellungenSetzen(token, { turnier: id, name: tName.trim(), datum });
+      await eintragen(ART.turnierUmbenannt, { name: tName.trim(), datum });
+      zeige('kopf', true, T.app.gespeichert);
+    } catch (x) {
+      zeige('kopf', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
+
+  /* Kasse und Quittung */
+  const kasseLeer: KasseEinstellungen = { aussteller: '', anschrift: '', ust: 'keiner', ustSatz: 19, fusstext: '', empfaenger: '', iban: '', bic: '' };
+  // svelte-ignore state_referenced_locally
+  let kasse = $state<KasseEinstellungen>({ ...kasseLeer, ...(z.kasse ?? {}), iban: z.kasse?.iban ? ibanAnzeige(z.kasse.iban) : '' });
+  let alsVorgabe = $state(false);
+  const kontoDa = $derived(!lokal && !!app.sitzung && !istZentrale());
+  async function kasseAusKonto() {
+    if (!app.sitzung) return;
+    try {
+      const k = (await api.kontoEinstellungen(app.sitzung.token)).kasse;
+      if (k) kasse = { ...kasseLeer, ...k, iban: k.iban ? ibanAnzeige(k.iban) : '' };
+    } catch (x) {
+      zeige('kasse', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
+  async function kasseSpeichern(e: SubmitEvent) {
+    e.preventDefault();
+    if (kasse.iban.trim() && !ibanGueltig(kasse.iban)) return zeige('kasse', false, T.kasseEinst.ibanFalsch);
+    if (!bicGueltig(kasse.bic)) return zeige('kasse', false, T.kasseEinst.bicFalsch);
+    const k: KasseEinstellungen = { ...$state.snapshot(kasse), iban: ibanNormal(kasse.iban), bic: kasse.bic.replace(/\s+/g, '').toUpperCase() };
+    try {
+      await eintragen(ART.turnierDaten, { kasse: k });
+      if (alsVorgabe && app.sitzung) await api.kontoEinstellungenSetzen(app.sitzung.token, { kasse: k });
+      zeige('kasse', true, T.kasseEinst.gespeichert);
+    } catch (x) {
+      zeige('kasse', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
 
   /* Namen für Zuschauer (Datenschutz) */
   async function namenSetzen(n: 'voll' | 'kurz') {
@@ -174,6 +221,17 @@
   <summary>{T.einstellungen.titel}</summary>
 
   <section>
+    <h3>{T.einstellungen.kopfTitel}</h3>
+    <form onsubmit={kopfSpeichern} class="kopf-form">
+      <label>{T.neu.name}<input bind:value={tName} minlength="2" maxlength="160" required /></label>
+      <div class="label-zeile"><label for="te-datum">{T.neu.datum}</label><Hilfe text={T.einstellungen.datumHilfe} /></div>
+      <input id="te-datum" type="date" bind:value={tDatum} data-testid="turnier-datum" />
+      <button type="submit" class="zweit" disabled={tName.trim().length < 2}>{T.app.speichern}</button>
+    </form>
+    {@render hinweis('kopf')}
+  </section>
+
+  <section>
     <h3>{T.einstellungen.veroeffTitel}<Hilfe text={T.einstellungen.veroeffHinweis} /></h3>
     <p class="leise">{T.einstellungen.veroeffText}</p>
     <label class="haken"><input type="checkbox" checked={z.veroeffentlichung.tabellen} onchange={(e) => veroeffentlichung(e.currentTarget.checked, z.veroeffentlichung.ko)} /> {T.einstellungen.veroeffTabellen}</label>
@@ -237,6 +295,31 @@
   {/if}
 
   <section>
+    <h3>{T.kasseEinst.titel}<Hilfe text={T.kasseEinst.hilfe} /></h3>
+    <form onsubmit={kasseSpeichern} class="kasse-form" data-testid="kasse-einstellungen">
+      {#if kontoDa}<button type="button" class="zweit klein" onclick={kasseAusKonto}>{T.kasseEinst.ausKonto}</button>{/if}
+      <label>{T.kasseEinst.aussteller}<input bind:value={kasse.aussteller} maxlength="160" autocomplete="organization" /></label>
+      <label>{T.kasseEinst.anschrift}<textarea bind:value={kasse.anschrift} maxlength="300" rows="2"></textarea></label>
+      <label>{T.kasseEinst.ust}
+        <select bind:value={kasse.ust}>
+          {#each ['keiner', 'befreit', 'enthalten'] as u (u)}<option value={u}>{T.kasseEinst.ustArten[u]}</option>{/each}
+        </select>
+      </label>
+      {#if kasse.ust === 'enthalten'}
+        <label>{T.kasseEinst.ustSatz}<select bind:value={kasse.ustSatz}>{#each UST_SAETZE as u (u)}<option value={u}>{u} %</option>{/each}</select></label>
+      {/if}
+      <label>{T.kasseEinst.fusstext}<input bind:value={kasse.fusstext} maxlength="500" /></label>
+      <label>{T.kasseEinst.empfaenger}<input bind:value={kasse.empfaenger} maxlength="70" /></label>
+      <label>{T.kasseEinst.iban}<input bind:value={kasse.iban} maxlength="42" autocapitalize="characters" autocomplete="off" spellcheck="false" data-testid="kasse-iban" /></label>
+      {#if kasse.iban.trim() && !ibanGueltig(kasse.iban)}<p class="leise">{T.kasseEinst.ibanFalsch}</p>{/if}
+      <label>{T.kasseEinst.bic}<input bind:value={kasse.bic} maxlength="11" autocapitalize="characters" autocomplete="off" spellcheck="false" /></label>
+      {#if kontoDa}<label class="haken"><input type="checkbox" bind:checked={alsVorgabe} /> {T.kasseEinst.alsVorgabe}</label>{/if}
+      <button type="submit">{T.app.speichern}</button>
+    </form>
+    {@render hinweis('kasse')}
+  </section>
+
+  <section>
     <h3>{T.einstellungen.dateiTitel}</h3>
     <p class="leise">{lokal ? T.einstellungen.lokalErklaerung : T.einstellungen.dateiText}</p>
     {#if lokal}
@@ -289,4 +372,6 @@
   .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; margin: 8px 0; }
   .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
   .protokoll summary { font-size: 1.05rem; font-weight: 700; }
+  .kasse-form, .kopf-form { display: flex; flex-direction: column; gap: 8px; }
+  .kasse-form textarea { width: 100%; }
 </style>

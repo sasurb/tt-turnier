@@ -85,6 +85,7 @@ final class ApiFehler extends \RuntimeException
         'nicht_gefunden' => 404,
         'konflikt' => 409,
         'zu_gross' => 413,
+        'abgelaufen' => 410,
         'zu_viele_versuche' => 429,
         'serverfehler' => 500,
         'nicht_eingerichtet' => 503,

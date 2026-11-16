@@ -35,6 +35,11 @@ Options -Indexes
   <FilesMatch "\.(js|css|svg|woff2?)$">
     Header unset Content-Security-Policy
   </FilesMatch>
+  # Service Worker (nur Mitteilungen): braucht nichts zu laden, immer frisch vom Server
+  <Files "sw.js">
+    Header always set Content-Security-Policy "default-src 'none'"
+    Header set Cache-Control "no-cache"
+  </Files>
 </IfModule>
 HT
 # Markierung: Dieser Ordner gehört der App (der Deploy löscht nur in eigenen Ordnern)

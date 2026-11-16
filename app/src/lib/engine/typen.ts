@@ -5,8 +5,9 @@ import type { Autor, Ereignis, NeuesEreignis } from '@shared/protokoll';
  * - ausstehend: online-Turnier, noch nicht vom Server bestätigt
  * - bestaetigt: vom Server mit Laufnummer zurückgekommen
  * - lokal: Einzelgerät-Turnier, es gibt keinen Server
+ * - abgelehnt: vom Server einzeln abgelehnt (ab 0.11) – zählt nicht, wird nicht erneut gesendet
  */
-export type EreignisStatus = 'ausstehend' | 'bestaetigt' | 'lokal';
+export type EreignisStatus = 'ausstehend' | 'bestaetigt' | 'lokal' | 'abgelehnt';
 
 export interface LokalesEreignis extends NeuesEreignis {
   turnier: string;
@@ -16,6 +17,8 @@ export interface LokalesEreignis extends NeuesEreignis {
   autor: Autor | null;
   /** Reihenfolge eigener Einträge auf diesem Gerät (siehe naechsteReihe); fehlt bei Server-Ereignissen. */
   reihe?: number;
+  /** Grund der Ablehnung durch den Server (Status „abgelehnt“) */
+  fehler?: string;
 }
 
 export function ausServer(turnier: string, e: Ereignis): LokalesEreignis {

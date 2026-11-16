@@ -55,6 +55,13 @@ public final class KernTest {
         return new A(a.status, Json.objekt(new String(a.inhalt, StandardCharsets.UTF_8)));
     }
 
+    /** Antwort „einzeln abgelehnt“ (ab 0.11): nichts angenommen, alle mit diesem Fehler abgelehnt */
+    static boolean abgelehnt(A a, String fehler) {
+        if (a.s != 200 || a.l("angenommen") == null || !a.l("angenommen").isEmpty() || a.l("abgelehnt") == null || a.l("abgelehnt").isEmpty()) return false;
+        for (Object o : a.l("abgelehnt")) if (!fehler.equals(Json.alsObjekt(o).get("fehler"))) return false;
+        return true;
+    }
+
     static long zahlAus(Object o) {
         return o instanceof Number ? ((Number) o).longValue() : 0;
     }
@@ -87,6 +94,7 @@ public final class KernTest {
         Zentrale.ohneWarten = true;
         json();
         protokoll();
+        etappe9();
         http();
         String online = System.getenv("TT_ONLINE");
         if (online != null && !online.isEmpty()) zusammenspiel(online);
@@ -190,11 +198,11 @@ public final class KernTest {
         pruefe(a.s == 200 && Long.valueOf(1).equals(Json.alsObjekt(an.get(0)).get("seq")) && Long.valueOf(3).equals(Json.alsObjekt(an.get(1)).get("seq")),
             "Doppelsendung liefert alte Laufnummer");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(Json.obj("id", "kurz", "art", "x", "daten", liste(), "zeit", "nie", "geraet", "g"))), leitA, q("turnier", tid), false);
-        pruefe(a.s == 400, "ungültiges Ereignis");
+        pruefe(abgelehnt(a, "ungueltig"), "ungültiges Ereignis");
         StringBuilder gross = new StringBuilder();
         for (int i = 0; i < 20000; i++) gross.append('x');
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000009", "test.notiz", Json.obj("text", gross.toString())))), leitA, q("turnier", tid), false);
-        pruefe(a.s == 400, "zu große Daten");
+        pruefe(abgelehnt(a, "ungueltig"), "zu große Daten");
         a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
         pruefe("zuschauer".equals(a.t("sicht")) && "".equals(Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(2)).get("autor")).get("name")), "Zuschauer: keine Namen der Eintragenden");
         a = rufe(z, "GET", "events", null, leitA, q("turnier", tid, "ab", "0"), false);
@@ -227,11 +235,11 @@ public final class KernTest {
         pruefe(a.s == 200 && "spieler".equals(a.t("rolle")) && "sp1".equals(a.t("spieler")), "Spieler-Code");
         String sp = a.t("token");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000001", "test.notiz", Json.obj()))), sp, q("turnier", tid), false);
-        pruefe(a.s == 403, "Spieler: nur Ergebnisse");
+        pruefe(abgelehnt(a, "keine_berechtigung"), "Spieler: nur Ergebnisse");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000002", "spiel.ergebnis", Json.obj("spiel", "g1-a-b")))), sp, q("turnier", tid), false);
         pruefe(a.s == 200, "Spieler: Ergebnis");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000009", "spiel.aufgerufen", Json.obj()))), sp, q("turnier", tid), false);
-        pruefe(a.s == 403, "Spieler: kein Aufruf");
+        pruefe(abgelehnt(a, "keine_berechtigung"), "Spieler: kein Aufruf");
         a = rufe(z, "GET", "events", null, sp, q("turnier", tid, "ab", "203"), false);
         Map<String, Object> autor = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor"));
         pruefe("spieler".equals(autor.get("rolle")) && "sp1".equals(autor.get("spieler")) && "Anna".equals(autor.get("name")), "Autor mit Spieler-ID");
@@ -249,12 +257,12 @@ public final class KernTest {
         pruefe(a.s == 200 && Boolean.TRUE.equals(a.g("helfer")), "Zugang: Spieler mit Helfer-Recht");
         String spH = a.t("token");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000010", "tisch.gesperrt", Json.obj()))), spH, q("turnier", tid), false);
-        pruefe(a.s == 403, "Spieler-Helfer: keine Tische sperren");
+        pruefe(abgelehnt(a, "keine_berechtigung"), "Spieler-Helfer: keine Tische sperren");
         // Etappe 8: Vorplanen, Auslosung ändern, Rückgängig – nur Leitung
         String[] nurLeitung = {"spiel.geplant", "auslosung.geaendert", "eintrag.zurueckgenommen"};
         for (int i = 0; i < nurLeitung.length; i++) {
             a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-00008" + i + "0", nurLeitung[i], Json.obj()))), spH, q("turnier", tid), false);
-            pruefe(a.s == 403, "Spieler-Helfer: kein " + nurLeitung[i]);
+            pruefe(abgelehnt(a, "keine_berechtigung"), "Spieler-Helfer: kein " + nurLeitung[i]);
         }
         rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000004", "spiel.ergebnis", Json.obj()))), spH, q("turnier", tid), false);
         a = rufe(z, "GET", "events", null, spH, q("turnier", tid, "ab", "204"), false);
@@ -341,6 +349,84 @@ public final class KernTest {
         Zentrale z3 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
         a = rufe(z3, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
         pruefe(a.s == 200 && Long.valueOf(210).equals(a.g("hoechsteSeq")), "beschädigte letzte Zeile wird übersprungen");
+    }
+
+    static void etappe9() throws Exception {
+        System.out.println("Etappe 9: Aufgaben, abgelehnte Einträge, Kasse nur in voller Sicht");
+        Zentrale z = new Zentrale(new Speicher(neuerOrdner()), new PlattformJvm(null), new Online(2000), () -> uhr);
+        z.setzePort(8080);
+        String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
+        A a = rufe(z, "GET", "info", null, null);
+        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.11.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
+        a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Kassencup", "datum", "2027-02-01"), konto);
+        String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
+        String leit = a.t("token");
+        a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(
+            Json.obj("rolle", "helfer", "bezug", "h-kasse", "name", "Eva", "aufgaben", liste("kasse")),
+            Json.obj("rolle", "helfer", "bezug", "h-std", "name", "Ali"),
+            Json.obj("rolle", "spieler", "bezug", "sp1", "name", "Sven"))), leit);
+        Map<String, Map<String, Object>> c = new LinkedHashMap<>();
+        for (Object o : a.l("codes")) c.put(String.valueOf(Json.alsObjekt(o).get("bezug")), Json.alsObjekt(o));
+        pruefe(liste("kasse").equals(c.get("h-kasse").get("aufgaben")) && liste("ergebnisse", "aufruf").equals(c.get("h-std").get("aufgaben")), "Helferkennungen mit Aufgaben");
+        a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "helfer", "bezug", "h-x", "name", "X", "aufgaben", liste("nix")))), leit);
+        pruefe(a.s == 400, "ohne gültige Aufgabe abgewiesen");
+        a = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", c.get("h-kasse").get("code")), null);
+        String kasse = a.t("token");
+        pruefe(a.s == 200 && liste("kasse").equals(a.g("aufgaben")), "Zugang als Kasse mit Aufgaben");
+        a = rufe(z, "GET", "turnier", null, kasse, q("id", tid), false);
+        pruefe(liste("kasse").equals(Json.alsObjekt(a.g("turnier")).get("aufgaben")), "GET turnier: Aufgaben");
+        String sp = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", c.get("sp1").get("code")), null).t("token");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(
+            ev("k-0000001", "spieler.angelegt", Json.obj("id", "sp1", "vorname", "Sven", "nachname", "S", "verein", "")),
+            ev("k-0000002", "turnier.daten", Json.obj("ort", "Halle", "kasse", Json.obj("aussteller", "TTC", "iban", "DE89370400440532013000"))))), leit, q("turnier", tid), false);
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(
+            ev("k-0000003", "startgeld.gebucht", Json.obj("id", "b0001", "spieler", "sp1", "betrag", 800L, "art", "bar")),
+            ev("k-0000004", "spiel.ergebnis", Json.obj()),
+            ev("k-0000005", "teilnehmer.eingecheckt", Json.obj("spieler", "sp1", "da", true)))), kasse, q("turnier", tid), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 2 && a.l("abgelehnt").size() == 1 && "k-0000004".equals(Json.alsObjekt(a.l("abgelehnt").get(0)).get("id")),
+            "Kasse: Ergebnis einzeln abgelehnt, Rest angenommen");
+        a = rufe(z, "POST", "code.aufgaben", Json.obj("turnier", tid, "bezug", "h-kasse", "aufgaben", liste("kasse", "oberschiri")), kasse);
+        pruefe(a.s == 403, "Aufgaben ändern nur die Leitung");
+        a = rufe(z, "POST", "code.aufgaben", Json.obj("turnier", tid, "bezug", "h-kasse", "aufgaben", liste("oberschiri", "kasse")), leit);
+        pruefe(a.s == 200 && liste("kasse", "oberschiri").equals(Json.alsObjekt(a.g("code")).get("aufgaben")), "Aufgaben geändert (feste Reihenfolge)");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("k-0000006", "spiel.entschieden", Json.obj()), ev("k-0000007", "spiel.aufgerufen", Json.obj()))), kasse, q("turnier", tid), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 1 && "k-0000007".equals(Json.alsObjekt(a.l("abgelehnt").get(0)).get("id")), "gilt sofort ohne neue Anmeldung");
+        a = rufe(z, "GET", "events", null, leit, q("turnier", tid, "ab", "0"), false);
+        long hoechste = zahlAus(a.g("hoechsteSeq"));
+        Map<String, Object> autorK = null;
+        for (Object o : a.l("ereignisse")) if ("startgeld.gebucht".equals(Json.alsObjekt(o).get("art"))) autorK = Json.alsObjekt(Json.alsObjekt(o).get("autor"));
+        pruefe(autorK != null && "helfer".equals(autorK.get("rolle")) && liste("kasse").equals(autorK.get("aufgaben")), "Leitung sieht Kasse; Autor mit Aufgaben");
+        for (String tok : new String[] {null, sp}) {
+            a = rufe(z, "GET", "events", null, tok, q("turnier", tid, "ab", "0"), false);
+            boolean ohne = true;
+            Map<String, Object> daten = null;
+            for (Object o : a.l("ereignisse")) {
+                Object art = Json.alsObjekt(o).get("art");
+                if (Zentrale.NUR_VOLLE_SICHT.contains(art)) ohne = false;
+                if ("turnier.daten".equals(art)) daten = Json.alsObjekt(Json.alsObjekt(o).get("daten"));
+            }
+            pruefe(ohne && daten != null && !daten.containsKey("kasse") && "Halle".equals(daten.get("ort")) && zahlAus(a.g("bis")) == hoechste,
+                (tok == null ? "Zuschauer" : "Spieler") + ": ohne Zahlungen, Check-in, Bankverbindung; bis = letzte Laufnummer");
+        }
+        String ali = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", c.get("h-std").get("code")), null).t("token");
+        a = rufe(z, "GET", "events", null, ali, q("turnier", tid, "ab", "0"), false);
+        boolean ohneKasse = true;
+        for (Object o : a.l("ereignisse")) {
+            Map<String, Object> e = Json.alsObjekt(o);
+            if (Zentrale.NUR_VOLLE_SICHT.contains(e.get("art"))) ohneKasse = false;
+            if ("turnier.daten".equals(e.get("art")) && Json.alsObjekt(e.get("daten")).containsKey("kasse")) ohneKasse = false;
+        }
+        pruefe("helfer".equals(a.t("sicht")) && ohneKasse && zahlAus(a.g("bis")) == hoechste, "Helfer ohne Aufgabe Kasse: Sicht helfer ohne Zahlungen und Bankverbindung");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("k-0000008", "teilnehmer.eingecheckt", Json.obj("spieler", "sp1", "da", false)))), leit, q("turnier", tid), false);
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", String.valueOf(hoechste)), false);
+        pruefe(a.l("ereignisse").isEmpty() && zahlAus(a.g("bis")) == hoechste + 1 && Boolean.FALSE.equals(a.g("mehr")), "nur gefilterte Einträge: bis rückt vor");
+        a = rufe(z, "POST", "konto.einstellungen", Json.obj("kasse", Json.obj("aussteller", "TTC", "iban", "DE00123")), konto);
+        pruefe(a.s == 400, "Kasse im Konto: falsche IBAN abgewiesen");
+        a = rufe(z, "POST", "konto.einstellungen", Json.obj("kasse", Json.obj("aussteller", "TTC", "iban", "de89 3704 0044 0532 0130 00", "ust", "enthalten", "ustSatz", 7L)), konto);
+        Map<String, Object> k = Json.alsObjekt(a.g("kasse"));
+        pruefe(a.s == 200 && "DE89370400440532013000".equals(k.get("iban")) && Long.valueOf(7).equals(k.get("ustSatz")) && a.l("klassen").isEmpty(), "Kasse im Konto gespeichert");
+        a = rufe(z, "GET", "anmeldung", null, null, q("turnier", tid), false);
+        pruefe(a.s == 404, "Online-Anmeldung gibt es auf der Zentrale nicht");
     }
 
     static void http() throws Exception {

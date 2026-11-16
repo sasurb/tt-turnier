@@ -69,25 +69,33 @@ export class TurnierSitzung {
     this.abgleich?.stop();
   }
 
-  /** Neues Ereignis eintragen. Gilt sofort auf dem Gerät; online wird es im Hintergrund gesendet. */
-  eintragen(art: string, daten: Record<string, unknown>): Promise<LokalesEreignis> {
+  /**
+   * Neues Ereignis eintragen. Gilt sofort auf dem Gerät; online wird es im Hintergrund gesendet.
+   * `festeId`: Ereignis-ID vorgeben (z. B. Übernahme aus der Online-Anmeldung); gibt es sie schon,
+   * bleibt es beim vorhandenen Eintrag.
+   */
+  eintragen(art: string, daten: Record<string, unknown>, festeId?: string): Promise<LokalesEreignis> {
     // Nacheinander ausführen, damit lokale Laufnummern eindeutig bleiben
-    const schritt = this.warteschlange.then(() => this.eintragenIntern(art, daten));
+    const schritt = this.warteschlange.then(() => this.eintragenIntern(art, daten, festeId));
     this.warteschlange = schritt.catch(() => undefined);
     return schritt;
   }
 
-  private async eintragenIntern(art: string, daten: Record<string, unknown>): Promise<LokalesEreignis> {
+  private async eintragenIntern(art: string, daten: Record<string, unknown>, festeId?: string): Promise<LokalesEreignis> {
     const { speicher, turnier, modus, geraet } = this.o;
     const autor = this.autor();
     const zeit = new Date().toISOString();
     let seq: number | null = null;
+    if (festeId) {
+      const da = (await speicher.alle(turnier)).find((x) => x.id === festeId);
+      if (da) return da;
+    }
     if (modus === 'lokal') {
       const alle = await speicher.alle(turnier);
       seq = (alle[alle.length - 1]?.seq ?? 0) + 1;
     }
     const e: LokalesEreignis = {
-      id: neueId(),
+      id: festeId ?? neueId(),
       art,
       daten,
       zeit,
@@ -107,6 +115,13 @@ export class TurnierSitzung {
 
   ereignisse() {
     return this.o.speicher.alle(this.o.turnier);
+  }
+
+  /** Vom Server abgelehnte Einträge dieses Geräts verwerfen */
+  async abgelehnteVerwerfen(): Promise<void> {
+    const ids = (await this.o.speicher.alle(this.o.turnier)).filter((e) => e.status === 'abgelehnt').map((e) => e.id);
+    await this.o.speicher.entfernen(this.o.turnier, ids);
+    this.o.beiAenderung?.();
   }
 
   /**

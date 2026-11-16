@@ -1,6 +1,6 @@
 <script lang="ts">
   import { seiteVon } from '../../engine/zustand';
-  import { ART, type Rolle } from '@shared/protokoll';
+  import { ART, type Aufgabe, type Rolle } from '@shared/protokoll';
   import { T } from '../../texte';
   import { name, vorgabeVon } from '../../engine/abfragen';
   import { istRundenModus } from '../../engine/runden';
@@ -15,6 +15,7 @@
     rolle,
     ich,
     helfer = false,
+    aufgaben = [],
     eintragen,
     schliessen,
   }: {
@@ -25,13 +26,17 @@
     ich: string | null;
     /** Spieler mit Helfer-Recht: fremde Spiele amtlich, eigene wie ein Spieler */
     helfer?: boolean;
+    /** Aufgaben der Helferkennung (Ergebnisse, Oberschiedsrichter …); Leitung hat alle */
+    aufgaben?: readonly Aufgabe[];
     eintragen: (art: string, daten: Record<string, unknown>) => Promise<unknown>;
     schliessen: () => void;
   } = $props();
 
   const leitung = $derived(rolle === 'leitung' || rolle === 'admin' || rolle === 'veranstalter');
   const meineSeite = $derived<Seite | null>(rolle === 'spieler' ? seiteVon(k, spiel, ich) : null);
-  const amtlich = $derived(leitung || rolle === 'helfer' || (helfer && meineSeite === null));
+  /** Anfechtungen entscheiden und Ergebnisse löschen: Leitung und Oberschiedsrichter */
+  const entscheidet = $derived(leitung || aufgaben.includes('oberschiri'));
+  const amtlich = $derived(leitung || (rolle === 'helfer' && (aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri'))) || (helfer && meineSeite === null));
   const darf = $derived(amtlich || meineSeite !== null);
   const nurSaetze = $derived(k.einst.eingabe === 'saetze');
   /** Feste Satzzahl (Schweizer/Cup): alle Sätze werden gespielt, Unentschieden möglich */
@@ -177,7 +182,7 @@
     </div>
   {/if}
 
-  {#if leitung && spiel.alternativen.length}
+  {#if entscheidet && spiel.alternativen.length}
     <p>{T.erg.entscheidenText}</p>
     <ul class="liste">
       {#each spiel.alternativen as alt (alt.ereignis)}
@@ -187,7 +192,7 @@
         </li>
       {/each}
     </ul>
-  {:else if leitung && spiel.stand === 'angefochten' && spiel.eintrag}
+  {:else if entscheidet && spiel.stand === 'angefochten' && spiel.eintrag}
     <p>{T.erg.entscheidenText}</p>
     <button class="breit" disabled={sendet} onclick={() => senden(ART.spielEntschieden, { ereignis: spiel.eintrag!.ereignis })}>{T.erg.entscheiden}: {ergebnisText(spiel.eintrag.ergebnis)}</button>
   {/if}
@@ -209,6 +214,8 @@
     <p class="meldung info">{T.erg.leitungHat}</p>
   {:else if !darf && rolle === 'spieler'}
     <p class="meldung info">{T.erg.nurEigene}</p>
+  {:else if !darf && rolle === 'helfer'}
+    <p class="meldung info">{T.aufgaben.keineErgebnisse}</p>
   {:else if kannEintragen && !formOffen}
     <button class="zweit breit" onclick={() => (formOffen = true)}>{T.spiele.eintragen}</button>
   {/if}
@@ -297,7 +304,7 @@
     </form>
   {/if}
 
-  {#if leitung && spiel.eintrag}
+  {#if entscheidet && spiel.eintrag}
     <button class="gefahr breit unten" disabled={sendet} onclick={() => confirm(T.erg.zuruecksetzenFrage) && senden(ART.spielZurueckgesetzt, {})}>{T.erg.zuruecksetzen}</button>
   {/if}
   {#if fehler && !formOffen}<div class="meldung fehler" role="alert">{fehler}</div>{/if}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { ART, type Rolle, type TurnierEinstellungen as Einstellungen } from '@shared/protokoll';
+  import { ALLE_AUFGABEN, ART, HELFER_STANDARD, type Aufgabe, type Rolle, type TurnierEinstellungen as Einstellungen } from '@shared/protokoll';
   import { T } from '../texte';
   import { ersetze, linkZu } from '../router.svelte';
   import { api, serverPruefen, speicher } from '../dienste';
@@ -35,7 +35,11 @@
   import QrCode from './turnier/QrCode.svelte';
   import Tische from './turnier/Tische.svelte';
   import DruckExport from './turnier/DruckExport.svelte';
+  import KasseTab from './turnier/KasseTab.svelte';
+  import AnmeldungTab from './turnier/AnmeldungTab.svelte';
+  import MitteilungKarte from './turnier/MitteilungKarte.svelte';
   import { meinAufruf, name as tnName } from '../engine/abfragen';
+  import { benachrichtigen, mitteilungEinstellung, wachHalten, wachHaltenErneuern, type MitteilungEinstellung } from '../mitteilung';
 
   let { id, reiter = null, code = null, weitere = [] }: { id: string; reiter?: string | null; code?: string | null; weitere?: string[] } = $props();
 
@@ -72,12 +76,22 @@
     try {
       // Mit Kennung: prüfen, ob sie noch gilt (gesperrt/neu ausgegeben → Gerät wird Zuschauer)
       const a = await api.turnier(id, kennung ?? s?.token ?? null);
+      // Name und Datum kennt bei Online-Turnieren der Server (ohne Ereignis turnier.angelegt)
+      if (eintrag && (a.turnier.name !== eintrag.name || a.turnier.datum !== eintrag.datum)) {
+        turnierMerken({ ...eintrag, name: a.turnier.name, datum: a.turnier.datum });
+        eintrag = gemerktesTurnier(id) ?? eintrag;
+        if (zustand) zustand = mitKopf(berechnen(ereignisse));
+      }
       sperre = a.turnier.zentrale || a.turnier.abgegeben ? { zentrale: a.turnier.zentrale ?? null, abgegeben: !!a.turnier.abgegeben } : null;
       if (kennung) {
         if (a.turnier.rechte === null || a.turnier.rechte === undefined) {
           turnierAbmelden(id);
           eintrag = gemerktesTurnier(id) ?? null;
           zugangFehler = T.zugang.kennungUngueltig;
+        } else if (a.turnier.rechte === 'helfer' && a.turnier.aufgaben && eintrag && JSON.stringify(a.turnier.aufgaben) !== JSON.stringify(eintrag.aufgaben)) {
+          // Aufgaben hat die Leitung geändert: gelten sofort
+          turnierMerken({ ...eintrag, aufgaben: a.turnier.aufgaben });
+          eintrag = gemerktesTurnier(id) ?? null;
         }
         if (s) {
           const k = await api.turnier(id, s.token);
@@ -111,7 +125,14 @@
   const rolle = $derived<Rolle>(lokal ? 'leitung' : eintrag?.token ? eintrag.rolle : (kontoRechte ?? 'zuschauer'));
   const leitung = $derived(lokal || rolle === 'leitung' || rolle === 'admin' || rolle === 'veranstalter');
   const ich = $derived(rolle === 'spieler' ? (eintrag?.spieler ?? null) : null);
-  const helferRecht = $derived(rolle === 'helfer' || (rolle === 'spieler' && !!eintrag?.helfer));
+  /** Aufgaben dieser Anmeldung: Leitung alle, Helfer laut Kennung, Spieler mit Helfer-Recht Ergebnisse + Aufruf */
+  const aufgaben = $derived<readonly Aufgabe[]>(
+    leitung ? ALLE_AUFGABEN : rolle === 'helfer' ? (eintrag?.aufgaben ?? HELFER_STANDARD) : rolle === 'spieler' && eintrag?.helfer ? HELFER_STANDARD : [],
+  );
+  const darfAufgabe = (a: Aufgabe) => aufgaben.includes(a);
+  /** Fremde Ergebnisse eintragen (amtlich) */
+  const helferRecht = $derived(!leitung && (darfAufgabe('ergebnisse') || darfAufgabe('oberschiri')));
+  const anmeldungMoeglich = $derived(!lokal && app.server.art === 'bereit' && !!app.server.info.anmeldung && !app.server.info.zentrale);
   /** Token, mit dem dieses Gerät sendet: Kennung vor Konto */
   const schreibToken = $derived(eintrag?.token ?? kontoToken);
   const darfSchreiben = $derived(lokal || !!schreibToken);
@@ -125,16 +146,27 @@
     lokal && zustand !== null && eintrag !== null && erinnerungFaellig(lokaleSicherung(id), zustand.anzahlEreignisse, ereignisse[0]?.zeit ?? eintrag.zuletzt, jetzt),
   );
 
-  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'spieler' | 'konkurrenzen' | 'zugaenge' | 'drucken' | 'einstellungen';
+  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'spieler' | 'kasse' | 'konkurrenzen' | 'anmeldung' | 'zugaenge' | 'drucken' | 'einstellungen';
   /** „Tische“ erscheint, sobald eine Konkurrenz läuft */
   const mitTischen = $derived(!!zustand && Object.values(zustand.konkurrenzen).some((k) => k.gestartet.gruppen || k.gestartet.ko));
   const reiterListe = $derived<Reiter[]>(
     leitung
-      ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', 'spieler', 'konkurrenzen', ...(lokal ? [] : ['zugaenge' as const]), 'drucken', 'einstellungen']
+      ? [
+          'spiele',
+          ...(mitTischen ? ['tische' as const] : []),
+          'tabellen',
+          'spieler',
+          'kasse',
+          'konkurrenzen',
+          ...(anmeldungMoeglich ? ['anmeldung' as const] : []),
+          ...(lokal ? [] : ['zugaenge' as const]),
+          'drucken',
+          'einstellungen',
+        ]
       : rolle === 'spieler'
-        ? ['meine', 'spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', ...(helferRecht ? ['drucken' as const] : [])]
+        ? ['meine', 'spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', ...(eintrag?.helfer ? ['drucken' as const] : [])]
         : rolle === 'helfer'
-          ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', 'drucken']
+          ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', ...(darfAufgabe('kasse') ? ['kasse' as const] : []), 'drucken']
           : ['tabellen', 'spiele', ...(mitTischen ? ['tische' as const] : [])],
   );
   const aufrufIch = $derived(zustand && ich ? meinAufruf(zustand, ich) : null);
@@ -145,7 +177,21 @@
     return tnName(zustand!, meins(sp.a) ? sp.b : sp.a);
   }
   const standardReiter = $derived<Reiter>(
-    leitung ? (!zustand?.spielerReihe.length ? 'spieler' : !zustand.konkurrenzReihe.length ? 'konkurrenzen' : 'spiele') : rolle === 'spieler' ? 'meine' : rolle === 'helfer' ? 'spiele' : 'tabellen',
+    leitung
+      ? !zustand?.spielerReihe.length
+        ? 'spieler'
+        : !zustand.konkurrenzReihe.length
+          ? 'konkurrenzen'
+          : 'spiele'
+      : rolle === 'spieler'
+        ? 'meine'
+        : rolle === 'helfer'
+          ? aufgaben.length === 1 && aufgaben[0] === 'kasse'
+            ? 'kasse'
+            : aufgaben.length === 1 && aufgaben[0] === 'aufruf' && mitTischen
+              ? 'tische'
+              : 'spiele'
+          : 'tabellen',
   );
   /** QR-Code vom Spielzettel: #/t/<id>/spiel/<konkurrenz>/<spiel> öffnet das Spiel zum Eintragen */
   const spielLink = $derived(reiter === 'spiel' && weitere.length === 2 ? { k: weitere[0]!, s: weitere[1]! } : null);
@@ -160,10 +206,16 @@
     if (zustand.konkurrenzen[l.k]?.spiele[l.s]) offen = { k: l.k, s: l.s };
   });
 
+  /** Online-Turniere ohne „turnier.angelegt“: Name und Datum vom Server (gemerkt am Gerät) */
+  function mitKopf(z: TurnierZustand): TurnierZustand {
+    if (!z.name && eintrag?.name) z.name = eintrag.name;
+    if (z.datum === null && eintrag?.datum) z.datum = eintrag.datum;
+    return z;
+  }
   async function aktualisieren() {
     if (!sitzung) return;
     ereignisse = await sitzung.ereignisse();
-    zustand = berechnen(ereignisse);
+    zustand = mitKopf(berechnen(ereignisse));
     status = sitzung.status ? { ...sitzung.status } : null;
   }
 
@@ -194,6 +246,7 @@
         name: g.wer || anzeigeName() || 'Leitung',
         ...(g.spieler ? { spieler: g.spieler } : {}),
         ...(g.helfer ? { helfer: true } : {}),
+        ...(g.rolle === 'helfer' ? { aufgaben: [...(g.aufgaben ?? HELFER_STANDARD)] } : {}),
       };
     }
     return { rolle: (kontoRechte ?? 'zuschauer') as Rolle, name: app.sitzung?.konto.name || anzeigeName() || 'Leitung' };
@@ -203,7 +256,7 @@
     zugangFehler = '';
     try {
       const a = await api.turnierZugang(id, c);
-      turnierMerken({ ...eintrag!, rolle: a.rolle, token: a.token, spieler: a.spieler ?? null, helfer: a.helfer ?? false, wer: a.name ?? null });
+      turnierMerken({ ...eintrag!, rolle: a.rolle, token: a.token, spieler: a.spieler ?? null, helfer: a.helfer ?? false, aufgaben: a.aufgaben ?? null, wer: a.name ?? null });
       eintrag = gemerktesTurnier(id) ?? null;
       const n = a.name ?? '';
       hinweis = a.rolle === 'spieler' && !a.helfer ? T.zugang.willkommen(n) : a.rolle === 'leitung' ? T.zugang.willkommenLeitung(n) : T.zugang.willkommenHelfer(n);
@@ -318,9 +371,9 @@
    */
   let aktion = $state<{ ids: string[]; text: string; gruppe: string | null } | null>(null);
   let aktionTimer: ReturnType<typeof setTimeout> | undefined;
-  async function eintragen(art: string, daten: Record<string, unknown>, opt: { still?: boolean } = {}) {
+  async function eintragen(art: string, daten: Record<string, unknown>, opt: { still?: boolean; id?: string } = {}) {
     if (!sitzung) throw new Error(T.app.fehlerAllgemein);
-    const e = await sitzung.eintragen(art, daten);
+    const e = await sitzung.eintragen(art, daten, opt.id);
     if (leitung && !opt.still && rueckgaengigBar(e)) {
       const gruppe = aktuelleAktion();
       const text = T.verlauf.arten[art] ?? T.protokollArten[art] ?? art;
@@ -383,6 +436,76 @@
       if (text === letzteUebersicht) return;
       api.uebersicht(token, id, text).then(() => (letzteUebersicht = text)).catch(() => undefined);
     }, 20_000);
+  });
+
+  /* ---------- Vom Server abgelehnte Einträge ---------- */
+  const abgelehnt = $derived(ereignisse.filter((e) => e.status === 'abgelehnt'));
+  async function abgelehnteVerwerfen() {
+    await sitzung?.abgelehnteVerwerfen();
+  }
+
+  /* ---------- Mitteilung bei Aufruf (nur bei offener App) ---------- */
+  // svelte-ignore state_referenced_locally
+  let mitteilung = $state<MitteilungEinstellung>(mitteilungEinstellung(id, null));
+  $effect(() => {
+    // Eigene Spielerkennung: standardmäßig für sich selbst
+    const eigen = ich;
+    untrack(() => (mitteilung = mitteilungEinstellung(id, eigen)));
+  });
+  const gefolgt = $derived(mitteilung.spieler && zustand?.spieler[mitteilung.spieler] ? mitteilung.spieler : null);
+  const aufrufGefolgt = $derived(zustand && gefolgt ? meinAufruf(zustand, gefolgt) : null);
+  let gemeldet = new Set<string>();
+  let mitteilungBereit = false;
+  let aufrufHinweis = $state<{ schluessel: string; text: string } | null>(null);
+  $effect(() => {
+    const a = aufrufGefolgt;
+    const z = zustand;
+    if (!z || !gefolgt) return;
+    const jetztSchluessel = new Set<string>();
+    const meldungen: { schluessel: string; text: string }[] = [];
+    if (a?.spielt) {
+      const s = a.spielt;
+      const k = `s/${s.konkurrenz}/${s.id}/${s.tisch}`;
+      jetztSchluessel.add(k);
+      meldungen.push({ schluessel: k, text: gefolgt === ich ? T.mitteilung.spielt(s.tisch!, gegnerVonSpieler(s, gefolgt)) : T.mitteilung.folgtSpielt(tnName(z, gefolgt), s.tisch!) });
+    }
+    if (a?.pfeift) {
+      const s = a.pfeift;
+      const k = `p/${s.konkurrenz}/${s.id}/${s.tisch}`;
+      jetztSchluessel.add(k);
+      meldungen.push({ schluessel: k, text: T.mitteilung.pfeift(s.tisch!) });
+    }
+    untrack(() => {
+      const neu = meldungen.filter((m) => !gemeldet.has(m.schluessel));
+      gemeldet = jetztSchluessel;
+      // Beim Öffnen nichts auslösen, was schon lief – nur neue Aufrufe melden
+      if (!mitteilungBereit) {
+        mitteilungBereit = true;
+        if (neu.length) aufrufHinweis = neu[0]!;
+        return;
+      }
+      if (!neu.length) {
+        if (aufrufHinweis && !jetztSchluessel.has(aufrufHinweis.schluessel)) aufrufHinweis = null;
+        return;
+      }
+      aufrufHinweis = neu[0]!;
+      void benachrichtigen(mitteilung, name || T.app.titel, neu.map((m) => m.text).join(' · '), neu[0]!.schluessel);
+    });
+  });
+  function gegnerVonSpieler(sp: Spiel, wer: string): string {
+    const k = zustand!.konkurrenzen[sp.konkurrenz]!;
+    const meins = (t: string | null) => !!t && (t === wer || !!k.paare[t]?.spieler.includes(wer));
+    return tnName(zustand!, meins(sp.a) ? sp.b : sp.a);
+  }
+  $effect(() => {
+    const an = mitteilung.wach && !!gefolgt;
+    void wachHalten(an);
+    const erneuern = () => document.visibilityState === 'visible' && wachHaltenErneuern(an);
+    document.addEventListener('visibilitychange', erneuern);
+    return () => {
+      document.removeEventListener('visibilitychange', erneuern);
+      void wachHalten(false);
+    };
   });
 
   function sichtbarMachen() {
@@ -490,6 +613,22 @@
   {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
   {#if sperre?.zentrale}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.gesperrtOnline(sperre.zentrale)}</div>{/if}
   {#if sperre?.abgegeben}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.abgegebenHinweis}</div>{/if}
+  {#if abgelehnt.length}
+    <div class="meldung fehler abgelehnt" role="alert" data-testid="abgelehnt">
+      <div class="wachsen">
+        <strong>{T.abgelehnt.titel(abgelehnt.length)}</strong>
+        <ul>{#each abgelehnt.slice(0, 3) as e (e.id)}<li>{T.protokollArten[e.art] ?? e.art}: {e.fehler}</li>{/each}</ul>
+        <span class="leise">{T.abgelehnt.text}</span>
+      </div>
+      <button class="zweit klein" onclick={abgelehnteVerwerfen}>{T.abgelehnt.verwerfen}</button>
+    </div>
+  {/if}
+  {#if aufrufHinweis && aktiv !== 'meine'}
+    <div class="meldung aufruf reihe" role="alert" data-testid="aufruf-hinweis">
+      <span class="wachsen">🔔 {aufrufHinweis.text}</span>
+      <button class="klein" onclick={() => (aufrufHinweis = null)}>{T.mitteilung.schliessen}</button>
+    </div>
+  {/if}
 
   <section class="kopf">
     <h1>{name}</h1>
@@ -535,10 +674,14 @@
       {#if aufrufIch?.pfeift}
         <div class="meldung info" role="status">{T.spiele.duPfeifst(aufrufIch.pfeift.tisch!, `${tnName(zustand, aufrufIch.pfeift.a)} – ${tnName(zustand, aufrufIch.pfeift.b)}`)}</div>
       {/if}
+      <MitteilungKarte z={zustand} turnierId={id} {ich} bind:einstellung={mitteilung} />
       <SpieleListe z={zustand} leitung={false} {ich} nurMeine mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
     {:else if aktiv === 'tische'}
-      <Tische z={zustand} turnierId={id} {leitung} {ich} darfAufrufen={leitung || helferRecht} mitSchiri={rolle !== 'zuschauer'} {eintragen} {oeffnen} />
+      <Tische z={zustand} turnierId={id} {leitung} {ich} darfAufrufen={leitung || darfAufgabe('aufruf')} mitSchiri={rolle !== 'zuschauer'} {eintragen} {oeffnen} />
     {:else if aktiv === 'spiele'}
+      {#if !leitung && rolle !== 'spieler' && zustand.spielerReihe.length}
+        <MitteilungKarte z={zustand} turnierId={id} ich={null} bind:einstellung={mitteilung} zugeklappt />
+      {/if}
       <SpieleListe z={zustand} leitung={leitung || helferRecht} {ich} mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
     {:else if aktiv === 'tabellen'}
       {#if leitung && verdeckt}
@@ -551,6 +694,10 @@
       <p class="leise live-link"><a href={linkZu(`live/${id}`)} data-testid="live-link">{T.live.linkTabellen}</a></p>
     {:else if aktiv === 'spieler'}
       <SpielerTab z={zustand} {eintragen} />
+    {:else if aktiv === 'kasse'}
+      <KasseTab z={zustand} turnierId={id} {leitung} {eintragen} />
+    {:else if aktiv === 'anmeldung' && schreibToken}
+      <AnmeldungTab z={zustand} turnierId={id} token={schreibToken} {eintragen} />
     {:else if aktiv === 'konkurrenzen'}
       <KonkurrenzenTab z={zustand} {eintragen} />
     {:else if aktiv === 'drucken'}
@@ -616,6 +763,7 @@
                         {#if e.seq !== null && e.status === 'bestaetigt'}#{e.seq} · {/if}
                         {zeit(e.zeit)} · {T.turnier.von} {e.autor?.name ?? '–'}{e.autor && e.autor.rolle !== 'leitung' ? ` (${e.autor.rolle === 'spieler' && e.autor.helfer ? T.zugang.spielerHelfer : T.rollen[e.autor.rolle]})` : ''}
                         {#if e.status === 'ausstehend'}<span class="marke">{T.turnier.ausstehend}</span>{/if}
+                        {#if e.status === 'abgelehnt'}<span class="marke">{T.abgelehnt.titel(1)}</span>{/if}
                       </div>
                     </div>
                     {#if leitung && darfSchreiben && rueckgaengigBar(e)}
@@ -631,7 +779,7 @@
     {/if}
 
     {#if offenesSpiel}
-      <ErgebnisDialog z={zustand} k={offenesSpiel.k} spiel={offenesSpiel.s} {rolle} {ich} helfer={helferRecht} {eintragen} schliessen={() => (offen = null)} />
+      <ErgebnisDialog z={zustand} k={offenesSpiel.k} spiel={offenesSpiel.s} {rolle} {ich} helfer={rolle === 'spieler' && !!eintrag?.helfer} {aufgaben} {eintragen} schliessen={() => (offen = null)} />
     {/if}
   {/if}
   {#if aktion || (verlaufFehler && aktiv !== 'einstellungen')}
@@ -691,6 +839,9 @@
   .qr-gross { margin: 6px 0 12px; }
   .meldung.aufruf { background: color-mix(in srgb, var(--gruen) 14%, var(--flaeche)); border: 2px solid var(--gruen); font-weight: 700; font-size: 1.1rem; }
   .warnungen { margin-bottom: 12px; }
+  .abgelehnt { display: flex; gap: 10px; align-items: flex-start; }
+  .abgelehnt ul { margin: 4px 0; padding-left: 18px; }
+  .abgelehnt button { flex: none; }
   .eintrag-zeile { display: flex; gap: 10px; align-items: center; }
   .eintrag-zeile button { flex: none; min-height: 44px; }
   .eintrag.weg .text { text-decoration: line-through; color: var(--leise); }

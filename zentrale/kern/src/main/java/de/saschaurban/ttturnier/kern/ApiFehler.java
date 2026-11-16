@@ -19,6 +19,7 @@ public final class ApiFehler extends RuntimeException {
             case "nicht_gefunden": return 404;
             case "konflikt": return 409;
             case "zu_gross": return 413;
+            case "abgelaufen": return 410;
             case "zu_viele_versuche": return 429;
             case "nicht_eingerichtet": return 503;
             default: return 500;
