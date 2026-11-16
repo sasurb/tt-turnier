@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { ART, type Autor } from '@shared/protokoll';
 import {
   anstehendeSpiele,
+  automatischeAufrufe,
   auslosungErstellen,
+  letztesSpielEnde,
+  oeffentlich,
+  pauseMinuten,
+  verliererAmTisch,
   endrundeErstellen,
   etwasVerdeckt,
   freierTisch,
@@ -25,7 +30,7 @@ import {
 import { gruppenAuslosen, koAuslosen, setzplaetze, treffRunde } from './auslosung';
 import { ergebnisText, ergebnisWerten, satzAusVerliererpunkten } from './ergebnis';
 import { PLATZ3_ID, koSpielId, rundenName } from './ko';
-import { klasseVon, standardEinstellungen, ttrBereichName, type ErgebnisEingabe, type KonkurrenzEinstellungen, type TurnierSpieler } from './modell';
+import { istKurzname, klasseVon, kurzname, paarName, standardEinstellungen, ttrBereichName, type ErgebnisEingabe, type KonkurrenzEinstellungen, type TurnierSpieler } from './modell';
 import { rundenplan } from './rundenplan';
 import type { LokalesEreignis } from './typen';
 import { uebersichtText } from './uebersicht';
@@ -1226,5 +1231,179 @@ describe('Etappe 6: Vorgabe', () => {
     expect(vorgabeVon(z, k, ab)).toEqual({ seite: ab.a === 'b' ? 'a' : 'b', punkte: 4 });
     expect(vorgabeVon(z, k, spiel('a', 'c'))?.punkte).toBe(6);
     expect(vorgabeVon(z, k, spiel('a', 'd'))).toBeNull();
+  });
+});
+
+describe('Etappe 7: Pausenschutz, automatischer Aufruf, Ansage, Namen für Zuschauer', () => {
+  const zeit = (sek: number) => Date.UTC(2026, 10, 14, 9, 0, sek);
+  function aufbau() {
+    const t = new Turnier();
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) t.spieler(id);
+    t.e(ART.turnierDaten, { tische: 2 });
+    t.konkurrenz('k', { modus: 'jgj' }, ['a', 'b', 'c', 'd', 'e', 'f']);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    return t;
+  }
+
+  it('belegt freie Tische mit bereiten Spielen, nie einen Spieler doppelt', () => {
+    const t = aufbau();
+    const plan = automatischeAufrufe(t.z, zeit(100), false);
+    expect(plan.map((p) => p.tisch)).toEqual([1, 2]);
+    const leute = plan.flatMap((p) => [p.spiel.a, p.spiel.b]);
+    expect(new Set(leute).size).toBe(4);
+    for (const p of plan) t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: p.spiel.id, tisch: p.tisch });
+    expect(automatischeAufrufe(t.z, zeit(200), false)).toEqual([]);
+    // gesperrter Tisch bekommt nichts
+    const erstes = plan[0]!.spiel;
+    t.ergebnis('k', erstes.id, s3(5, 6, 7));
+    t.e(ART.tischGesperrt, { nr: 1, gesperrt: true });
+    expect(automatischeAufrufe(t.z, zeit(300), false)).toEqual([]);
+  });
+
+  it('Mindestpause: frisch fertige Spieler sind nicht bereit; Verlierer pfeift das nächste Spiel', () => {
+    const t = aufbau();
+    t.e(ART.turnierDaten, { pause: 5 });
+    const an = anstehendeSpiele(t.z, zeit(100));
+    const erstes = an[0]!.spiel;
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: erstes.id, tisch: 1 });
+    t.ergebnis('k', erstes.id, s3(5, 6, 7)); // a-Seite gewinnt
+    const z = t.z;
+    const ende = letztesSpielEnde(z);
+    const sieger = erstes.a!;
+    const verlierer = erstes.b!;
+    expect(ende.has(sieger) && ende.has(verlierer)).toBe(true);
+    const fertig = Date.parse(ende.get(sieger)!);
+    expect(pauseMinuten(ende, sieger, fertig + 3 * 60_000)).toBe(3);
+    expect(pauseMinuten(ende, ['a', 'b', 'c', 'd', 'e', 'f'].find((x) => !ende.has(x))!, fertig)).toBeNull();
+    const bald = anstehendeSpiele(z, fertig + 2 * 60_000);
+    const mitSieger = bald.find((x) => x.spiel.a === sieger || x.spiel.b === sieger)!;
+    expect(mitSieger.bereit).toBe(false);
+    expect(mitSieger.inPause).toContain(sieger);
+    // bereite Spiele zuerst
+    expect(bald[0]!.bereit).toBe(true);
+    const spaeter = anstehendeSpiele(z, fertig + 6 * 60_000);
+    expect(spaeter.find((x) => x.spiel.id === mitSieger.spiel.id)!.bereit).toBe(true);
+    // Verlierer am Tisch 1 als Schiedsrichter (nicht, wenn er selbst spielt)
+    expect(verliererAmTisch(z, 1)).toBe(verlierer);
+    expect(verliererAmTisch(z, 1, [verlierer])).toBeNull();
+    expect(verliererAmTisch(z, 2)).toBeNull();
+    const plan = automatischeAufrufe(z, fertig + 60_000, true);
+    const amTisch1 = plan.find((p) => p.tisch === 1)!;
+    expect([amTisch1.spiel.a, amTisch1.spiel.b]).not.toContain(sieger);
+    if (![amTisch1.spiel.a, amTisch1.spiel.b].includes(verlierer)) expect(amTisch1.schiri).toBe(verlierer);
+  });
+
+  it('Kurzform der Namen für Zuschauer', () => {
+    expect(kurzname(' müller ')).toBe('M.');
+    expect(kurzname('Élise')).toBe('É.');
+    expect(kurzname('')).toBe('');
+    expect(istKurzname('M.')).toBe(true);
+    expect(istKurzname('Mü.')).toBe(false);
+    const a = { vorname: 'Max', nachname: 'M.', verein: '' };
+    const b = { vorname: 'Eva', nachname: 'S.', verein: '' };
+    expect(paarName(a, b)).toBe('Max M./Eva S.');
+    const t = aufbau();
+    t.e(ART.spielerGeaendert, { id: 'a', vorname: 'Anna', nachname: 'Arndt', jahrgang: 2012, geschlecht: 'w' });
+    expect(oeffentlich(t.z).spieler.a!.nachname).toBe('Arndt');
+    expect(oeffentlich(t.z).spieler.a!.jahrgang).toBeNull();
+    t.e(ART.turnierDaten, { namen: 'kurz' });
+    const z = t.z;
+    expect(z.namen).toBe('kurz');
+    expect(name(oeffentlich(z), 'a')).toBe('Anna A.');
+    expect(z.spieler.a!.nachname).toBe('Arndt'); // Original bleibt
+    // nur die Leitung stellt um
+    t.e(ART.turnierDaten, { namen: 'voll' }, spielerAutor('a'));
+    expect(t.z.namen).toBe('kurz');
+    t.e(ART.turnierDaten, { namen: 'unsinn' });
+    expect(t.z.namen).toBe('kurz');
+  });
+});
+
+describe('Datenschutz: gleicher Stand aus voller und gefilterter Sicht', () => {
+  /** Filter wie der Server (Api::gefiltert): spieler = ohne Jahrgang/Geschlecht/Pool; zuschauer/kurz zusätzlich ohne Namen */
+  function filtern(liste: LokalesEreignis[], sicht: 'spieler' | 'zuschauer' | 'kurz'): LokalesEreignis[] {
+    return liste.map((e) => {
+      const d = { ...(e.daten as Record<string, unknown>) };
+      if (e.art === ART.spielerAngelegt || e.art === ART.spielerGeaendert) {
+        delete d.jahrgang;
+        delete d.geschlecht;
+        delete d.pool;
+        if (sicht === 'kurz' && typeof d.nachname === 'string') d.nachname = kurzname(d.nachname);
+      }
+      if (sicht !== 'spieler' && e.art === ART.spielAufgerufen && d.schiri) {
+        const sc = d.schiri as { spieler?: string };
+        if (sc.spieler) d.schiri = { spieler: sc.spieler };
+        else delete d.schiri;
+      }
+      return { ...e, daten: d, autor: e.autor && sicht !== 'spieler' ? { ...e.autor, name: '' } : e.autor };
+    });
+  }
+  /** Was sich aus Datenschutzgründen unterscheiden darf, herausnehmen */
+  function kern(z: TurnierZustand) {
+    return JSON.stringify({
+      konk: Object.values(z.konkurrenzen).map((k) => ({
+        m: k.meldungen,
+        p: k.paare,
+        g: k.gruppen,
+        s: Object.values(k.spiele).map((x) => [x.id, x.a, x.b, x.status, x.gewinner, x.tisch, x.ergebnis?.satzA, x.stand, x.schiri?.spieler ?? null]),
+      })),
+      tische: z.tischeGesperrt,
+      w: z.warnungen.length,
+    });
+  }
+
+  it('Mixed, Doppel, Zulassung und Aufrufe rechnen überall gleich', () => {
+    const t = new Turnier();
+    t.e(ART.turnierDaten, { tische: 3, angaben: ['ttr', 'geschlecht', 'jahrgang'] });
+    t.e(ART.spielerAngelegt, { id: 'a', vorname: 'Anna', nachname: 'Alpha', verein: 'TTC', ttr: 1500, geschlecht: 'w', jahrgang: 2012, pool: 'x1' });
+    t.e(ART.spielerAngelegt, { id: 'b', vorname: 'Ben', nachname: 'Beta', verein: 'TTC', ttr: 1400, geschlecht: 'm', jahrgang: 2011 });
+    t.e(ART.spielerAngelegt, { id: 'c', vorname: 'Cem', nachname: 'Gamma', verein: 'SV', ttr: 1300, geschlecht: 'm', jahrgang: 2010 });
+    t.e(ART.spielerAngelegt, { id: 'd', vorname: 'Dora', nachname: 'Delta', verein: 'SV', ttr: 1200, geschlecht: 'w' });
+    t.e(ART.spielerAngelegt, { id: 'e', vorname: 'Eva', nachname: 'Epsilon', verein: 'SV', ttr: 1100, geschlecht: 'w' });
+    t.e(ART.spielerAngelegt, { id: 'f', vorname: 'Fin', nachname: 'Zeta', verein: 'SV', ttr: 1000, geschlecht: 'm' });
+    t.e(ART.konkurrenzAngelegt, { id: 'mx', einst: { ...standardEinstellungen('Mixed'), art: 'mixed', modus: 'jgj', zulassung: { ttrMin: null, ttrMax: null, klassen: [], geschlecht: ['w'], jahrgangVon: 2011, jahrgangBis: null } } });
+    t.e(ART.paarGemeldet, { konkurrenz: 'mx', id: 'p-0001', spieler: ['a', 'b'] });
+    t.e(ART.paarGemeldet, { konkurrenz: 'mx', id: 'p-0002', spieler: ['c', 'f'] }); // zwei Männer: die Oberfläche verhindert das
+    t.e(ART.paarGemeldet, { konkurrenz: 'mx', id: 'p-0003', spieler: ['d', 'e'] });
+    t.konkurrenz('ez', { modus: 'gruppen_ko', gruppenGroesse: 3, aufsteiger: 1 }, ['a', 'b', 'c', 'd', 'e', 'f']);
+    t.auslosen('mx');
+    t.starten('mx', 'gruppen');
+    t.auslosen('ez');
+    t.starten('ez', 'gruppen');
+    const z0 = t.z;
+    const sp = Object.values(z0.konkurrenzen.ez!.spiele).filter((x) => x.status === 'offen');
+    t.e(ART.spielAufgerufen, { konkurrenz: 'ez', spiel: sp[0]!.id, tisch: 1, schiri: { name: 'Opa Paul' } });
+    t.e(ART.spielAufgerufen, { konkurrenz: 'ez', spiel: sp[1]!.id, tisch: 2, schiri: { spieler: 'f' } });
+    t.ergebnis('ez', sp[0]!.id, s3(5, 6, 7));
+    t.e(ART.spielerGeaendert, { id: 'a', jahrgang: 2013 });
+    const voll = kern(t.z);
+    for (const sicht of ['spieler', 'zuschauer', 'kurz'] as const) expect(kern(berechnen(filtern(t.liste, sicht)))).toBe(voll);
+  });
+
+  it('niemand steht an zwei Tischen; automatischer Aufruf ohne eigene und zurückgestellte Spiele', () => {
+    const t = new Turnier();
+    for (const id of ['a', 'b', 'c', 'd']) t.spieler(id);
+    t.e(ART.turnierDaten, { tische: 3 });
+    t.konkurrenz('k', { modus: 'jgj' }, ['a', 'b', 'c', 'd']);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    const spiele = Object.values(t.z.konkurrenzen.k!.spiele);
+    const ersteMitA = spiele.filter((s) => s.a === 'a' || s.b === 'a');
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: ersteMitA[0]!.id, tisch: 1 });
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: ersteMitA[1]!.id, tisch: 2 });
+    expect(t.z.warnungen.at(-1)?.text).toMatch(/schon an Tisch 1/);
+    expect(t.z.konkurrenzen.k!.spiele[ersteMitA[1]!.id]!.tisch).toBeNull();
+    // erneuter Aufruf desselben Spiels an einen anderen Tisch (umsetzen) bleibt möglich
+    t.e(ART.spielAufgerufen, { konkurrenz: 'k', spiel: ersteMitA[0]!.id, tisch: 3 });
+    expect(t.z.konkurrenzen.k!.spiele[ersteMitA[0]!.id]!.tisch).toBe(3);
+    t.e(ART.spielAufrufZurueck, { konkurrenz: 'k', spiel: ersteMitA[0]!.id });
+    const z = t.z;
+    const plan = automatischeAufrufe(z, Date.UTC(2026, 10, 14, 10), false, 'a');
+    expect(plan.every((p) => p.spiel.a !== 'a' && p.spiel.b !== 'a')).toBe(true);
+    expect(plan).toHaveLength(1);
+    const key = `k/${plan[0]!.spiel.id}`;
+    const ohne = automatischeAufrufe(z, Date.UTC(2026, 10, 14, 10), false, 'a', new Set([key]));
+    expect(ohne.some((p) => `k/${p.spiel.id}` === key)).toBe(false);
   });
 });

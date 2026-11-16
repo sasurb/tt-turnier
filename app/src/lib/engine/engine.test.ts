@@ -67,6 +67,82 @@ describe('Einzelgerät-Betrieb', () => {
   });
 });
 
+describe('Sicht beim Abholen (Datenschutz)', () => {
+  it('Zuschauer bekommen gefilterte Daten; nach der Anmeldung wird alles neu abgeholt', async () => {
+    const server = new TestServer();
+    server.mitSicht = true;
+    const a = geraet(server, 'a');
+    await a.sitzung.eintragen(ART.spielerAngelegt, { id: 's1', vorname: 'Lea', nachname: 'Löwe', verein: 'TSV', jahrgang: 2012 });
+    await a.sitzung.abgleich!.durchlauf();
+    let token: string | null = null;
+    const speicher = new SpeicherImArbeitsspeicher();
+    const z = new TurnierSitzung({
+      speicher, turnier: 'turnier001', modus: 'online', geraet: 'geraet-z', autor: { rolle: 'zuschauer', name: '' },
+      api: new Api('http://test.invalid/api/index.php', server.abruf), token: () => token,
+    });
+    await z.abgleich!.durchlauf();
+    let liste = await speicher.alle('turnier001');
+    expect(liste).toHaveLength(1);
+    expect((liste[0]!.daten as Record<string, unknown>).jahrgang).toBeUndefined();
+    expect(liste[0]!.autor?.name).toBe('');
+    expect(await speicher.sicht('turnier001')).toBe('zuschauer');
+    // Anmeldung (z. B. Spielerkennung): ausstehender Eintrag bleibt, Bestand wird voll neu geladen
+    token = 'tok-b';
+    await z.eintragen(ART.testNotiz, { text: 'von Z' });
+    await z.abgleich!.durchlauf();
+    liste = await speicher.alle('turnier001');
+    expect(liste.map((e) => e.art)).toEqual([ART.spielerAngelegt, ART.testNotiz]);
+    expect((liste[0]!.daten as Record<string, unknown>).jahrgang).toBe(2012);
+    expect(liste[0]!.autor?.name).toBe('Gerät A');
+    expect(await speicher.sicht('turnier001')).toBe('voll');
+    // Abmelden: wieder nur die Zuschauer-Sicht
+    token = null;
+    await z.abgleich!.durchlauf();
+    liste = await speicher.alle('turnier001');
+    expect((liste[0]!.daten as Record<string, unknown>).jahrgang).toBeUndefined();
+    expect(liste).toHaveLength(2);
+  });
+
+  it('Token ohne Rechte: nichts Gefiltertes übernehmen, Oberfläche wird benachrichtigt', async () => {
+    const server = new TestServer();
+    server.mitSicht = true;
+    const a = geraet(server, 'a');
+    await a.sitzung.eintragen(ART.spielerAngelegt, { id: 's1', vorname: 'Lea', nachname: 'Löwe', verein: 'TSV', jahrgang: 2012 });
+    await a.sitzung.abgleich!.durchlauf();
+    // Gerät B hatte Rechte (voller Bestand), dann wird seine Kennung gesperrt
+    let verloren = 0;
+    const speicher = new SpeicherImArbeitsspeicher();
+    const b = new TurnierSitzung({
+      speicher, turnier: 'turnier001', modus: 'online', geraet: 'geraet-b', autor: { rolle: 'leitung', name: 'B' },
+      api: new Api('http://test.invalid/api/index.php', server.abruf), token: () => 'tok-b', beiRechteVerlust: () => verloren++,
+    });
+    await b.abgleich!.durchlauf();
+    expect((await speicher.alle('turnier001'))[0]!.daten).toMatchObject({ jahrgang: 2012 });
+    server.tokens.delete('tok-b');
+    await b.abgleich!.durchlauf();
+    expect(verloren).toBe(1);
+    expect(b.status?.verbindung).toBe('nicht_angemeldet');
+    expect((await speicher.alle('turnier001'))[0]!.daten).toMatchObject({ jahrgang: 2012 });
+    expect(await speicher.sicht('turnier001')).toBe('voll');
+  });
+
+  it('IndexedDB: Sicht und Laufnummer bleiben getrennt erhalten, Verwerfen behält Ausstehende', async () => {
+    const s = new SpeicherIndexedDb('sicht-test-' + Math.random());
+    await s.setzeAbgeholtBis('t', 7);
+    await s.setzeSicht('t', 'kurz');
+    expect(await s.abgeholtBis('t')).toBe(7);
+    expect(await s.sicht('t')).toBe('kurz');
+    const e = (id: string, status: LokalesEreignis['status']): LokalesEreignis => ({
+      id, seq: status === 'ausstehend' ? null : 1, zeit: '2026-01-01', art: 'x', daten: {}, geraet: 'g', turnier: 't', status, empfangen: null, autor: null,
+    });
+    await s.uebernehmen([e('b1', 'bestaetigt'), e('a1', 'ausstehend')]);
+    await s.bestaetigteVerwerfen('t');
+    expect((await s.alle('t')).map((x) => x.id)).toEqual(['a1']);
+    expect(await s.abgeholtBis('t')).toBe(0);
+    expect(await s.sicht('t')).toBe('kurz');
+  });
+});
+
 describe('Online-Abgleich zwischen zwei Geräten', () => {
   it('Eintrag auf A erscheint auf B, mit Autor vom Server', async () => {
     const server = new TestServer();

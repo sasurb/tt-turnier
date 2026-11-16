@@ -343,9 +343,11 @@ export class Api {
     });
   }
 
-  abholen(turnier: string, ab: number) {
+  /** Mit Token (Leitung, Helfer, Spieler) kommt alles, ohne nur die Zuschauer-Sicht (siehe AbholenAntwort.sicht) */
+  abholen(turnier: string, ab: number, token: string | null = null) {
     return this.rufe<AbholenAntwort>('GET', 'events', {
       query: { turnier, ab: String(ab) },
+      token,
     });
   }
   senden(turnier: string, token: string, ereignisse: NeuesEreignis[]) {

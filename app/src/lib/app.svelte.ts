@@ -1,4 +1,4 @@
-import type { LoginAntwort, TurnierInfo } from '@shared/protokoll';
+import type { LoginAntwort, Rolle, TurnierInfo } from '@shared/protokoll';
 import { api, serverPruefen, type ServerZustand } from './dienste';
 import { ApiFehler } from './engine/api';
 import { gehe } from './router.svelte';
@@ -105,4 +105,23 @@ export function kontoTurnierOeffnen(t: TurnierInfo) {
     konto: true,
   });
   gehe('t/' + t.id);
+}
+
+/**
+ * Mit welchem Token ein Gerät ein Turnier abholt und welche Rolle es dort hat – dieselbe Regel für
+ * Turnieransicht, Live-Anzeige und Druck, damit sich zwei Fenster nicht gegenseitig den Bestand neu laden:
+ * zuerst die Kennung des Turniers, sonst das Konto, aber nur, wenn der Server ihm Rechte bestätigt.
+ */
+export async function turnierZugangErmitteln(id: string): Promise<{ token: string | null; rolle: Rolle | null }> {
+  if (id.startsWith('l')) return { token: null, rolle: 'leitung' };
+  const g = gemerktesTurnier(id);
+  if (g?.token) return { token: g.token, rolle: g.rolle };
+  const s = app.sitzung;
+  if (!s) return { token: null, rolle: null };
+  try {
+    const r = (await api.turnier(id, s.token)).turnier.rechte ?? null;
+    return r ? { token: s.token, rolle: r } : { token: null, rolle: null };
+  } catch {
+    return { token: null, rolle: null };
+  }
 }

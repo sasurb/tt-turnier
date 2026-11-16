@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.8.0";
+    public static final String VERSION = "0.9.0";
     public static final int PROTOKOLL = 1;
     public static final String ONLINE_STANDARD = "https://saschaurban.de/tt-turnier/api/index.php";
 
@@ -812,6 +812,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         } catch (NumberFormatException x) {
             ab = 0;
         }
+        String sicht = sicht(a, t);
         synchronized (this) {
             List<Object> aus = new ArrayList<>();
             boolean mehr = false;
@@ -822,10 +823,84 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                 Map<String, Object> e = t.ereignisse.get(i);
                 if (zahl(e.get("seq"), 0) <= ab) continue;
                 if (aus.size() == MAX_EREIGNISSE) { mehr = true; break; }
-                aus.add(ausgabe(e, true));
+                Map<String, Object> m = ausgabe(e, true);
+                aus.add("voll".equals(sicht) ? m : gefiltert(m, sicht));
             }
-            return Json.obj("ereignisse", aus, "hoechsteSeq", t.hoechsteSeq(), "mehr", mehr);
+            return Json.obj("ereignisse", aus, "hoechsteSeq", t.hoechsteSeq(), "mehr", mehr, "sicht", sicht);
         }
+    }
+
+    /**
+     * Was ein Gerät beim Abholen sieht (Datenschutz, ab 0.9, wie server-php Api::sicht): Wer im
+     * Turnier angemeldet ist, bekommt alles; Zuschauer keine Jahrgänge, kein Geschlecht, keine
+     * Pool-Bezüge, keine Namen von Eintragenden und keine frei eingetippten Schiedsrichter-Namen,
+     * bei „Namen für Zuschauer: Kurzform“ auch nur „Max M.“.
+     */
+    private String sicht(Anf a, Speicher.Turnier t) {
+        if (a.token != null) {
+            Map<String, Object> s;
+            try {
+                s = sitzung(a);
+            } catch (ApiFehler f) {
+                s = null;
+            }
+            String r = s == null ? null : rechte(s, t);
+            if ("leitung".equals(r) || "helfer".equals(r) || ("spieler".equals(r) && wahr(s.get("helfer")))) return "voll";
+            if ("spieler".equals(r)) return "spieler";
+        }
+        synchronized (this) {
+            for (int i = t.ereignisse.size() - 1; i >= 0; i--) {
+                Map<String, Object> e = t.ereignisse.get(i);
+                if (!"turnier.daten".equals(e.get("art"))) continue;
+                Map<String, Object> au = Json.alsObjekt(e.get("autor"));
+                String rolle = au == null ? "" : String.valueOf(au.get("rolle"));
+                if (!("leitung".equals(rolle) || "admin".equals(rolle) || "veranstalter".equals(rolle))) continue;
+                Map<String, Object> d = Json.alsObjekt(e.get("daten"));
+                Object n = d == null ? null : d.get("namen");
+                if ("kurz".equals(n)) return "kurz";
+                if ("voll".equals(n)) return "zuschauer";
+            }
+        }
+        return "zuschauer";
+    }
+
+    /** Kurzform eines Nachnamens: „Müller“ → „M.“ */
+    static String kurzname(String nachname) {
+        String n = nachname == null ? "" : nachname.trim();
+        if (n.isEmpty()) return "";
+        return n.substring(0, n.offsetByCodePoints(0, 1)).toUpperCase(Locale.GERMAN) + ".";
+    }
+
+    private static Map<String, Object> gefiltert(Map<String, Object> e, String sicht) {
+        boolean kurz = "kurz".equals(sicht);
+        boolean zuschauer = !"spieler".equals(sicht);
+        Map<String, Object> m = new LinkedHashMap<>(e);
+        if (zuschauer) {
+            Map<String, Object> au = Json.alsObjekt(e.get("autor"));
+            Map<String, Object> autor = new LinkedHashMap<>();
+            autor.put("rolle", au == null ? "leitung" : au.get("rolle"));
+            autor.put("name", "");
+            if (au != null && au.containsKey("spieler")) autor.put("spieler", au.get("spieler"));
+            if (au != null && au.containsKey("helfer")) autor.put("helfer", au.get("helfer"));
+            m.put("autor", autor);
+        }
+        Map<String, Object> d0 = Json.alsObjekt(e.get("daten"));
+        if (d0 == null) return m;
+        Map<String, Object> d = new LinkedHashMap<>(d0);
+        String art = String.valueOf(e.get("art"));
+        if ("spieler.angelegt".equals(art) || "spieler.geaendert".equals(art)) {
+            d.remove("jahrgang");
+            d.remove("geschlecht");
+            d.remove("pool");
+            if (kurz && d.get("nachname") instanceof String) d.put("nachname", kurzname((String) d.get("nachname")));
+        } else if (zuschauer && "spiel.aufgerufen".equals(art) && d.containsKey("schiri")) {
+            Map<String, Object> sc = Json.alsObjekt(d.get("schiri"));
+            Object sp = sc == null ? null : sc.get("spieler");
+            if (sp instanceof String) d.put("schiri", Json.obj("spieler", sp));
+            else d.remove("schiri");
+        }
+        m.put("daten", d);
+        return m;
     }
 
     private static Map<String, Object> ausgabe(Map<String, Object> e, boolean mitSeqZuerst) {
@@ -1626,7 +1701,11 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                 Json.obj("turnier", id, "zentrale", zentraleName(), "zentraleId", z[2], "erzwingen", wahr(a.rumpf.get("erzwingen"))), z[1]);
             long ab = 0;
             for (int runde = 0; runde < 10_000; runde++) {
-                Map<String, Object> e = online.rufe(z[0], "events", strMap("turnier", id, "ab", String.valueOf(ab)), null, null);
+                Map<String, Object> e = online.rufe(z[0], "events", strMap("turnier", id, "ab", String.valueOf(ab)), null, z[1]);
+                Object sicht = e.get("sicht");
+                if (sicht != null && !"voll".equals(sicht)) {
+                    throw new ApiFehler("keine_berechtigung", "Das verbundene Online-Konto darf dieses Turnier nicht vollständig lesen.");
+                }
                 List<Object> l = Json.alsListe(e.get("ereignisse"));
                 if (l != null) for (Object o : l) {
                     Map<String, Object> m = Json.alsObjekt(o);

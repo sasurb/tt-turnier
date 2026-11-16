@@ -9,6 +9,15 @@ interface TTNativ {
   dateiTeilen(name: string, inhalt: string, typ: string): void;
   /** Text oder Link über das Teilen-Menü weitergeben. */
   textTeilen(titel: string, text: string): void;
+  /** Ab 0.9: Android-Druckdialog für die aktuelle Seite (Drucker oder „Als PDF speichern“). */
+  drucken?(titel: string): void;
+}
+
+/** Seite drucken bzw. als PDF speichern – im Browser über den Druckdialog, in der Zentrale über Android */
+export function seiteDrucken(titel: string) {
+  const n = nativ();
+  if (n?.drucken) n.drucken(titel);
+  else print();
 }
 
 export function nativ(): TTNativ | null {

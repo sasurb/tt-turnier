@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 5;
+    public const SCHEMA_VERSION = 6;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -142,7 +142,18 @@ final class Datenbank
             }
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['5', 'schema']);
         }
-        // Spätere Versionen: if ($version < 6) { … UPDATE meta … }
+        if ($version < 6) {
+            // Version 6 (Etappe 7): Index für die Abfrage „Namen für Zuschauer“ (turnier.daten je Turnier)
+            try {
+                $this->pdo->exec('CREATE INDEX idx_ereignisse_art ON ereignisse (turnier_id, art, seq)');
+            } catch (\PDOException $e) {
+                if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                    throw $e;
+                }
+            }
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['6', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 7) { … UPDATE meta … }
     }
 
     /**

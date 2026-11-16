@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.8.0';
+    public const VERSION = '0.9.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_JE_TURNIER = 50000;
@@ -722,20 +722,112 @@ final class Api
         }
         $hoechste = (int)($this->db->eine('SELECT MAX(seq) AS m FROM ereignisse WHERE turnier_id = ?', [$t['id']])['m'] ?? 0);
         $this->sicherungPruefen($t, $hoechste, false);
+        $sicht = $this->sicht($a, $t);
+        $liste = array_map(static fn(array $z): array => [
+            'seq' => (int)$z['seq'],
+            'id' => (string)$z['event_id'],
+            'art' => (string)$z['art'],
+            'daten' => json_decode((string)$z['daten'], false),
+            'zeit' => (string)$z['zeit'],
+            'geraet' => (string)$z['geraet'],
+            'empfangen' => self::iso((int)$z['empfangen']),
+            'autor' => self::autorAusgabe($z),
+        ], $zeilen);
+        if ($sicht !== 'voll') {
+            $liste = array_map(static fn(array $e): array => self::gefiltert($e, $sicht), $liste);
+        }
         return [
-            'ereignisse' => array_map(static fn(array $z): array => [
-                'seq' => (int)$z['seq'],
-                'id' => (string)$z['event_id'],
-                'art' => (string)$z['art'],
-                'daten' => json_decode((string)$z['daten'], false),
-                'zeit' => (string)$z['zeit'],
-                'geraet' => (string)$z['geraet'],
-                'empfangen' => self::iso((int)$z['empfangen']),
-                'autor' => self::autorAusgabe($z),
-            ], $zeilen),
+            'ereignisse' => $liste,
             'hoechsteSeq' => $hoechste,
             'mehr' => $mehr,
+            'sicht' => $sicht,
         ];
+    }
+
+    /**
+     * Was ein Gerät beim Abholen sieht (Datenschutz, ab 0.9):
+     * - voll: Leitung, Helfer, Spieler mit Helfer-Recht
+     * - spieler: Spielerkennung – ohne Jahrgang, Geschlecht und Pool-Bezug (Datenminimierung)
+     * - zuschauer: zusätzlich ohne Namen von Eintragenden und frei eingetippte Schiedsrichter-Namen
+     * - kurz: wie zuschauer, Nachname nur als „M.“ (Einstellung der Leitung „Namen für Zuschauer“)
+     */
+    private function sicht(Anfrage $a, array $t): string
+    {
+        if ($a->token !== null) {
+            try {
+                $s = $this->sitzung($a);
+            } catch (ApiFehler) {
+                $s = null; // gesperrtes Konto: wie Zuschauer
+            }
+            $r = $s === null ? null : $this->rechte($s, $t);
+            if ($r === 'leitung' || $r === 'helfer' || ($r === 'spieler' && $s['helfer'])) {
+                return 'voll';
+            }
+            if ($r === 'spieler') {
+                return 'spieler';
+            }
+        }
+        return $this->namenKurz((string)$t['id']) ? 'kurz' : 'zuschauer';
+    }
+
+    /** Letzte Einstellung der Leitung „Namen für Zuschauer“ (Ereignis turnier.daten, Feld namen) */
+    private function namenKurz(string $turnierId): bool
+    {
+        // Index (turnier_id, art, seq); LIKE als Vorfilter, gültig ist nur das Feld „namen“ im JSON
+        $zeilen = $this->db->alle(
+            "SELECT daten FROM ereignisse WHERE turnier_id = ? AND art = 'turnier.daten' AND autor_rolle IN ('leitung', 'admin', 'veranstalter') AND daten LIKE ? ORDER BY seq DESC",
+            [$turnierId, '%"namen"%']
+        );
+        foreach ($zeilen as $z) {
+            $d = json_decode((string)$z['daten'], true);
+            if (is_array($d) && (($d['namen'] ?? null) === 'kurz' || ($d['namen'] ?? null) === 'voll')) {
+                return $d['namen'] === 'kurz';
+            }
+        }
+        return false;
+    }
+
+    /** Kurzform eines Nachnamens: „Müller“ → „M.“ */
+    public static function kurzname(string $nachname): string
+    {
+        $n = trim($nachname);
+        return $n === '' ? '' : mb_strtoupper(mb_substr($n, 0, 1)) . '.';
+    }
+
+    /** @param array<string,mixed> $e */
+    private static function gefiltert(array $e, string $sicht): array
+    {
+        $kurz = $sicht === 'kurz';
+        $zuschauer = $sicht !== 'spieler';
+        if ($zuschauer) {
+            $autor = ['rolle' => $e['autor']['rolle'], 'name' => ''];
+            foreach (['spieler', 'helfer'] as $f) {
+                if (isset($e['autor'][$f])) {
+                    $autor[$f] = $e['autor'][$f];
+                }
+            }
+            $e['autor'] = $autor;
+        }
+        $d = $e['daten'];
+        if (!($d instanceof \stdClass)) {
+            return $e;
+        }
+        $d = clone $d;
+        if ($e['art'] === 'spieler.angelegt' || $e['art'] === 'spieler.geaendert') {
+            unset($d->jahrgang, $d->geschlecht, $d->pool);
+            if ($kurz && isset($d->nachname) && is_string($d->nachname)) {
+                $d->nachname = self::kurzname($d->nachname);
+            }
+        } elseif ($zuschauer && $e['art'] === 'spiel.aufgerufen' && property_exists($d, 'schiri')) {
+            $sp = $d->schiri instanceof \stdClass && isset($d->schiri->spieler) && is_string($d->schiri->spieler) ? $d->schiri->spieler : null;
+            if ($sp === null) {
+                unset($d->schiri);
+            } else {
+                $d->schiri = (object)['spieler' => $sp];
+            }
+        }
+        $e['daten'] = $d;
+        return $e;
     }
 
     private function senden(Anfrage $a): array

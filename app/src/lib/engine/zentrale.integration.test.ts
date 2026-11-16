@@ -59,7 +59,7 @@ describe.skipIf(!basis)('Integration mit der Zentrale', () => {
     const texte = async (s: TurnierSitzung) => (await s.zustand()).notizen.map((n) => `${n.text}|${n.von}`);
     expect(await texte(a)).toEqual(['von A|Zentrale', 'von B|Helferin B']);
     expect(await texte(b)).toEqual(await texte(a));
-    expect(await texte(zuschauer)).toEqual(await texte(a));
+    expect(await texte(zuschauer)).toEqual(['von A|', 'von B|']); // Zuschauer: keine Namen der Eintragenden
 
     // Spieler dürfen nur Ergebnisse senden
     await expect(

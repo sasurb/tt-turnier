@@ -76,6 +76,7 @@ describe.skipIf(!basis)('Integration mit echtem Server', () => {
     const texte = async (s: TurnierSitzung) => (await s.zustand()).notizen.map((n) => `${n.text}|${n.von}`);
     expect(await texte(a)).toEqual(['von A|TTC Test', 'von B|Helferin B']);
     expect(await texte(b)).toEqual(await texte(a));
-    expect(await texte(zuschauer)).toEqual(await texte(a));
+    // Zuschauer sehen keine Namen der Eintragenden (Datenschutz, ab 0.9)
+    expect(await texte(zuschauer)).toEqual(['von A|', 'von B|']);
   });
 });

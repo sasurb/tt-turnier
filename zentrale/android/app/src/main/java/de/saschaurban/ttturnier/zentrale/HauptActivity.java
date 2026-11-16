@@ -13,6 +13,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.print.PrintAttributes;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintManager;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
@@ -224,6 +227,19 @@ public final class HauptActivity extends Activity {
         public void textTeilen(String titel, String text) {
             Intent i = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, titel).putExtra(Intent.EXTRA_TEXT, text);
             runOnUiThread(() -> startActivity(Intent.createChooser(i, titel)));
+        }
+
+        /** window.print() gibt es in der WebView nicht: Android-Druckdialog (auch „Als PDF speichern“) */
+        @JavascriptInterface
+        public void drucken(String titel) {
+            String t = titel == null || titel.trim().isEmpty() ? "Turnier" : titel.trim();
+            String sicher = t.length() > 80 ? t.substring(0, 80) : t;
+            runOnUiThread(() -> {
+                PrintManager pm = (PrintManager) getSystemService(PRINT_SERVICE);
+                if (pm == null) return;
+                PrintDocumentAdapter a = web.createPrintDocumentAdapter(sicher);
+                pm.print(sicher, a, new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).build());
+            });
         }
     }
 }

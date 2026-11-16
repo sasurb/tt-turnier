@@ -65,7 +65,7 @@ Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 | GET | `turnier.einstellungen&id=…` | Leitung | `{sicherungAn, sicherungTakt, letzteSicherung, mail}` |
 | POST | `turnier.einstellungen` | Leitung | `{turnier, sicherungAn?, sicherungTakt?}` – nur übergebene Felder |
 | POST | `turnier.sichern` | Leitung | `{turnier}` → Sicherung sofort an alle Empfänger |
-| GET | `events&turnier=…&ab=N` | offen | bis zu 200 Ereignisse mit `seq > N`, `mehr` wenn weitere vorliegen |
+| GET | `events&turnier=…&ab=N` | offen (Token optional) | bis zu 200 Ereignisse mit `seq > N`, `mehr` wenn weitere vorliegen; `sicht` (ab 0.9, siehe „Datenschutz beim Abholen“) |
 | POST | `events&turnier=…` | Schreibrecht | `{ereignisse: [...]}` (max. 200) → `{angenommen: [{id, seq}], hoechsteSeq}` |
 
 **Leitung** (Einstellungen, Sicherung) bedeutet: Token mit Rolle `leitung` für dieses Turnier, das
@@ -142,6 +142,30 @@ Alle Kennungen haben 8 Ziffern, geschrieben als zwei Viererblöcke („4839 2017
 - `einst.klassenTrennung`: `keine` | `klasse` | `ttr` (mit `einst.ttrGrenzen`): Gruppen werden je
   Leistungsklasse getrennt ausgelost, die Endrunde ist gemischt. Getrennte Konkurrenzen je Klasse legt die
   App mit dem Assistenten an (normale `konkurrenz.angelegt`-Ereignisse mit passender Zulassung).
+
+## Datenschutz beim Abholen (ab 0.9)
+
+`GET events` liefert je nach Anmeldung eine von vier Sichten (`sicht` in der Antwort):
+
+- `voll`: Leitung, Eigentümer, Admin, Helfer und Spieler mit Helfer-Recht
+- `spieler`: Spielerkennung – ohne `jahrgang`, `geschlecht`, `pool` (Datenminimierung)
+- `zuschauer`: ohne Token, mit ungültigem Token oder ohne Rechte im Turnier, gefiltert wie folgt:
+- `spieler.angelegt` / `spieler.geaendert`: ohne `jahrgang`, `geschlecht`, `pool`
+- `spiel.aufgerufen`: `schiri` nur noch als `{spieler}`; frei eingetippte Namen fallen weg
+- `autor.name` ist leer (Rolle, `spieler`, `helfer` bleiben – die App braucht sie für die Rechteprüfung)
+
+Steht im letzten `turnier.daten` der Leitung `namen: "kurz"`, ist die Sicht `kurz`: zusätzlich wird der
+Nachname zu „M.“ gekürzt. `namen: "voll"` (Standard) hebt das auf. Der Filter lässt alle Ereignisse
+gültig – die Berechnung auf dem Gerät kommt mit fehlenden Feldern aus. Ändert sich die Sicht eines
+Geräts (Anmeldung, Abmeldung, Umstellung), verwirft es die bestätigten Ereignisse und holt alles neu ab;
+noch nicht gesendete Einträge bleiben. Sendet ein Gerät ein Token und bekommt trotzdem nur die
+Zuschauer-Sicht (Kennung gesperrt, Konto ohne Rechte), übernimmt es nichts und meldet „nicht angemeldet“;
+die Oberfläche nimmt die Anmeldung zurück. Die Berechnung (zustand.ts) benutzt keine gefilterten Felder,
+damit alle Sichten denselben Stand ergeben (Test „gleicher Stand aus voller und gefilterter Sicht“).
+Die Zentrale holt bei der Übernahme mit dem Konto-Token ab und bricht ab, wenn die Sicht nicht `voll` ist.
+
+Weitere App-Felder in `turnier.daten` (nur Leitung): `pause` (Mindestpause in Minuten, 0–60, für den
+Pausenschutz beim Spielaufruf).
 
 ## Sicherung per Mail
 

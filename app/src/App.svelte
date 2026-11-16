@@ -23,10 +23,17 @@
   import Pool from './lib/ui/Pool.svelte';
   import MeineTurniere from './lib/ui/MeineTurniere.svelte';
   import Zentrale from './lib/ui/Zentrale.svelte';
+  import LiveAnsicht from './lib/ui/LiveAnsicht.svelte';
+  import DruckAnsicht from './lib/ui/DruckAnsicht.svelte';
 
   onMount(() => void serverLaden());
 </script>
 
+{#if route.seite === 'live' && route.param}
+  {#key route.param}<LiveAnsicht id={route.param} />{/key}
+{:else if route.seite === 'druck' && route.param}
+  {#key route.param}<DruckAnsicht id={route.param} art={route.rest[0] ?? ''} />{/key}
+{:else}
 <Kopf />
 
 <main class="inhalt">
@@ -70,6 +77,7 @@
         id={route.param}
         reiter={route.seite === 't' ? (route.rest[0] ?? null) : null}
         code={route.seite === 'c' ? (route.rest[0] ?? null) : null}
+        weitere={route.seite === 't' ? route.rest.slice(1) : []}
       />
     {/key}
   {:else}
@@ -79,3 +87,4 @@
 </main>
 
 <Fuss />
+{/if}

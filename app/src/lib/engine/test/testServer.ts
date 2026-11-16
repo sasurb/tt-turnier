@@ -13,6 +13,8 @@ export class TestServer {
   /** Token → Name */
   tokens = new Map<string, string>([['tok-a', 'Gerät A'], ['tok-b', 'Gerät B']]);
   aufrufe = 0;
+  /** Wie Server ab 0.9: ohne gültiges Token nur die Zuschauer-Sicht (ohne Jahrgang, ohne Autor-Namen) */
+  mitSicht = false;
 
   abruf: Abruf = async (url, init) => {
     this.aufrufe++;
@@ -27,7 +29,17 @@ export class TestServer {
       const ab = Number(u.searchParams.get('ab') ?? 0);
       const alle = this.ereignisse.filter((e) => e.seq > ab);
       const teil = alle.slice(0, MAX_EREIGNISSE_JE_AUFRUF);
-      return json(200, { ereignisse: teil, hoechsteSeq: this.seq, mehr: alle.length > teil.length });
+      if (!this.mitSicht) return json(200, { ereignisse: teil, hoechsteSeq: this.seq, mehr: alle.length > teil.length });
+      const token = (init.headers as Record<string, string>)['X-TT-Token'];
+      const voll = !!token && this.tokens.has(token);
+      const liste = voll
+        ? teil
+        : teil.map((e) => {
+            const daten = { ...(e.daten as Record<string, unknown>) };
+            delete daten.jahrgang;
+            return { ...e, daten, autor: { ...e.autor, name: '' } };
+          });
+      return json(200, { ereignisse: liste, hoechsteSeq: this.seq, mehr: alle.length > teil.length, sicht: voll ? 'voll' : 'zuschauer' });
     }
     if (route === 'events' && init.method === 'POST') {
       const token = (init.headers as Record<string, string>)['X-TT-Token'];

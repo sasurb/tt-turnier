@@ -439,7 +439,17 @@ export interface AbholenAntwort {
   hoechsteSeq: number;
   /** true, wenn weitere Ereignisse vorliegen (Antwort war auf MAX_EREIGNISSE_JE_AUFRUF begrenzt) */
   mehr: boolean;
+  /**
+   * Ab 0.9 (Datenschutz): „voll“ für Leitung, Helfer und Spieler mit Helfer-Recht; „spieler“ für
+   * Spielerkennungen (ohne Jahrgang, Geschlecht, Pool-Bezug); sonst „zuschauer“ (zusätzlich ohne Namen
+   * von Eintragenden und frei eingetippte Schiedsrichter) bzw. „kurz“ (zusätzlich Nachname als „M.“).
+   * Ändert sich die Sicht, holt das Gerät alles neu ab.
+   */
+  sicht?: Sicht;
 }
+export type Sicht = 'voll' | 'spieler' | 'zuschauer' | 'kurz';
+/** turnier.daten, Feld namen: Wie Zuschauer Spielernamen sehen (Standard voll) */
+export type NamenFuerZuschauer = 'voll' | 'kurz';
 
 /** Ereignis-Arten */
 export const ART = {

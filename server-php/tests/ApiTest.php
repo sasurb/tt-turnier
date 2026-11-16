@@ -188,8 +188,10 @@ pruefe($s === 400, 'ungültiges Ereignis abgewiesen');
 [$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('e-0000009', 'test.notiz', ['text' => str_repeat('x', 20000)])]], $leitung, ['turnier' => $tid]);
 pruefe($s === 400, 'zu großes Ereignis abgewiesen');
 [$s, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
-pruefe($s === 200 && count($d['ereignisse']) === 3 && $d['mehr'] === false, 'Abholen öffentlich, 3 Ereignisse');
-pruefe($d['ereignisse'][0]['autor'] === ['rolle' => 'leitung', 'name' => 'Max'], 'Autor vom Server gesetzt');
+pruefe($s === 200 && count($d['ereignisse']) === 3 && $d['mehr'] === false && $d['sicht'] === 'zuschauer', 'Abholen öffentlich, 3 Ereignisse');
+pruefe($d['ereignisse'][0]['autor'] === ['rolle' => 'leitung', 'name' => ''], 'Zuschauer sehen keine Namen der Eintragenden');
+[$s, $d] = rufe($api, 'GET', 'events', null, $leitung, ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'voll' && $d['ereignisse'][0]['autor'] === ['rolle' => 'leitung', 'name' => 'Max'], 'Autor vom Server gesetzt');
 pruefe($d['ereignisse'][2]['autor']['name'] === 'TTC Muster', 'Veranstalter schreibt als Leitung mit eigenem Namen');
 $roh = json_encode($api->bearbeiten(new Anfrage('GET', 'events', ['turnier' => $tid, 'ab' => '0']))->daten);
 pruefe(str_contains($roh, '"leer":{}') && str_contains($roh, '"liste":[]'), 'leere Objekte und Listen bleiben erhalten');
@@ -274,7 +276,7 @@ $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
-pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.8.0' && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
+pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.9.0' && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1'], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
@@ -514,7 +516,7 @@ pruefe($s === 200, 'Helfer darf Spiele aufrufen');
 pruefe($s === 403, 'Spieler darf keine Spiele aufrufen');
 [$s] = rufe($api, 'POST', 'events', ['ereignisse' => [$ev('e3-000017', 'tisch.gesperrt')]], $tokH, ['turnier' => $tid]);
 pruefe($s === 403, 'Helfer darf keine Tische sperren');
-[$s, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+[$s, $d] = rufe($api, 'GET', 'events', null, $tokH, ['turnier' => $tid, 'ab' => '0']);
 $autor = $d['ereignisse'][0]['autor'] ?? [];
 pruefe($autor === ['rolle' => 'spieler', 'name' => 'Anna Neu', 'spieler' => 'sp1'], 'Autor mit Spieler-ID, gesetzt vom Server');
 
@@ -543,7 +545,7 @@ $tokSH = $d['token'];
 [$s, $d] = rufe($api, 'GET', 'ich', null, $tokSH);
 pruefe($d['helfer'] === true, 'ich: Helfer-Recht');
 [$s] = rufe($api, 'POST', 'events', ['ereignisse' => [$ev('e3-000007', 'spiel.ergebnis')]], $tokSH, ['turnier' => $tid]);
-[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+[, $d] = rufe($api, 'GET', 'events', null, $tokSH, ['turnier' => $tid, 'ab' => '0']);
 $letzt = $d['ereignisse'][count($d['ereignisse']) - 1]['autor'];
 pruefe($s === 200 && $letzt === ['rolle' => 'spieler', 'name' => 'Ben B', 'spieler' => 'sp2', 'helfer' => true], 'Autor mit Helfer-Recht');
 [$s] = rufe($api, 'POST', 'events', ['ereignisse' => [$ev('e3-000018', 'spiel.aufgerufen'), $ev('e3-000019', 'spiel.bestaetigt')]], $tokSH, ['turnier' => $tid]);
@@ -659,7 +661,7 @@ $ru = ['turnier' => $tid, 'zentraleId' => 'z-abcdefghij', 'ereignisse' => [
 ]];
 [$s, $d] = rufe($api, 'POST', 'zentrale.rueckgabe', $ru, $zk);
 pruefe($s === 200 && count($d['angenommen']) === 3, 'Rückgabe: Ereignisse angenommen (bekannte doppelt harmlos)');
-[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+[, $d] = rufe($api, 'GET', 'events', null, $zk, ['turnier' => $tid, 'ab' => '0']);
 $autoren = array_map(fn($e) => $e['autor']['rolle'] . ':' . $e['autor']['name'] . ':' . ($e['autor']['spieler'] ?? ''), $d['ereignisse']);
 pruefe(count($d['ereignisse']) === 4 && $autoren[2] === 'spieler:Anna:sp1' && $autoren[3] === 'leitung:Zentrale:', 'Rückgabe: Autoren wie auf der Zentrale');
 [$s, $d] = rufe($api, 'POST', 'zentrale.freigeben', ['turnier' => $tid, 'zentraleId' => 'z-abcdefghij',
@@ -707,6 +709,50 @@ pruefe($s === 400, 'Sicherung von der Zentrale: Angaben werden geprüft');
 [$s] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => '47381920', 'name' => 'X'], 'empfaenger' => ['a@example.org'], 'sicherung' => $sich], null);
 pruefe($s === 401, 'Sicherung von der Zentrale nur mit Konto');
 
+echo "Etappe 7: Datenschutz beim Abholen (Zuschauer)\n";
+$api = neueApi(new TestMailer());
+rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Süd', 'email' => 'sued@example.org', 'passwort' => 'suedsued1']);
+$vk = $d['token'];
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Jugend', 'datum' => null], $vk);
+$tid = $d['turnier']['id'];
+$leit = $d['token'];
+[, $d] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $tid, 'eintraege' => [['rolle' => 'spieler', 'bezug' => 'sp1', 'name' => 'Lea Löwe']]], $leit);
+$codeLea = array_values(array_filter($d['codes'], fn($c) => $c['bezug'] === 'sp1'))[0]['code'];
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => $codeLea]);
+$tokLea = $d['token'];
+rufe($api, 'POST', 'events', ['ereignisse' => [
+    ereignis('d7-000001', 'spieler.angelegt', ['id' => 'sp1', 'vorname' => 'Lea', 'nachname' => 'Löwe', 'verein' => 'TSV', 'ttr' => 1200, 'jahrgang' => 2012, 'geschlecht' => 'w', 'pool' => 'p-123']),
+    ereignis('d7-000002', 'spiel.aufgerufen', ['konkurrenz' => 'k1', 'spiel' => 'g0-a-b', 'tisch' => 2, 'schiri' => ['name' => 'Opa Paul']]),
+    ereignis('d7-000003', 'spiel.aufgerufen', ['konkurrenz' => 'k1', 'spiel' => 'g0-a-c', 'tisch' => 3, 'schiri' => ['name' => 'Lea Löwe', 'spieler' => 'sp1']]),
+]], $leit, ['turnier' => $tid]);
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+$sp = $d['ereignisse'][0]['daten'];
+pruefe($d['sicht'] === 'zuschauer' && $sp['nachname'] === 'Löwe' && $sp['ttr'] === 1200 && $sp['verein'] === 'TSV', 'Zuschauer: Name, Verein und TTR bleiben');
+pruefe(!isset($sp['jahrgang']) && !isset($sp['geschlecht']) && !isset($sp['pool']), 'Zuschauer: kein Jahrgang, kein Geschlecht, kein Pool-Bezug');
+pruefe(!isset($d['ereignisse'][1]['daten']['schiri']) && $d['ereignisse'][1]['daten']['tisch'] === 2, 'Zuschauer: frei eingetippter Schiedsrichter fehlt, Aufruf bleibt');
+pruefe($d['ereignisse'][2]['daten']['schiri'] === ['spieler' => 'sp1'], 'Zuschauer: Schiedsrichter nur als Spieler-Bezug');
+pruefe(array_unique(array_map(fn($e) => $e['autor']['name'], $d['ereignisse'])) === [''], 'Zuschauer: keine Namen der Eintragenden');
+[, $d] = rufe($api, 'GET', 'events', null, $tokLea, ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'spieler' && !isset($d['ereignisse'][0]['daten']['jahrgang']) && !isset($d['ereignisse'][0]['daten']['geschlecht']) && $d['ereignisse'][1]['daten']['schiri']['name'] === 'Opa Paul' && $d['ereignisse'][0]['autor']['name'] === 'TTC Süd', 'Spielerkennung: Namen und Schiedsrichter, aber kein Jahrgang/Geschlecht');
+[, $d] = rufe($api, 'GET', 'events', null, $leit, ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'voll' && $d['ereignisse'][0]['daten']['jahrgang'] === 2012 && $d['ereignisse'][0]['daten']['pool'] === 'p-123', 'Leitung: alles sichtbar');
+[, $d] = rufe($api, 'GET', 'events', null, str_repeat('ab', 32), ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'zuschauer' && !isset($d['ereignisse'][0]['daten']['jahrgang']), 'ungültiges Token: wie Zuschauer');
+// Kurzform: nur die Leitung kann sie einschalten
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('d7-000004', 'spiel.ergebnis', ['namen' => 'kurz'])]], $tokLea, ['turnier' => $tid]);
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'zuschauer', 'Kurzform nicht über fremde Ereignisarten');
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('d7-000005', 'turnier.daten', ['namen' => 'kurz'])]], $leit, ['turnier' => $tid]);
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'kurz' && $d['ereignisse'][0]['daten']['nachname'] === 'L.' && $d['ereignisse'][0]['daten']['vorname'] === 'Lea', 'Kurzform: „Lea L.“ für Zuschauer');
+[, $d] = rufe($api, 'GET', 'events', null, $leit, ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'voll' && $d['ereignisse'][0]['daten']['nachname'] === 'Löwe', 'Kurzform: Leitung sieht den vollen Namen');
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('d7-000006', 'turnier.daten', ['ort' => 'Halle']), ereignis('d7-000007', 'turnier.daten', ['namen' => 'voll'])]], $leit, ['turnier' => $tid]);
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'zuschauer' && $d['ereignisse'][0]['daten']['nachname'] === 'Löwe', 'Kurzform zurückgenommen: wieder voller Name');
+pruefe(Api::kurzname(' élise ') === 'É.' && Api::kurzname('') === '', 'Kurzform mit Umlauten und leerem Namen');
+
 echo "Migration von Version 1\n";
 $pdo = new PDO('sqlite::memory:');
 $alt = new Datenbank($pdo);
@@ -720,7 +766,7 @@ $pdo->exec("INSERT INTO konten (name, email, passwort_hash, rolle, gesperrt, ang
 $pdo->exec("INSERT INTO turniere (id, konto_id, name, datum, leitung_hash, angelegt) VALUES ('altturnier', 1, 'Alt', NULL, '" . password_hash('altesPasswort', PASSWORD_DEFAULT) . "', 1000)");
 $apiAlt = new Api($alt, ['setup_code' => 'einrichtung-123456']);
 [$s, $d] = rufe($apiAlt, 'POST', 'login', ['email' => 'alt@example.org', 'passwort' => 'altpass12']);
-pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '5', 'Schema 1 → 5 angehoben, Anmeldung geht');
+pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '6', 'Schema 1 → 6 angehoben, Anmeldung geht');
 $altTok = $d['token'];
 [$s, $d] = rufe($apiAlt, 'GET', 'turnier', null, $altTok, ['id' => 'altturnier']);
 pruefe($s === 200 && $d['turnier']['rechte'] === 'leitung', 'alte Turnierkennung (10 Zeichen) bleibt erreichbar');

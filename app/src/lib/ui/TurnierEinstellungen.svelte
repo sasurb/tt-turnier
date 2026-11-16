@@ -59,6 +59,17 @@
   }
   const abweichend = $derived(Object.values(z.konkurrenzen).filter((k) => k.einst.veroeffentlichung !== null));
 
+  /* Namen für Zuschauer (Datenschutz) */
+  async function namenSetzen(n: 'voll' | 'kurz') {
+    if (n === z.namen) return;
+    try {
+      await eintragen(ART.turnierDaten, { namen: n });
+      zeige('namen', true, T.app.gespeichert);
+    } catch (x) {
+      zeige('namen', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
+
   /* Turnier löschen: online über das Konto (mit Passwort), lokal/Zentrale nur vom Gerät */
   let loeschPw = $state('');
   const onlineLoeschbar = $derived(!lokal && !istZentrale() && !!app.sitzung);
@@ -171,6 +182,21 @@
       <button class="zweit" style="margin-top:8px" onclick={allesVeroeffentlichen} data-testid="alles-veroeffentlichen">{T.einstellungen.veroeffentlichen}</button>
     {/if}
     {@render hinweis('veroeff')}
+  </section>
+
+  <section>
+    <h3>{T.einstellungen.namenTitel}<Hilfe text={T.einstellungen.namenHilfe} /></h3>
+    <p class="leise">{T.einstellungen.namenText}</p>
+    <fieldset>
+      <legend class="sr">{T.einstellungen.namenTitel}</legend>
+      {#each ['voll', 'kurz'] as const as n (n)}
+        <label class="wahl" class:aktiv={z.namen === n}>
+          <input type="radio" name="namen" value={n} checked={z.namen === n} onchange={() => namenSetzen(n)} data-testid="namen-{n}" />
+          <span><strong>{T.einstellungen.namenWahl[n]}</strong><span class="leise">{T.einstellungen.namenWahlText[n]}</span></span>
+        </label>
+      {/each}
+    </fieldset>
+    {@render hinweis('namen')}
   </section>
 
   {#if !lokal && einst}

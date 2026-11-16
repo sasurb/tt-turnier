@@ -55,6 +55,10 @@ public final class KernTest {
         return new A(a.status, Json.objekt(new String(a.inhalt, StandardCharsets.UTF_8)));
     }
 
+    static long zahlAus(Object o) {
+        return o instanceof Number ? ((Number) o).longValue() : 0;
+    }
+
     static A rufe(Zentrale z, String methode, String route, Object rumpf, String token) {
         return rufe(z, methode, route, rumpf, token, null, false);
     }
@@ -192,6 +196,8 @@ public final class KernTest {
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000009", "test.notiz", Json.obj("text", gross.toString())))), leitA, q("turnier", tid), false);
         pruefe(a.s == 400, "zu große Daten");
         a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        pruefe("zuschauer".equals(a.t("sicht")) && "".equals(Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(2)).get("autor")).get("name")), "Zuschauer: keine Namen der Eintragenden");
+        a = rufe(z, "GET", "events", null, leitA, q("turnier", tid, "ab", "0"), false);
         List<Object> evs = a.l("ereignisse");
         Map<String, Object> e2 = Json.alsObjekt(evs.get(1));
         pruefe(evs.size() == 3 && "Helga".equals(Json.alsObjekt(Json.alsObjekt(evs.get(2)).get("autor")).get("name"))
@@ -226,7 +232,7 @@ public final class KernTest {
         pruefe(a.s == 200, "Spieler: Ergebnis");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000009", "spiel.aufgerufen", Json.obj()))), sp, q("turnier", tid), false);
         pruefe(a.s == 403, "Spieler: kein Aufruf");
-        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "203"), false);
+        a = rufe(z, "GET", "events", null, sp, q("turnier", tid, "ab", "203"), false);
         Map<String, Object> autor = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor"));
         pruefe("spieler".equals(autor.get("rolle")) && "sp1".equals(autor.get("spieler")) && "Anna".equals(autor.get("name")), "Autor mit Spieler-ID");
         a = rufe(z, "POST", "code.neu", Json.obj("turnier", tid, "rolle", "spieler", "bezug", "sp1"), leitB);
@@ -245,7 +251,7 @@ public final class KernTest {
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000010", "tisch.gesperrt", Json.obj()))), spH, q("turnier", tid), false);
         pruefe(a.s == 403, "Spieler-Helfer: keine Tische sperren");
         rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000004", "spiel.ergebnis", Json.obj()))), spH, q("turnier", tid), false);
-        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "204"), false);
+        a = rufe(z, "GET", "events", null, spH, q("turnier", tid, "ab", "204"), false);
         autor = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor"));
         pruefe(Boolean.TRUE.equals(autor.get("helfer")) && "sp2".equals(autor.get("spieler")), "Autor mit Helfer-Recht");
         a = rufe(z, "GET", "konto.einstellungen", null, konto);
@@ -256,6 +262,36 @@ public final class KernTest {
         pruefe(a.s == 200 && Long.valueOf(15).equals(a.g("sicherungTakt")) && Boolean.FALSE.equals(a.g("mail")), "Einstellungen; ohne Online-Konto keine Mail");
         a = rufe(z, "POST", "turnier.sichern", Json.obj("turnier", tid), leitB);
         pruefe(a.s == 503, "Sichern per Mail braucht verbundenes Online-Konto");
+
+        System.out.println("Datenschutz beim Abholen (Zuschauer)");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(
+            ev("d-0000001", "spieler.angelegt", Json.obj("id", "sp1", "vorname", "Lea", "nachname", "Löwe", "verein", "TSV", "jahrgang", 2012L, "geschlecht", "w", "pool", "p-1")),
+            ev("d-0000002", "spiel.aufgerufen", Json.obj("konkurrenz", "k", "spiel", "x", "tisch", 2L, "schiri", Json.obj("name", "Opa Paul"))),
+            ev("d-0000003", "spiel.aufgerufen", Json.obj("konkurrenz", "k", "spiel", "y", "tisch", 3L, "schiri", Json.obj("name", "Lea", "spieler", "sp1"))))), leitB, q("turnier", tid), false);
+        long vorher = zahlAus(rufe(z, "GET", "events", null, leitB, q("turnier", tid, "ab", "0"), false).g("hoechsteSeq")) - 3;
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", String.valueOf(vorher)), false);
+        Map<String, Object> lea = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("daten"));
+        pruefe("zuschauer".equals(a.t("sicht")) && "Löwe".equals(lea.get("nachname")) && !lea.containsKey("jahrgang") && !lea.containsKey("geschlecht") && !lea.containsKey("pool"), "Zuschauer: kein Jahrgang, Geschlecht, Pool");
+        pruefe(!Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(1)).get("daten")).containsKey("schiri")
+            && Json.schreiben(Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(2)).get("daten")).get("schiri")).equals("{\"spieler\":\"sp1\"}"), "Zuschauer: Schiedsrichter nur als Spieler-Bezug");
+        a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "spieler", "bezug", "sp9", "name", "Pia"))), leitB);
+        String piaCode = null;
+        for (Object o : a.l("codes")) if ("sp9".equals(Json.alsObjekt(o).get("bezug"))) piaCode = (String) Json.alsObjekt(o).get("code");
+        String pia = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", piaCode), null).t("token");
+        a = rufe(z, "GET", "events", null, pia, q("turnier", tid, "ab", String.valueOf(vorher)), false);
+        lea = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("daten"));
+        pruefe("spieler".equals(a.t("sicht")) && "Löwe".equals(lea.get("nachname")) && !lea.containsKey("jahrgang")
+            && "Opa Paul".equals(Json.alsObjekt(Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(1)).get("daten")).get("schiri")).get("name"))
+            && !"".equals(Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor")).get("name")), "Spielerkennung: Namen ja, Jahrgang nein");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("d-0000004", "turnier.daten", Json.obj("namen", "kurz")))), leitB, q("turnier", tid), false);
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", String.valueOf(vorher)), false);
+        lea = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("daten"));
+        pruefe("kurz".equals(a.t("sicht")) && "L.".equals(lea.get("nachname")), "Kurzform für Zuschauer");
+        a = rufe(z, "GET", "events", null, leitB, q("turnier", tid, "ab", String.valueOf(vorher)), false);
+        lea = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("daten"));
+        pruefe("voll".equals(a.t("sicht")) && "Löwe".equals(lea.get("nachname")) && Long.valueOf(2012).equals(lea.get("jahrgang")), "Leitung sieht alles");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("d-0000005", "turnier.daten", Json.obj("namen", "voll")))), leitB, q("turnier", tid), false);
+        pruefe("zuschauer".equals(rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false).t("sicht")) && "É.".equals(Zentrale.kurzname(" élise")), "Kurzform zurückgenommen");
 
         System.out.println("Zugriffsschutz");
         for (int i = 0; i < 30; i++) rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", "99999999"), null);
@@ -288,7 +324,7 @@ public final class KernTest {
         System.out.println("Neustart (Daten bleiben)");
         Zentrale z2 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
         a = rufe(z2, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
-        pruefe(a.s == 200 && Long.valueOf(205).equals(a.g("hoechsteSeq")), "Ereignisse nach Neustart");
+        pruefe(a.s == 200 && Long.valueOf(210).equals(a.g("hoechsteSeq")), "Ereignisse nach Neustart");
         a = rufe(z2, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("h1")), null);
         pruefe(a.s == 200 && "helfer".equals(a.t("rolle")), "Codes nach Neustart");
         a = rufe(z2, "GET", "turnier.einstellungen", null, leitB, q("id", tid), false);
@@ -298,7 +334,7 @@ public final class KernTest {
         Files.write(j, "{\"id\":\"kaputt-00".getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND);
         Zentrale z3 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
         a = rufe(z3, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
-        pruefe(a.s == 200 && Long.valueOf(205).equals(a.g("hoechsteSeq")), "beschädigte letzte Zeile wird übersprungen");
+        pruefe(a.s == 200 && Long.valueOf(210).equals(a.g("hoechsteSeq")), "beschädigte letzte Zeile wird übersprungen");
     }
 
     static void http() throws Exception {
@@ -369,7 +405,7 @@ public final class KernTest {
         String tid = (String) Json.alsObjekt(t.get("turnier")).get("id");
         String leit = (String) t.get("token");
         o.rufe(basis, "events", q("turnier", tid), Json.obj("ereignisse", liste(ev("o-0000001", "turnier.angelegt", Json.obj("name", "Online vorbereitet")),
-            ev("o-0000002", "test.notiz", Json.obj("text", "online")))), leit);
+            ev("o-0000002", "spieler.angelegt", Json.obj("id", "sp1", "vorname", "Anna", "nachname", "Arndt", "verein", "TTC", "jahrgang", 2011L)))), leit);
         Map<String, Object> cs = o.rufe(basis, "codes.anlegen", null, Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "spieler", "bezug", "sp1", "name", "Anna"))), leit);
         String annaCode = null;
         for (Object c : Json.alsListe(cs.get("codes"))) if ("sp1".equals(Json.alsObjekt(c).get("bezug"))) annaCode = (String) Json.alsObjekt(c).get("code");
@@ -387,6 +423,9 @@ public final class KernTest {
         pruefe(a.s == 200 && a.l("turniere").size() == 1, "Online-Turniere sichtbar");
         a = rufe(z, "POST", "zentrale.uebernehmen", Json.obj("turnier", tid), null, null, true);
         pruefe(a.s == 200 && Long.valueOf(2).equals(a.g("neu")), "Übernahme: Ereignisse geladen");
+        a = rufe(z, "GET", "events", null, rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token"), q("turnier", tid, "ab", "0"), false);
+        Map<String, Object> annaD = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(1)).get("daten"));
+        pruefe(Long.valueOf(2011).equals(annaD.get("jahrgang")) && "TTC Zentral".equals(Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor")).get("name")), "Übernahme: volle Daten (mit Anmeldung abgeholt)");
         Map<String, Object> on = o.rufe(basis, "turnier", q("id", tid), null, null);
         pruefe(Json.alsObjekt(on.get("turnier")).get("zentrale") != null, "online als „auf Zentrale“ gesperrt");
         boolean gesperrt = false;

@@ -79,8 +79,12 @@
     meldung = `${spielerName(d)} ✓`;
   }
 
+  /** Nur geänderte Felder senden: so überschreibt eine Bearbeitung nie Angaben, die das Gerät gar nicht kennt */
   async function aendern(id: string, d: SpielerDaten) {
-    await eintragen(ART.spielerGeaendert, { id, ...fuersTurnier({ ...d, pool: z.spieler[id]!.pool }) });
+    const alt = z.spieler[id]!;
+    const neu = fuersTurnier({ ...d, pool: alt.pool });
+    const geaendert = Object.fromEntries(Object.entries(neu).filter(([f, v]) => (alt as unknown as Record<string, unknown>)[f] !== v && !(v === null && (alt as unknown as Record<string, unknown>)[f] === undefined)));
+    if (Object.keys(geaendert).length) await eintragen(ART.spielerGeaendert, { id, ...geaendert });
     bearbeite = null;
   }
 

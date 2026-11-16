@@ -32,9 +32,10 @@
   import ErgebnisDialog from './turnier/ErgebnisDialog.svelte';
   import QrCode from './turnier/QrCode.svelte';
   import Tische from './turnier/Tische.svelte';
+  import DruckExport from './turnier/DruckExport.svelte';
   import { meinAufruf, name as tnName } from '../engine/abfragen';
 
-  let { id, reiter = null, code = null }: { id: string; reiter?: string | null; code?: string | null } = $props();
+  let { id, reiter = null, code = null, weitere = [] }: { id: string; reiter?: string | null; code?: string | null; weitere?: string[] } = $props();
 
   const lokal = $derived(id.startsWith('l'));
   let eintrag = $state<GemerktesTurnier | null>(null);
@@ -122,16 +123,16 @@
     lokal && zustand !== null && eintrag !== null && erinnerungFaellig(lokaleSicherung(id), zustand.anzahlEreignisse, ereignisse[0]?.zeit ?? eintrag.zuletzt, jetzt),
   );
 
-  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'spieler' | 'konkurrenzen' | 'zugaenge' | 'einstellungen';
+  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'spieler' | 'konkurrenzen' | 'zugaenge' | 'drucken' | 'einstellungen';
   /** „Tische“ erscheint, sobald eine Konkurrenz läuft */
   const mitTischen = $derived(!!zustand && Object.values(zustand.konkurrenzen).some((k) => k.gestartet.gruppen || k.gestartet.ko));
   const reiterListe = $derived<Reiter[]>(
     leitung
-      ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', 'spieler', 'konkurrenzen', ...(lokal ? [] : ['zugaenge' as const]), 'einstellungen']
+      ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', 'spieler', 'konkurrenzen', ...(lokal ? [] : ['zugaenge' as const]), 'drucken', 'einstellungen']
       : rolle === 'spieler'
-        ? ['meine', 'spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen']
+        ? ['meine', 'spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', ...(helferRecht ? ['drucken' as const] : [])]
         : rolle === 'helfer'
-          ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen']
+          ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', 'drucken']
           : ['tabellen', 'spiele', ...(mitTischen ? ['tische' as const] : [])],
   );
   const aufrufIch = $derived(zustand && ich ? meinAufruf(zustand, ich) : null);
@@ -144,7 +145,18 @@
   const standardReiter = $derived<Reiter>(
     leitung ? (!zustand?.spielerReihe.length ? 'spieler' : !zustand.konkurrenzReihe.length ? 'konkurrenzen' : 'spiele') : rolle === 'spieler' ? 'meine' : rolle === 'helfer' ? 'spiele' : 'tabellen',
   );
-  const aktiv = $derived<Reiter>(reiter && reiterListe.includes(reiter as Reiter) ? (reiter as Reiter) : standardReiter);
+  /** QR-Code vom Spielzettel: #/t/<id>/spiel/<konkurrenz>/<spiel> öffnet das Spiel zum Eintragen */
+  const spielLink = $derived(reiter === 'spiel' && weitere.length === 2 ? { k: weitere[0]!, s: weitere[1]! } : null);
+  const aktiv = $derived<Reiter>(spielLink ? (rolle === 'spieler' ? 'meine' : 'spiele') : reiter && reiterListe.includes(reiter as Reiter) ? (reiter as Reiter) : standardReiter);
+  let spielLinkGeoeffnet = '';
+  $effect(() => {
+    const l = spielLink;
+    if (!l || laedt || !zustand) return;
+    const schluessel = `${l.k}/${l.s}`;
+    if (spielLinkGeoeffnet === schluessel) return;
+    spielLinkGeoeffnet = schluessel;
+    if (zustand.konkurrenzen[l.k]?.spiele[l.s]) offen = { k: l.k, s: l.s };
+  });
 
   async function aktualisieren() {
     if (!sitzung) return;
@@ -254,6 +266,16 @@
         api,
         token: () => gemerktesTurnier(id)?.token ?? (kontoRechte && app.sitzung ? app.sitzung.token : null),
         beiAenderung: () => void aktualisieren(),
+        // Kennung gesperrt/neu ausgegeben oder Konto ohne Rechte: sofort Zuschauer, Bestand bleibt vollständig
+        beiRechteVerlust: () => {
+          if (gemerktesTurnier(id)?.token) {
+            turnierAbmelden(id);
+            eintrag = gemerktesTurnier(id) ?? null;
+            zugangFehler = T.zugang.kennungUngueltig;
+          } else {
+            kontoRechte = null;
+          }
+        },
       });
       await aktualisieren();
       if (!lokal) await infoLaden(); // Rechte des Kontos vor der Reiterwahl kennen
@@ -261,6 +283,13 @@
       if (code && !lokal) await codeVerwenden(code);
       // Reiter festhalten, damit die Seite beim Eintragen nicht springt
       if (!code && !reiter) ersetze(`t/${id}/${standardReiter}`);
+      // Spiel-Link: Adresse auf den Reiter setzen, damit „Zurück“ und Neuladen nicht erneut öffnen
+      if (reiter === 'spiel' && weitere.length === 2) {
+        const [k, s] = weitere;
+        if (zustand?.konkurrenzen[k!]?.spiele[s!]) offen = { k: k!, s: s! };
+        spielLinkGeoeffnet = `${k}/${s}`;
+        ersetze(`t/${id}/${rolle === 'spieler' ? 'meine' : 'spiele'}`);
+      }
       void einstellungenLaden();
       document.addEventListener('visibilitychange', beiSichtbarkeit);
       addEventListener('online', beiOnline);
@@ -337,6 +366,9 @@
   }
 
   async function sicherungBauen() {
+    // Nur aus dem vollständigen Bestand sichern (nie aus der gefilterten Zuschauer-Sicht)
+    const sicht = lokal ? null : await speicher.sicht(id);
+    if (sicht && sicht !== 'voll') throw new Error(T.einstellungen.sicherungUnvollstaendig);
     const liste = sitzung ? await sitzung.ereignisse() : ereignisse;
     return sicherungErstellen({ id, name, datum: zustand?.datum ?? eintrag?.datum ?? null, modus: lokal ? 'lokal' : 'online' }, liste);
   }
@@ -453,7 +485,7 @@
       {/if}
       <SpieleListe z={zustand} leitung={false} {ich} nurMeine mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
     {:else if aktiv === 'tische'}
-      <Tische z={zustand} darfAufrufen={leitung || helferRecht} mitSchiri={rolle !== 'zuschauer'} {eintragen} {oeffnen} />
+      <Tische z={zustand} turnierId={id} {leitung} {ich} darfAufrufen={leitung || helferRecht} mitSchiri={rolle !== 'zuschauer'} {eintragen} {oeffnen} />
     {:else if aktiv === 'spiele'}
       <SpieleListe z={zustand} leitung={leitung || helferRecht} {ich} mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
     {:else if aktiv === 'tabellen'}
@@ -464,10 +496,13 @@
         </div>
       {/if}
       <Tabellen z={zustand} {leitung} {eintragen} {oeffnen} />
+      <p class="leise live-link"><a href={linkZu(`live/${id}`)} data-testid="live-link">{T.live.linkTabellen}</a></p>
     {:else if aktiv === 'spieler'}
       <SpielerTab z={zustand} {eintragen} />
     {:else if aktiv === 'konkurrenzen'}
       <KonkurrenzenTab z={zustand} {eintragen} />
+    {:else if aktiv === 'drucken'}
+      <DruckExport z={zustand} {id} {leitung} {lokal} />
     {:else if aktiv === 'zugaenge'}
       <section class="karte">
         <h2>{T.turnier.teilen}</h2>
@@ -479,6 +514,7 @@
           <button class="zweit klein" aria-expanded={qrOffen} onclick={() => (qrOffen = !qrOffen)}>{T.turnier.qr}</button>
         </div>
         {#if qrOffen}<div class="qr-gross"><QrCode text={link} groesse={220} label="{name}: {codeAnzeige(id)}" /></div>{/if}
+        <p class="leise live-zeile"><a href={linkZu(`live/${id}`)}>{T.live.oeffnen}</a> · <a href={linkZu(`druck/${id}/aushang`)}>{T.druck.arten.aushang}</a></p>
         <div class="reihe">
           <input class="wachsen" readonly value={link} aria-label="Link" onfocus={(e) => (e.currentTarget as HTMLInputElement).select()} />
           {#if teilenNativ}<button onclick={linkTeilen}>{T.turnier.linkTeilen}</button>{/if}
@@ -584,4 +620,6 @@
   .qr-gross { margin: 6px 0 12px; }
   .meldung.aufruf { background: color-mix(in srgb, var(--gruen) 14%, var(--flaeche)); border: 2px solid var(--gruen); font-weight: 700; font-size: 1.1rem; }
   .warnungen { margin-bottom: 12px; }
+  .live-link, .live-zeile { display: flex; gap: 6px; flex-wrap: wrap; }
+  .live-link a, .live-zeile a { display: inline-flex; align-items: center; min-height: 44px; }
 </style>

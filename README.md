@@ -16,6 +16,15 @@ Zentrale: eigenes WLAN, Beitritt per QR-Code, alle anderen Geräte (auch iPad) i
 vorbereitete Turniere lassen sich auf die Zentrale holen und danach zurückgeben; Sicherungsmails
 gehen raus, sobald die Zentrale Internet hat. Anleitung: [docs/zentrale.md](docs/zentrale.md).
 
+**Etappe 7 – Live-Anzeige, Druck, Export:** Vollbild-Anzeige für Beamer und Fernseher (`#/live/<Kennung>`)
+mit Tischen, nächsten Spielen, letzten Ergebnissen, Tabellen und Bäumen im Wechsel; neue Aufrufe groß
+eingeblendet und auf Wunsch angesagt (nur Gerätestimmen). Spielaufruf mit Automatik (freie Tische
+belegen), Pausenschutz und Verlierer als Schiedsrichter. Druckvorlagen (Spielzettel mit QR-Code zur
+Ergebniseingabe, Gruppenblätter mit Kreuztabelle, Turnierbaum, Ergebnisliste, Teilnehmerliste,
+Aushang, Urkunden) – als PDF über den Druckdialog. CSV-Export für Tabellenkalkulationen.
+Datenschutz: Zuschauer bekommen vom Server keine Jahrgänge, kein Geschlecht und keine Namen von
+Eintragenden; auf Wunsch nur die Kurzform der Namen.
+
 - Demo (nur Einzelgerät-Modus): https://sasurb.github.io/tt-turnier/
 - Eigene Installation: [docs/strato-einrichtung.md](docs/strato-einrichtung.md) (funktioniert auf jedem PHP-Webspace)
 

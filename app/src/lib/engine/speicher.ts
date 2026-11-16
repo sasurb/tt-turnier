@@ -1,3 +1,4 @@
+import type { Sicht } from '@shared/protokoll';
 import type { LokalesEreignis } from './typen';
 import { sortieren } from './typen';
 
@@ -17,6 +18,11 @@ export interface EreignisSpeicher {
   /** Laufnummer, bis zu der vom Server abgeholt wurde. */
   abgeholtBis(turnier: string): Promise<number>;
   setzeAbgeholtBis(turnier: string, seq: number): Promise<void>;
+  /** Mit welcher Sicht (voll/Zuschauer) die abgeholten Ereignisse geliefert wurden; null = unbekannt */
+  sicht(turnier: string): Promise<Sicht | null>;
+  setzeSicht(turnier: string, sicht: Sicht): Promise<void>;
+  /** Alle vom Server bestätigten Ereignisse verwerfen (ausstehende bleiben), Laufnummer auf 0 – für neues Abholen */
+  bestaetigteVerwerfen(turnier: string): Promise<void>;
   /** Alles zu einem Turnier löschen. */
   loeschen(turnier: string): Promise<void>;
 }
@@ -24,6 +30,7 @@ export interface EreignisSpeicher {
 export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
   private ereignisse = new Map<string, LokalesEreignis>();
   private meta = new Map<string, number>();
+  private sichten = new Map<string, Sicht>();
 
   async alle(turnier: string) {
     return sortieren([...this.ereignisse.values()].filter((e) => e.turnier === turnier));
@@ -44,9 +51,20 @@ export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
   async setzeAbgeholtBis(turnier: string, seq: number) {
     this.meta.set(turnier, seq);
   }
+  async sicht(turnier: string) {
+    return this.sichten.get(turnier) ?? null;
+  }
+  async setzeSicht(turnier: string, sicht: Sicht) {
+    this.sichten.set(turnier, sicht);
+  }
+  async bestaetigteVerwerfen(turnier: string) {
+    for (const [id, e] of this.ereignisse) if (e.turnier === turnier && e.status !== 'ausstehend') this.ereignisse.delete(id);
+    this.meta.set(turnier, 0);
+  }
   async loeschen(turnier: string) {
     for (const [id, e] of this.ereignisse) if (e.turnier === turnier) this.ereignisse.delete(id);
     this.meta.delete(turnier);
+    this.sichten.delete(turnier);
   }
 }
 
@@ -112,17 +130,54 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     await fertig(tx);
   }
 
-  async abgeholtBis(turnier: string) {
+  private async metaLesen(turnier: string): Promise<{ turnier: string; seq: number; sicht?: Sicht }> {
     const db = await this.db;
     const tx = db.transaction('meta', 'readonly');
-    const m = (await anfrage(tx.objectStore('meta').get(turnier))) as { seq: number } | undefined;
-    return m?.seq ?? 0;
+    const m = (await anfrage(tx.objectStore('meta').get(turnier))) as { seq: number; sicht?: Sicht } | undefined;
+    return { turnier, seq: m?.seq ?? 0, ...(m?.sicht ? { sicht: m.sicht } : {}) };
+  }
+
+  private async metaAendern(turnier: string, f: (m: { turnier: string; seq: number; sicht?: Sicht }) => void) {
+    const db = await this.db;
+    const tx = db.transaction('meta', 'readwrite');
+    const store = tx.objectStore('meta');
+    const r = store.get(turnier);
+    r.onsuccess = () => {
+      const alt = r.result as { seq: number; sicht?: Sicht } | undefined;
+      const m = { turnier, seq: alt?.seq ?? 0, ...(alt?.sicht ? { sicht: alt.sicht } : {}) };
+      f(m);
+      store.put(m);
+    };
+    await fertig(tx);
+  }
+
+  async abgeholtBis(turnier: string) {
+    return (await this.metaLesen(turnier)).seq;
   }
 
   async setzeAbgeholtBis(turnier: string, seq: number) {
+    await this.metaAendern(turnier, (m) => (m.seq = seq));
+  }
+
+  async sicht(turnier: string) {
+    return (await this.metaLesen(turnier)).sicht ?? null;
+  }
+
+  async setzeSicht(turnier: string, sicht: Sicht) {
+    await this.metaAendern(turnier, (m) => (m.sicht = sicht));
+  }
+
+  async bestaetigteVerwerfen(turnier: string) {
     const db = await this.db;
-    const tx = db.transaction('meta', 'readwrite');
-    tx.objectStore('meta').put({ turnier, seq });
+    const tx = db.transaction(['ereignisse', 'meta'], 'readwrite');
+    const store = tx.objectStore('ereignisse');
+    const r = store.index('turnier').getAll(turnier);
+    r.onsuccess = () => {
+      for (const e of r.result as LokalesEreignis[]) if (e.status !== 'ausstehend') store.delete(e.id);
+    };
+    const meta = tx.objectStore('meta');
+    const m = meta.get(turnier);
+    m.onsuccess = () => meta.put({ ...((m.result as object | undefined) ?? {}), turnier, seq: 0 });
     await fertig(tx);
   }
 

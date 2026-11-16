@@ -382,9 +382,23 @@ export function spielerName(s: Pick<SpielerDaten, 'vorname' | 'nachname'> | unde
   return `${s.vorname} ${s.nachname}`.trim();
 }
 
-/** Name eines Paares: „Müller/Schmidt“ (Nachnamen; bei gleichem Nachnamen mit Vornamen-Initial) */
+/** Kurzform eines Nachnamens für Zuschauer: „Müller“ → „M.“ (wie der Server, Api::kurzname) */
+export function kurzname(nachname: string): string {
+  const n = nachname.trim();
+  if (!n) return '';
+  const erstes = [...n][0]!;
+  return `${erstes.toLocaleUpperCase('de-DE')}.`;
+}
+
+/** Ist der Nachname schon die Kurzform („M.“)? */
+export function istKurzname(nachname: string): boolean {
+  return /^\p{L}\.$/u.test(nachname.trim());
+}
+
+/** Name eines Paares: „Müller/Schmidt“ (Nachnamen; bei gleichem Nachnamen mit Vornamen-Initial; Kurzform: „Max M./Eva S.“) */
 export function paarName(a: SpielerDaten | undefined, b: SpielerDaten | undefined): string {
   if (!a || !b) return '?';
+  if (istKurzname(a.nachname) || istKurzname(b.nachname)) return `${spielerName(a)}/${spielerName(b)}`;
   const gleich = a.nachname.trim().toLowerCase() === b.nachname.trim().toLowerCase();
   const kurz = (s: SpielerDaten) => (gleich && s.vorname ? `${s.vorname[0]}. ${s.nachname}` : s.nachname || s.vorname);
   return `${kurz(a)}/${kurz(b)}`;

@@ -67,6 +67,14 @@
   }
   async function paarMelden(a: string, b: string) {
     if (!a || !b || a === b) return;
+    if (k.einst.art === 'mixed') {
+      const ga = z.spieler[a]?.geschlecht;
+      const gb = z.spieler[b]?.geschlecht;
+      if (ga && gb && ga === gb && ga !== 'd') {
+        fehler = T.konk.mixedFalsch;
+        return;
+      }
+    }
     await los(ART.paarGemeldet, { konkurrenz: k.id, id: 'p-' + kurzId(), spieler: [a, b] });
     paar1 = '';
     paar2 = '';

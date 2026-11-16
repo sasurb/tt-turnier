@@ -69,19 +69,22 @@ export function dateiname(s: Sicherung): string {
  * Ergebnis: 'geteilt' | 'heruntergeladen' | 'abgebrochen'
  */
 export async function sicherungAusgeben(s: Sicherung, teilen: boolean): Promise<'geteilt' | 'heruntergeladen' | 'abgebrochen'> {
-  const name = dateiname(s);
-  const inhalt = JSON.stringify(s, null, 1);
+  return dateiAusgeben(dateiname(s), JSON.stringify(s, null, 1), 'application/json', teilen, `Sicherung: ${s.turnier.name}`);
+}
+
+/** Beliebige Textdatei teilen oder herunterladen (Sicherung, CSV-Export) */
+export async function dateiAusgeben(name: string, inhalt: string, typ: string, teilen: boolean, titel = name): Promise<'geteilt' | 'heruntergeladen' | 'abgebrochen'> {
   // Android-Zentrale (WebView): Teilen-Menü des Systems
   const n = nativ();
   if (n) {
-    n.dateiTeilen(name, inhalt, 'application/json');
+    n.dateiTeilen(name, inhalt, typ);
     return 'geteilt';
   }
-  const datei = new File([inhalt], name, { type: 'application/json' });
+  const datei = new File([inhalt], name, { type: typ });
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
   if (teilen && nav.share && nav.canShare?.({ files: [datei] })) {
     try {
-      await nav.share({ files: [datei], title: `Sicherung: ${s.turnier.name}` });
+      await nav.share({ files: [datei], title: titel });
       return 'geteilt';
     } catch (x) {
       if (x instanceof DOMException && x.name === 'AbortError') return 'abgebrochen';

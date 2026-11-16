@@ -92,7 +92,10 @@ lieber den Hotspot nehmen.
    Zentrale ist.
 4. Weitere Leitungsgeräte (z. B. iPad am Turniertisch): App über Code 2 öffnen, Turnier antippen,
    mit ihrer **Leitungskennung** anmelden (unter *Zugänge* → *Turnierleitung*). Am PC (`java -jar kern.jar`) öffnest du die Adresse, die beim Start als „Am Gerät selbst öffnen“ ausgegeben wird – nur sie schaltet die Zentrale-Seite frei.
-5. Handy der Zentrale ans **Ladegerät**. Bildschirm darf ausgehen; die App darf im Hintergrund sein.
+5. **Beamer/Fernseher:** Ein Laptop oder Fernseher-Browser im WLAN der Zentrale öffnet *Drucken →
+   Live-Anzeige öffnen* (Adresse `…/#/live/<Turnierkennung>`) und schaltet auf Vollbild. Drucken und
+   „Als PDF speichern“ gehen auf dem Zentrale-Handy über den Android-Druckdialog.
+6. Handy der Zentrale ans **Ladegerät**. Bildschirm darf ausgehen; die App darf im Hintergrund sein.
    Solange die Benachrichtigung **„Zentrale läuft“** zu sehen ist, läuft der Server. Beenden: in der
    Benachrichtigung auf **Beenden**.
 

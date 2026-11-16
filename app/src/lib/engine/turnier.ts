@@ -19,6 +19,8 @@ export interface TurnierOptionen {
   token?: () => string | null;
   intervallMs?: number;
   beiAenderung?: () => void;
+  /** Siehe AbgleichOptionen.beiRechteVerlust */
+  beiRechteVerlust?: () => void;
 }
 
 /**
@@ -39,6 +41,7 @@ export class TurnierSitzung {
         token: o.token ?? (() => null),
         intervallMs: o.intervallMs,
         beiAenderung: () => o.beiAenderung?.(),
+        beiRechteVerlust: () => o.beiRechteVerlust?.(),
       });
     } else {
       this.abgleich = null;

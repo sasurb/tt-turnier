@@ -22,6 +22,12 @@ export interface AbgleichOptionen {
   maxIntervallMs?: number;
   /** Wird nach jeder Änderung an Daten oder Status aufgerufen. */
   beiAenderung?: (status: AbgleichStatus, neueDaten: boolean) => void;
+  /**
+   * Das Token gilt nicht mehr für dieses Turnier (Kennung gesperrt/neu ausgegeben, Konto gesperrt,
+   * Anmeldung abgelaufen): Der Server liefert nur noch die Zuschauer-Sicht. Der Bestand bleibt dann
+   * unverändert; die Oberfläche soll die Anmeldung zurücknehmen.
+   */
+  beiRechteVerlust?: () => void;
 }
 
 /**
@@ -116,10 +122,33 @@ export class Abgleich {
         }
       }
 
-      // 2. Abholen
+      // 2. Abholen – mit Token kommt die volle Sicht, ohne die Zuschauer-Sicht (Datenschutz).
+      //    Ändert sich die Sicht (angemeldet, abgemeldet, Kurzform umgestellt), wird alles neu abgeholt.
       let ab = await speicher.abgeholtBis(turnier);
+      let neuAufbauten = 0;
+      let rechteWeg = false;
       for (;;) {
-        const a = await api.abholen(turnier, ab);
+        const a = await api.abholen(turnier, ab, token);
+        if (a.sicht && token && (a.sicht === 'zuschauer' || a.sicht === 'kurz')) {
+          // Mit Token, aber ohne Rechte: nichts Gefiltertes übernehmen (der Bestand bleibt vollständig)
+          rechteWeg = true;
+          break;
+        }
+        if (a.sicht) {
+          const bisher = await speicher.sicht(turnier);
+          if (bisher !== a.sicht) {
+            await speicher.setzeSicht(turnier, a.sicht);
+            // Alter Bestand ohne Angabe stammt von einer Version, die immer alles lieferte
+            if (ab > 0 && !(bisher === null && a.sicht === 'voll')) {
+              // Wechselt die Sicht mitten im Neuaufbau noch einmal, von vorn; nach 3 Versuchen beim nächsten Durchlauf
+              if (++neuAufbauten > 3) throw new Error('Die Sicht auf das Turnier hat sich mehrfach geändert.');
+              await speicher.bestaetigteVerwerfen(turnier);
+              ab = 0;
+              neueDaten = true;
+              continue;
+            }
+          }
+        }
         if (a.ereignisse.length > 0) {
           await speicher.uebernehmen(a.ereignisse.map((e) => ausServer(turnier, e)));
           ab = a.ereignisse[a.ereignisse.length - 1]!.seq;
@@ -129,6 +158,11 @@ export class Abgleich {
         if (!a.mehr) break;
       }
 
+      if (rechteWeg) {
+        verbindung = 'nicht_angemeldet';
+        meldung = 'Die Anmeldung gilt für dieses Turnier nicht mehr.';
+        this.o.beiRechteVerlust?.();
+      }
       const rest = (await speicher.ausstehende(turnier)).length;
       if (rest > 0 && verbindung === 'verbunden') this.erneut = true; // weitere Blöcke senden
       this.abstand = basis;

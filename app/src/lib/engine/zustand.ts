@@ -1,4 +1,4 @@
-import { ART, type Autor } from '@shared/protokoll';
+import { ART, type Autor, type NamenFuerZuschauer } from '@shared/protokoll';
 import type { LokalesEreignis } from './typen';
 import { eingabeTauschen, ergebnisGleich, ergebnisWerten } from './ergebnis';
 import { abhaengigeMitErgebnis, koAktualisieren, koAnlegen } from './ko';
@@ -44,6 +44,10 @@ export interface TurnierZustand {
   angaben: Angabe[];
   /** Welche Stände alle sehen dürfen (Konkurrenzen können abweichen) */
   veroeffentlichung: Veroeffentlichung;
+  /** Wie Zuschauer (ohne Kennung, Live-Anzeige) Spielernamen sehen: voll oder „Max M.“ */
+  namen: NamenFuerZuschauer;
+  /** Pausenschutz: so viele Minuten nach dem letzten Spiel gilt ein Spieler noch als „in der Pause“ (0 = aus) */
+  pause: number;
   abgeschlossen: boolean;
   notizen: {
     id: string;
@@ -70,6 +74,8 @@ export function leererZustand(): TurnierZustand {
     tischeGesperrt: [],
     angaben: [...STANDARD_ANGABEN],
     veroeffentlichung: { ...ALLES_OEFFENTLICH },
+    namen: 'voll',
+    pause: 0,
     abgeschlossen: false,
     notizen: [],
     anzahlEreignisse: 0,
@@ -499,6 +505,9 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (Array.isArray(d.angaben)) z.angaben = ALLE_ANGABEN.filter((a) => (d.angaben as unknown[]).includes(a));
       const vo = veroeffentlichungLesen(d.veroeffentlichung);
       if (vo) z.veroeffentlichung = vo;
+      if (d.namen === 'voll' || d.namen === 'kurz') z.namen = d.namen;
+      const pause = zahl(d.pause, 0, 60);
+      if (pause !== undefined && pause !== null) z.pause = pause;
       // „Ergebnisse veröffentlichen“: Abweichungen der Konkurrenzen zurücknehmen
       if (d.alleKonkurrenzen === true) for (const k of Object.values(z.konkurrenzen)) k.einst.veroeffentlichung = null;
       break;
@@ -641,13 +650,9 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         warnen(`${z.spieler[belegt]!.vorname} ${z.spieler[belegt]!.nachname} ist in „${k.einst.name}“ schon gemeldet.`);
         break;
       }
-      if (k.einst.art === 'mixed') {
-        const g = sp.map((x) => z.spieler[x]!.geschlecht).filter((x): x is 'm' | 'w' | 'd' => !!x);
-        if (g.length === 2 && g[0] === g[1] && g[0] !== 'd') {
-          warnen('Ein Mixed besteht aus einer Spielerin und einem Spieler.');
-          break;
-        }
-      }
+      // Mixed (Frau + Mann) prüft die Oberfläche vor dem Senden: Die Berechnung darf keine Angaben
+      // benutzen, die Zuschauer und Spieler aus Datenschutzgründen nicht bekommen (Geschlecht, Jahrgang),
+      // sonst käme auf ihren Geräten ein anderer Stand heraus.
       k.paare[id] = { id, spieler: [sp[0]!, sp[1]!] };
       k.meldungen.push(id);
       break;
@@ -846,9 +851,20 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         warnen(`Tisch ${tisch} ist gesperrt.`);
         break;
       }
-      const belegt = alleOffenenAufgerufenen(z).find((x) => x.tisch === tisch && x.id !== s.id);
+      const laufend = alleOffenenAufgerufenen(z).filter((x) => !(x.id === s.id && x.konkurrenz === s.konkurrenz));
+      const belegt = laufend.find((x) => x.tisch === tisch);
       if (belegt) {
         warnen(`Tisch ${tisch} ist belegt.`);
+        break;
+      }
+      // Niemand spielt an zwei Tischen zugleich (z. B. zwei Geräte rufen gleichzeitig auf)
+      const beteiligt = [...spielerVon(k, s.a), ...spielerVon(k, s.b)];
+      const doppelt = laufend.find((x) => {
+        const kx = z.konkurrenzen[x.konkurrenz]!;
+        return [...spielerVon(kx, x.a), ...spielerVon(kx, x.b)].some((id) => beteiligt.includes(id));
+      });
+      if (doppelt) {
+        warnen(`Ein Spieler dieses Spiels steht schon an Tisch ${doppelt.tisch}.`);
         break;
       }
       s.tisch = tisch;
