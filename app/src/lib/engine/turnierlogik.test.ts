@@ -19,6 +19,7 @@ import {
   teilnehmerDaten,
   tische,
   trostPlaetze,
+  vorgabeVon,
   zulassungsHinweise,
 } from './abfragen';
 import { gruppenAuslosen, koAuslosen, setzplaetze, treffRunde } from './auslosung';
@@ -1106,5 +1107,124 @@ describe('Robustheit gegen manipulierte Ereignisse', () => {
     const s = Object.values(z.konkurrenzen.k!.spiele)[0]!;
     t.ergebnis('k', s.id, s3(5, 6, 7));
     expect(t.z.konkurrenzen.k!.spiele[s.id]!.status).not.toBe('offen');
+  });
+});
+
+/* ---------------- Etappe 6 ---------------- */
+
+/** Spielt alle offenen Spiele der aktuellen Runde: Wer in `staerke` weiter vorn steht, gewinnt */
+function rundeSpielen(t: Turnier, k: string, staerke: string[]) {
+  const ko = t.z.konkurrenzen[k]!;
+  for (const s of Object.values(ko.spiele).filter((x) => x.status === 'offen')) {
+    const aGewinnt = staerke.indexOf(s.a!) < staerke.indexOf(s.b!);
+    t.ergebnis(k, s.id, aGewinnt ? s3(5, 6, 7) : s3(-5, -6, -7));
+  }
+}
+function paarungen(t: Turnier, k: string, runde: number): string[] {
+  return Object.values(t.z.konkurrenzen[k]!.spiele)
+    .filter((s) => s.runde === runde)
+    .sort((x, y) => x.index - y.index)
+    .map((s) => `${s.a}-${s.b ?? 'frei'}`);
+}
+
+describe('Etappe 6: Schweizer System', () => {
+  const acht = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  function aufbau(n = acht, einst: Partial<KonkurrenzEinstellungen> = {}) {
+    const t = new Turnier();
+    n.forEach((id, i) => t.spieler(id, 2000 - i * 50));
+    t.konkurrenz('k', { modus: 'schweizer', ...einst }, n);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    return t;
+  }
+  it('Runde 1: obere Hälfte gegen untere, dann Punktgruppen, keine Wiederholung, Endstand', () => {
+    const t = aufbau();
+    expect(paarungen(t, 'k', 1)).toEqual(['a-e', 'b-f', 'c-g', 'd-h']);
+    rundeSpielen(t, 'k', acht);
+    // Sieger unter sich, Verlierer unter sich (obere gegen untere Hälfte der Punktgruppe)
+    expect(paarungen(t, 'k', 2)).toEqual(['a-c', 'b-d', 'e-g', 'f-h']);
+    rundeSpielen(t, 'k', acht);
+    rundeSpielen(t, 'k', acht);
+    rundeSpielen(t, 'k', acht);
+    const z = t.z;
+    const k = z.konkurrenzen.k!;
+    expect(Math.max(...Object.values(k.spiele).map((s) => s.runde))).toBe(4); // ⌈log₂ 8⌉ + 1
+    expect(k.status).toBe('beendet');
+    const paare = Object.values(k.spiele).map((s) => [s.a, s.b].sort().join('-'));
+    expect(new Set(paare).size).toBe(paare.length);
+    expect(platzierungen(k)[0]!.id).toBe('a');
+    expect(platzierungen(k)[7]!.id).toBe('h');
+    expect(uebersichtText(z)).toContain('Buchholz');
+  });
+  it('ungerade Zahl: Freilos an den Letzten ohne Freilos, zählt als Sieg', () => {
+    const fuenf = acht.slice(0, 5);
+    const t = aufbau(fuenf, { runden: 4 });
+    expect(paarungen(t, 'k', 1)).toEqual(['a-c', 'b-d', 'e-frei']);
+    const frei = new Set<string>();
+    for (let r = 1; r <= 4; r++) {
+      const fs = Object.values(t.z.konkurrenzen.k!.spiele).find((s) => s.runde === r && s.bFrei)!;
+      expect(frei.has(fs.a!)).toBe(false);
+      frei.add(fs.a!);
+      rundeSpielen(t, 'k', fuenf);
+    }
+    expect(t.z.konkurrenzen.k!.status).toBe('beendet');
+  });
+  it('Korrektur in Runde 1 berechnet die noch unberührte Runde 2 neu; Rückzug spielt nicht mehr mit', () => {
+    const t = aufbau(acht.slice(0, 4), { runden: 3 });
+    expect(paarungen(t, 'k', 1)).toEqual(['a-c', 'b-d']);
+    t.ergebnis('k', 'sw-1-0', s3(5, 5, 5));
+    t.ergebnis('k', 'sw-1-1', s3(5, 5, 5));
+    expect(paarungen(t, 'k', 2)).toEqual(['a-b', 'c-d']);
+    t.ergebnis('k', 'sw-1-1', s3(-5, -5, -5)); // d schlägt b
+    expect(paarungen(t, 'k', 2)).toEqual(['a-d', 'b-c']);
+    t.ergebnis('k', 'sw-2-0', s3(5, 5, 5)); // Runde 2 ist jetzt berührt und bleibt
+    t.e(ART.teilnehmerAbgemeldet, { konkurrenz: 'k', id: 'c' });
+    const r2 = t.z.konkurrenzen.k!.spiele['sw-2-1']!;
+    expect(r2.status).toBe('gespielt');
+    expect(r2.kampflosDurchRueckzug).toBe('b');
+    // Runde 3: nur noch a, b, d – einer hat Freilos, c ist nicht dabei
+    expect(paarungen(t, 'k', 3).join(' ')).not.toContain('c');
+  });
+});
+
+describe('Etappe 6: Kaiserturnier', () => {
+  it('Sieger steigt auf, Verlierer ab; ungerade: der Unterste setzt aus', () => {
+    const t = new Turnier();
+    ['a', 'b', 'c', 'd', 'e'].forEach((id, i) => t.spieler(id, 2000 - i * 50));
+    t.konkurrenz('k', { modus: 'kaiser', runden: 3, bestOf: 1 }, ['a', 'b', 'c', 'd', 'e']);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    expect(paarungen(t, 'k', 1)).toEqual(['a-b', 'c-d', 'e-frei']);
+    t.ergebnis('k', 'ks-1-0', { saetze: [[11, 5]] }); // a
+    t.ergebnis('k', 'ks-1-1', { saetze: [[11, 5]] }); // c
+    expect(paarungen(t, 'k', 2)).toEqual(['a-c', 'b-e', 'd-frei']);
+    t.ergebnis('k', 'ks-2-0', { saetze: [[5, 11]] }); // c wird Kaiser
+    t.ergebnis('k', 'ks-2-1', { saetze: [[5, 11]] }); // e steigt auf
+    expect(paarungen(t, 'k', 3)).toEqual(['c-e', 'a-d', 'b-frei']);
+    t.ergebnis('k', 'ks-3-0', { saetze: [[11, 3]] });
+    t.ergebnis('k', 'ks-3-1', { saetze: [[11, 3]] });
+    const k = t.z.konkurrenzen.k!;
+    expect(k.status).toBe('beendet');
+    expect(platzierungen(k).map((p) => p.id)).toEqual(['c', 'a', 'e', 'b', 'd']);
+  });
+});
+
+describe('Etappe 6: Vorgabe', () => {
+  it('der Schwächere bekommt je 50 TTR-Punkte einen Punkt Vorgabe, höchstens das Maximum', () => {
+    const t = new Turnier();
+    t.spieler('a', 1500);
+    t.spieler('b', 1290);
+    t.spieler('c', 900);
+    t.spieler('d');
+    t.konkurrenz('k', { modus: 'jgj', vorgabe: 50, vorgabeMax: 6 }, ['a', 'b', 'c', 'd']);
+    t.auslosen('k');
+    t.starten('k', 'gruppen');
+    const z = t.z;
+    const k = z.konkurrenzen.k!;
+    const spiel = (x: string, y: string) => Object.values(k.spiele).find((s) => [s.a, s.b].sort().join() === [x, y].sort().join())!;
+    const ab = spiel('a', 'b');
+    expect(vorgabeVon(z, k, ab)).toEqual({ seite: ab.a === 'b' ? 'a' : 'b', punkte: 4 });
+    expect(vorgabeVon(z, k, spiel('a', 'c'))?.punkte).toBe(6);
+    expect(vorgabeVon(z, k, spiel('a', 'd'))).toBeNull();
   });
 });

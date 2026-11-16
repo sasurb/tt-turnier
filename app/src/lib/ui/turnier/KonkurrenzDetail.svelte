@@ -10,6 +10,7 @@
   import { auslosungAktuell, begonnen, erstePhase, teilnehmerVon, zurueckgezogen, type TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
   import AuslosungVorschau from './AuslosungVorschau.svelte';
+  import { istRundenModus } from '../../engine/runden';
   import KonkurrenzForm from './KonkurrenzForm.svelte';
 
   let {
@@ -143,7 +144,7 @@
 <details class="karte konk" open={k.status !== 'beendet'} data-testid="konkurrenz">
   <summary>
     <span>{k.einst.name} <span class="leise">· {doppel ? T.konk.arten[k.einst.art] + ' · ' : ''}{T.konk.modi[k.einst.modus]} · {doppel ? T.konk.paare(n) : T.konk.teilnehmer(n)}</span></span>
-    <span class="marke">{T.konk.status[k.status]}</span>
+    <span class="marke">{T.konk.status[istRundenModus(k.einst.modus) && k.status === 'gruppen' ? 'runden' : k.status]}</span>
   </summary>
 
   {#if bearbeiten}
@@ -238,7 +239,8 @@
       {#if (k.auslosungGruppen || k.auslosungKo) && !aktuell}<p class="meldung info">{T.konk.veraltet}</p>{/if}
       {#if aktuell}
         {#if phase1 === 'gruppen'}
-          <AuslosungVorschau {z} gruppen={k.auslosungGruppen!.gruppen} klassen={klassenTrennung ? gruppenKlassen(z, k, k.auslosungGruppen!.gruppen) : null} tauschen={tauschenGruppen} />
+          {#if istRundenModus(k.einst.modus)}<p class="leise">{T.konk.startlisteText}</p>{/if}
+          <AuslosungVorschau {z} gruppen={k.auslosungGruppen!.gruppen} startliste={istRundenModus(k.einst.modus)} klassen={klassenTrennung ? gruppenKlassen(z, k, k.auslosungGruppen!.gruppen) : null} tauschen={tauschenGruppen} />
         {:else}
           <AuslosungVorschau {z} plaetze={k.auslosungKo!.plaetze} tauschen={tauschenKo} />
         {/if}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { T } from '../../texte';
-  import { name, rundeVon } from '../../engine/abfragen';
+  import { name, rundeVon, vorgabeVon } from '../../engine/abfragen';
   import { ergebnisText } from '../../engine/ergebnis';
   import type { KonkurrenzZustand, Spiel } from '../../engine/modell';
   import { seiteVon, type TurnierZustand } from '../../engine/zustand';
@@ -16,6 +16,8 @@
   }: { z: TurnierZustand; k: KonkurrenzZustand; spiel: Spiel; ich?: string | null; mitKonkurrenz?: boolean; mitSchiri?: boolean; oeffnen: () => void } = $props();
 
   const ort = $derived(rundeVon(k, spiel));
+  const vorgabe = $derived(spiel.status === 'offen' ? vorgabeVon(z, k, spiel) : null);
+  const frei = $derived(k.einst.modus === 'kaiser' ? T.spiele.setztAus : T.konk.freilos);
   const amTisch = $derived(spiel.tisch !== null && spiel.status === 'offen');
   const statusText = $derived.by(() => {
     if (spiel.status === 'wartet') return spiel.gesperrt ? T.spiele.gesperrt : T.spiele.wartet;
@@ -31,12 +33,12 @@
 <button class="spiel" class:amtisch={amTisch} class:fertig={spiel.status === 'gespielt'} class:hinweis={bitteBestaetigen || spiel.stand === 'angefochten' || spiel.stand === 'konflikt'} onclick={oeffnen} data-testid="spiel">
   <span class="ort leise">
     {#if amTisch}<strong class="tisch">{T.spiele.tisch(spiel.tisch!)}</strong> ·{/if}
-    {mitKonkurrenz ? `${k.einst.name} · ` : ''}{ort}{#if amTisch && mitSchiri && spiel.schiri} · {T.spiele.schiri(spiel.schiri.name)}{/if}
+    {mitKonkurrenz ? `${k.einst.name} · ` : ''}{ort}{#if amTisch && mitSchiri && spiel.schiri} · {T.spiele.schiri(spiel.schiri.name)}{/if}{#if vorgabe}{' · '}<strong>{T.spiele.vorgabeKurz(name(z, vorgabe.seite === 'a' ? spiel.a : spiel.b), vorgabe.punkte)}</strong>{/if}
   </span>
   <span class="namen">
-    <span class:sieger={spiel.gewinner === 'a'} class:ich={seiteIch === 'a'}>{spiel.aFrei ? T.konk.freilos : name(z, spiel.a)}</span>
+    <span class:sieger={spiel.gewinner === 'a'} class:ich={seiteIch === 'a'}>{spiel.aFrei ? frei : name(z, spiel.a)}</span>
     <span class="leise">–</span>
-    <span class:sieger={spiel.gewinner === 'b'} class:ich={seiteIch === 'b'}>{spiel.bFrei ? T.konk.freilos : name(z, spiel.b)}</span>
+    <span class:sieger={spiel.gewinner === 'b'} class:ich={seiteIch === 'b'}>{spiel.bFrei ? frei : name(z, spiel.b)}</span>
   </span>
   <span class="erg">
     {#if spiel.ergebnis}

@@ -583,3 +583,97 @@ test('Etappe 5: Doppel mit Trostrunde, Spielaufruf an Tische mit Schiedsrichter'
   await expect(page.getByRole('heading', { name: 'Trostrunde', exact: true })).toBeVisible();
   await bild(page, '26-trostrunde');
 });
+
+test('Etappe 6: Schweizer System mit Vorgabe, Kaiserturnier', async ({ page }) => {
+  await ohneServer(page);
+  await page.goto('./');
+  await page.getByTestId('neues-turnier').click();
+  await page.getByLabel('Name des Turniers').fill('Vereinsmeisterschaft');
+  await page.getByLabel(/^Dein Name/).fill('Sascha');
+  await page.getByRole('button', { name: 'Turnier anlegen' }).click();
+  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  for (const [v, ttr] of [
+    ['Ali', '1800'],
+    ['Bea', '1700'],
+    ['Cid', '1600'],
+    ['Dan', '1500'],
+    ['Eva', '1400'],
+    ['Fin', '1300'],
+  ]) {
+    await page.getByLabel('Vorname').fill(v!);
+    await page.getByLabel('Nachname').fill('Test');
+    await page.getByRole('textbox', { name: 'TTR-Punkte' }).fill(ttr!);
+    await page.getByRole('button', { name: 'Hinzufügen' }).click();
+    await expect(page.getByText(`${v} Test ✓`)).toBeVisible();
+  }
+  // Schweizer System, 3 Runden, mit Vorgabe
+  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Schweizer');
+  await page.getByRole('radio', { name: /^Schweizer System/ }).check();
+  await page.getByLabel('Gewinnsätze').selectOption({ label: '2 Gewinnsätze (Best of 3)' });
+  await page.getByLabel('Anzahl Runden').fill('3');
+  await page.getByRole('checkbox', { name: 'Vorgabeturnier' }).check();
+  await expect(page.getByText(/Beispiel: 1500 gegen 1300 = 4 Punkte Vorgabe/)).toBeVisible();
+  await bild(page, '27-schweizer-form');
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+  const konk = page.getByTestId('konkurrenz').filter({ hasText: 'Schweizer' });
+  await konk.getByRole('button', { name: 'Alle melden' }).click();
+  await konk.getByRole('button', { name: 'Auslosen' }).click();
+  await expect(konk.getByText('Startliste', { exact: true })).toBeVisible();
+  page.once('dialog', (d) => void d.accept());
+  await konk.getByTestId('starten').click();
+
+  // Runde 1: Ali–Dan, Bea–Eva, Cid–Fin; Vorgabe für den Schwächeren
+  await page.getByRole('link', { name: 'Spiele', exact: true }).click();
+  await expect(page.getByTestId('spiel')).toHaveCount(3);
+  await expect(page.getByTestId('spiel').first()).toContainText('Vorgabe Dan Test +6');
+  await bild(page, '28-schweizer-spiele');
+  for (let runde = 1; runde <= 3; runde++) {
+    for (let i = 0; i < 3; i++) {
+      await page.getByTestId('spiel').first().click();
+      const d = page.getByRole('dialog');
+      if (runde === 1 && i === 0) await expect(d.getByTestId('vorgabe')).toContainText('Dan Test beginnt jeden Satz mit 6:0');
+      for (const s of [1, 2]) {
+        await d.getByTestId(`satz-${s}`).getByRole('radio').first().click();
+        await d.getByLabel(`Punkte des Verlierers Satz ${s}`).fill('8');
+      }
+      await d.getByRole('button', { name: 'Ergebnis speichern' }).click();
+      await expect(d).toBeHidden();
+    }
+  }
+  await expect(page.getByText('Keine Spiele in dieser Auswahl.')).toBeVisible();
+  await page.getByRole('link', { name: 'Tabellen' }).click();
+  await expect(page.getByTestId('runde-stand')).toContainText('Runde 3 von 3');
+  await expect(page.getByTestId('rangliste').locator('tbody tr')).toHaveCount(6);
+  await expect(page.getByTestId('rangliste').locator('tbody tr').first()).toContainText('Ali Test');
+  await bild(page, '29-schweizer-rangliste');
+
+  // Kaiserturnier mit einem Gewinnsatz
+  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await page.getByRole('button', { name: /Neue Konkurrenz/ }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Kaiser');
+  await page.getByRole('radio', { name: /^Kaiserturnier/ }).check();
+  await page.getByLabel('Gewinnsätze').selectOption({ label: '1 Gewinnsatz' });
+  await page.getByLabel('Anzahl Runden').fill('2');
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+  const ks = page.getByTestId('konkurrenz').filter({ hasText: 'Kaiser' });
+  await ks.getByRole('button', { name: 'Alle melden' }).click();
+  await ks.getByRole('button', { name: 'Auslosen' }).click();
+  page.once('dialog', (d) => void d.accept());
+  await ks.getByTestId('starten').click();
+  await page.getByRole('link', { name: 'Spiele', exact: true }).click();
+  await expect(page.getByTestId('spiel').filter({ hasText: 'Kaisertisch' })).toHaveCount(1);
+  for (let i = 0; i < 6; i++) {
+    await page.getByTestId('spiel').first().click();
+    const d = page.getByRole('dialog');
+    await d.getByTestId('satz-1').getByRole('radio').last().click(); // rechts gewinnt: Aufsteiger
+    await d.getByLabel('Punkte des Verlierers Satz 1').fill('9');
+    await d.getByRole('button', { name: 'Ergebnis speichern' }).click();
+    await expect(d).toBeHidden();
+  }
+  await page.getByRole('link', { name: 'Tabellen' }).click();
+  await page.getByRole('tab', { name: 'Kaiser' }).click();
+  await expect(page.getByTestId('rangleiter').locator('tbody tr')).toHaveCount(6);
+  await expect(page.getByTestId('rangleiter').locator('tbody tr').first()).toContainText('Kaiser');
+  await bild(page, '30-kaiser');
+});

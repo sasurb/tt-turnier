@@ -1,6 +1,6 @@
 <script lang="ts">
   import { T } from '../../texte';
-  import { standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
+  import { MODI, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
   import { klassen as klassenStore } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
   import WertungInfo from './WertungInfo.svelte';
@@ -41,9 +41,16 @@
     jahrgangVon: start.zulassung.jahrgangVon?.toString() ?? '',
     jahrgangBis: start.zulassung.jahrgangBis?.toString() ?? '',
   });
+  // svelte-ignore state_referenced_locally
+  let runden = $state(start.runden === null ? '' : String(start.runden));
+  // svelte-ignore state_referenced_locally
+  let mitVorgabe = $state(start.vorgabe !== null);
+  // svelte-ignore state_referenced_locally
+  let vorgabeJe = $state(start.vorgabe ?? 50);
   let fehler = $state('');
   let sendet = $state(false);
-  const mitGruppen = $derived(e.modus !== 'ko' && e.modus !== 'doppel_ko');
+  const rundenModus = $derived(e.modus === 'schweizer' || e.modus === 'kaiser');
+  const mitGruppen = $derived(e.modus === 'jgj' || e.modus === 'gruppen_ko');
   const mitKo = $derived(e.modus !== 'jgj');
   const einfachesKo = $derived(e.modus === 'ko' || e.modus === 'gruppen_ko');
 
@@ -54,6 +61,8 @@
       ...$state.snapshot(e),
       name: e.name.trim(),
       gesetzte: zahl(gesetzte),
+      runden: rundenModus ? zahl(runden) : null,
+      vorgabe: mitVorgabe ? vorgabeJe : null,
       ttrGrenzen: [...new Set(ttrGrenzen.split(',').map((t) => parseInt(t.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 4000))].sort((a, b) => a - b),
       veroeffentlichung: veroeff === 'turnier' ? null : veroeff === 'offen' ? { tabellen: true, ko: true } : { tabellen: false, ko: false },
       zulassung: {
@@ -95,7 +104,7 @@
 
   <fieldset disabled={gestartet}>
     <legend>{T.konk.modus}</legend>
-    {#each ['gruppen_ko', 'jgj', 'ko', 'doppel_ko'] as const as m (m)}
+    {#each MODI as m (m)}
       <label class="wahl" class:aktiv={e.modus === m}>
         <input type="radio" name="modus-{id}" value={m} bind:group={e.modus} />
         <span><strong>{T.konk.modi[m]}</strong><span class="leise">{T.konk.modiText[m]}</span></span>
@@ -107,9 +116,15 @@
     <div>
       <label for="bo-{id}">{T.konk.bestOf}</label>
       <select id="bo-{id}" bind:value={e.bestOf} disabled={gestartet}>
-        {#each [3, 5, 7] as b (b)}<option value={b as BestOf}>{T.konk.bestOfWahl[b]}</option>{/each}
+        {#each [1, 3, 5, 7] as b (b)}<option value={b as BestOf}>{T.konk.bestOfWahl[b]}</option>{/each}
       </select>
     </div>
+    {#if rundenModus}
+      <div>
+        <div class="label-zeile"><label for="rn-{id}">{T.konk.runden}</label><Hilfe text={T.konk.rundenHilfe} /></div>
+        <input id="rn-{id}" bind:value={runden} inputmode="numeric" placeholder={T.konk.rundenAuto(e.modus === 'kaiser' ? 7 : 4)} />
+      </div>
+    {/if}
     <div>
       <div class="label-zeile"><label for="ei-{id}">{T.konk.eingabe}</label><Hilfe text={T.konk.eingabeHilfe} /></div>
       <select id="ei-{id}" bind:value={e.eingabe} disabled={gestartet}>
@@ -144,6 +159,24 @@
     <select id="rz-{id}" bind:value={e.rueckzug}>
       {#each ['wo', 'hobby'] as w (w)}<option value={w}>{T.konk.rueckzugWahl[w]}</option>{/each}
     </select>
+  {/if}
+  <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={mitVorgabe} /> {T.konk.vorgabe}</label><Hilfe text={T.konk.vorgabeHilfe} /></div>
+  {#if mitVorgabe}
+    <div class="raster">
+      <div>
+        <label for="vj-{id}">{T.konk.vorgabeJe}</label>
+        <select id="vj-{id}" bind:value={vorgabeJe}>
+          {#each [25, 30, 40, 50, 75, 100] as w (w)}<option value={w}>{w}</option>{/each}
+        </select>
+      </div>
+      <div>
+        <label for="vm-{id}">{T.konk.vorgabeMax}</label>
+        <select id="vm-{id}" bind:value={e.vorgabeMax}>
+          {#each [3, 4, 5, 6, 7, 8, 9, 10] as w (w)}<option value={w}>{w}</option>{/each}
+        </select>
+      </div>
+    </div>
+    <p class="leise">{T.konk.vorgabeBeispiel(vorgabeJe, e.vorgabeMax)}</p>
   {/if}
   {#if einfachesKo}
     <label class="haken"><input type="checkbox" bind:checked={e.platz3} /> {T.konk.platz3}</label>

@@ -7,12 +7,15 @@ import {
   spielerName,
   ttrBereichName,
   type KonkurrenzZustand,
+  type Seite,
   type Spiel,
   type TurnierSpieler,
   type Veroeffentlichung,
   type Zulassung,
 } from './modell';
 import { gruppenTabelle, type Tabelle } from './wertung';
+import { istRundenModus, rundenPlatzierungen } from './runden';
+import { mischen, zufallAus } from './zufall';
 import { alleOffenenAufgerufenen, erstePhase, spielerVon, teilnehmerVon, zurueckgezogen, type TurnierZustand } from './zustand';
 
 /** Abfragen für die Oberfläche (rechnen nur, ändern nichts). */
@@ -137,6 +140,22 @@ export function gruppenKlassen(z: TurnierZustand, k: KonkurrenzZustand, gruppen:
 export function auslosungErstellen(z: TurnierZustand, k: KonkurrenzZustand, zufall: number, gruppen?: number) {
   const daten = teilnehmerDaten(z, k);
   const reihe = setzreihe(k.meldungen, daten, k.einst, k.setzliste);
+  if (istRundenModus(k.einst.modus)) {
+    // Startliste: nach Setzung; Gleichstarke (gleicher TTR, ohne TTR, ohne Setzung) werden gemischt
+    const z0 = zufallAus(zufall);
+    const schluessel = (id: string) =>
+      k.einst.setzung === 'keine' ? '' : k.einst.setzung === 'manuell' ? String(k.setzliste?.indexOf(id) ?? -1) : String(daten[id]?.ttr ?? -1);
+    const liste: string[] = [];
+    let i = 0;
+    while (i < reihe.length) {
+      let j = i;
+      const s = schluessel(reihe[i]!);
+      while (j < reihe.length && schluessel(reihe[j]!) === s) j++;
+      liste.push(...mischen(reihe.slice(i, j), z0));
+      i = j;
+    }
+    return { konkurrenz: k.id, phase: 'gruppen' as const, zufall, gruppen: [liste] };
+  }
   if (erstePhase(k) === 'gruppen') {
     if (k.einst.modus !== 'jgj' && k.einst.klassenTrennung !== 'keine') {
       // Je Leistungsklasse eigene Gruppen; Gesetzte und Zufall wie sonst, nur innerhalb der Klasse
@@ -215,6 +234,9 @@ export function runden(k: KonkurrenzZustand): number {
 
 /** Lesbare Runde eines Spiels: „Gruppe A · Runde 2“, „Halbfinale“, „Trostrunde: Endspiel“, „Verliererrunde 3“ */
 export function rundeVon(k: KonkurrenzZustand, s: Spiel): string {
+  if (k.einst.modus === 'schweizer' && s.phase === 'gruppen') return `Runde ${s.runde}`;
+  if (k.einst.modus === 'kaiser' && s.phase === 'gruppen')
+    return s.bFrei ? `Runde ${s.runde} · setzt aus` : `Runde ${s.runde} · ${s.index === 0 ? 'Kaisertisch' : `Stufe ${s.index + 1}`}`;
   if (s.phase === 'gruppen') return `Gruppe ${gruppenName(s.gruppe ?? 0)} · Runde ${s.runde}`;
   if (s.platz3) return 'Spiel um Platz 3';
   const R = s.baum === 'haupt' ? runden(k) : s.baum === 'trost' ? runden(k) - 1 : 0;
@@ -222,7 +244,28 @@ export function rundeVon(k: KonkurrenzZustand, s: Spiel): string {
 }
 
 export function platzierungen(k: KonkurrenzZustand): Platzierung[] {
+  if (istRundenModus(k.einst.modus)) return rundenPlatzierungen(k, zurueckgezogen(k)).map((x) => ({ ...x, bezeichnung: `${x.platz}.` }));
   return koPlatzierungen(k);
+}
+
+/**
+ * Vorgabe eines Spiels (Vorgabeturnier): Wer hat Vorgabe und wie viele Punkte je Satz?
+ * Je `einst.vorgabe` TTR-Punkte Unterschied ein Punkt, höchstens `vorgabeMax`. Doppel: Mittel beider TTR.
+ * Ohne TTR bei einem der beiden: keine Vorgabe (null).
+ */
+export function vorgabeVon(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel): { seite: Seite; punkte: number } | null {
+  const je = k.einst.vorgabe;
+  if (!je || !s.a || !s.b) return null;
+  const ttr = (t: string) => {
+    const w = spielerVon(k, t).map((id) => z.spieler[id]?.ttr);
+    return w.every((x): x is number => typeof x === 'number') ? w.reduce((a, b) => a + b, 0) / w.length : null;
+  };
+  const a = ttr(s.a);
+  const b = ttr(s.b);
+  if (a === null || b === null) return null;
+  const punkte = Math.min(k.einst.vorgabeMax, Math.floor(Math.abs(a - b) / je));
+  if (punkte <= 0) return null;
+  return { seite: a < b ? 'a' : 'b', punkte };
 }
 export function trostPlaetze(k: KonkurrenzZustand): Platzierung[] {
   return trostPlatzierungen(k);

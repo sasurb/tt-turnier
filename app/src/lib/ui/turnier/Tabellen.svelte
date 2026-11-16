@@ -8,6 +8,8 @@
   import type { TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
   import KoBaum from './KoBaum.svelte';
+  import RundenTabelle from './RundenTabelle.svelte';
+  import { istRundenModus } from '../../engine/runden';
   import WertungInfo from './WertungInfo.svelte';
 
   let {
@@ -44,11 +46,14 @@
   {/if}
 
   <section class="karte">
-    <h2>{k.einst.name} <span class="marke">{T.konk.status[k.status]}</span></h2>
+    <h2>{k.einst.name} <span class="marke">{T.konk.status[istRundenModus(k.einst.modus) && k.status === 'gruppen' ? 'runden' : k.status]}</span></h2>
     {#if !zeige.tabellen && k.gruppen.length}
       <p class="meldung info" data-testid="verdeckt">{T.tab.verdeckt}</p>
     {/if}
-    {#each zeige.tabellen ? k.gruppen : [] as g (g.nr)}
+    {#if istRundenModus(k.einst.modus) && zeige.tabellen}
+      <RundenTabelle {z} {k} />
+    {/if}
+    {#each zeige.tabellen && !istRundenModus(k.einst.modus) ? k.gruppen : [] as g (g.nr)}
       {@const t = tabelle(k, g.nr)}
       <h3>{k.gruppen.length > 1 ? T.konk.gruppe(gruppenName(g.nr)) : T.konk.modi.jgj}{#if klassen[g.nr]}<span class="marke klasse">{klassen[g.nr]}</span>{/if}<Hilfe text={T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
       <div class="rollen">
@@ -90,7 +95,7 @@
         </div>
       {/if}
     {/each}
-    {#if k.gruppen.length && zeige.tabellen}<WertungInfo aktiv={k.einst.wertung} />{/if}
+    {#if k.gruppen.length && zeige.tabellen && !istRundenModus(k.einst.modus)}<WertungInfo aktiv={k.einst.wertung} />{/if}
 
     {#if k.einst.modus === 'gruppen_ko' && !k.gestartet.ko}
       <p class="meldung info">{T.tab.endrundeWartet}</p>

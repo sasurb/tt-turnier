@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.7.0";
+    public static final String VERSION = "0.8.0";
     public static final int PROTOKOLL = 1;
     public static final String ONLINE_STANDARD = "https://saschaurban.de/tt-turnier/api/index.php";
 

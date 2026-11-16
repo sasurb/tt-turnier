@@ -2,7 +2,8 @@ import { name, platzierungen, runden, tabelle } from './abfragen';
 import { ergebnisText } from './ergebnis';
 import { rundenName, baumRunden, trostPlatzierungen } from './ko';
 import { gruppenName, type KonkurrenzZustand, type Spiel } from './modell';
-import type { TurnierZustand } from './zustand';
+import { istRundenModus, kaiserTabelle, letzteRunde, schweizerTabelle } from './runden';
+import { zurueckgezogen, type TurnierZustand } from './zustand';
 
 /**
  * Lesbarer Stand als Text (für die Sicherungsmail und zum Teilen).
@@ -20,7 +21,7 @@ function spielZeile(z: TurnierZustand, s: Spiel): string {
   const a = s.aFrei ? 'Freilos' : name(z, s.a);
   const b = s.bFrei ? 'Freilos' : name(z, s.b);
   let erg = '';
-  if (s.status === 'freilos') erg = 'Freilos';
+  if (s.status === 'freilos') erg = s.id.startsWith('ks-') ? 'setzt aus' : 'Freilos';
   else if (s.status === 'entfallen') erg = 'entfällt';
   else if (s.ergebnis) erg = ergebnisText(s.ergebnis) + (s.gestrichen ? ' (gestrichen)' : '');
   else if (s.status === 'wartet') erg = 'wartet';
@@ -36,6 +37,10 @@ function konkurrenzText(z: TurnierZustand, k: KonkurrenzZustand): string {
   l.push(titel, '='.repeat(titel.length));
   if (!k.gestartet.gruppen && !k.gestartet.ko) {
     l.push('Noch nicht gestartet.', '');
+    return l.join('\n');
+  }
+  if (istRundenModus(k.einst.modus)) {
+    l.push(...rundenText(z, k), '');
     return l.join('\n');
   }
   for (const g of k.gruppen) {
@@ -87,6 +92,32 @@ function konkurrenzText(z: TurnierZustand, k: KonkurrenzZustand): string {
   }
   l.push('');
   return l.join('\n');
+}
+
+function rundenText(z: TurnierZustand, k: KonkurrenzZustand): string[] {
+  const l: string[] = [];
+  const zur = zurueckgezogen(k);
+  const zusatz = (id: string, zr: boolean) => name(z, id) + (zr ? ' (zur.)' : '');
+  if (k.einst.modus === 'schweizer') {
+    l.push('', 'Rangliste (Schweizer System)');
+    l.push(`  ${'Pl'.padEnd(3)}${links('Name', 26)}${rechts('Pkt', 4)}${rechts('Buchholz', 9)}${rechts('Fein', 6)}${rechts('Sätze', 8)}`);
+    for (const r of schweizerTabelle(k, zur))
+      l.push(`  ${rechts(r.platz, 2)} ${links(zusatz(r.id, r.zurueckgezogen), 26)}${rechts(r.punkte, 4)}${rechts(r.buchholz, 9)}${rechts(r.feinbuchholz, 6)}${rechts(`${r.saetzeG}:${r.saetzeV}`, 8)}`);
+  } else {
+    const t = kaiserTabelle(k, zur);
+    l.push('', `Rangleiter (Kaiserturnier, nach Runde ${t.nachRunde})`);
+    l.push(`  ${'Pl'.padEnd(3)}${links('Name', 26)}${rechts('S:N', 7)}${rechts('Kaisertisch', 12)}`);
+    for (const r of t.zeilen)
+      l.push(`  ${rechts(r.platz, 2)} ${links(zusatz(r.id, r.zurueckgezogen), 26)}${rechts(`${r.siege}:${r.niederlagen}`, 7)}${rechts(r.kaiserSiege, 12)}`);
+  }
+  for (let r = 1; r <= letzteRunde(k); r++) {
+    l.push('', `Runde ${r}`);
+    for (const id of k.reihenfolge) {
+      const s = k.spiele[id]!;
+      if (s.phase === 'gruppen' && s.runde === r) l.push(spielZeile(z, s));
+    }
+  }
+  return l;
 }
 
 export function uebersichtText(z: TurnierZustand): string {

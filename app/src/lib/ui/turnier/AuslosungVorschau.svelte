@@ -12,6 +12,7 @@
     z,
     gruppen = null,
     klassen = null,
+    startliste = false,
     plaetze = null,
     tauschen = null,
   }: {
@@ -19,6 +20,8 @@
     gruppen?: string[][] | null;
     /** Klassenname je Gruppe (bei Klassentrennung) */
     klassen?: string[] | null;
+    /** Eine Startliste statt Gruppen (Schweizer System, Kaiserturnier) */
+    startliste?: boolean;
     plaetze?: (string | null)[] | null;
     tauschen?: ((a: string, b: string) => Promise<void>) | null;
   } = $props();
@@ -59,7 +62,7 @@
   <div class="gruppen">
     {#each gruppen as g, nr (nr)}
       <div class="gruppe">
-        <h4>{T.konk.gruppe(gruppenName(nr))}{#if klassen?.[nr]}<span class="marke">{klassen[nr]}</span>{/if}</h4>
+        <h4>{startliste ? T.konk.startliste : T.konk.gruppe(gruppenName(nr))}{#if klassen?.[nr]}<span class="marke">{klassen[nr]}</span>{/if}</h4>
         <ol>
           {#each g as id, i (id)}
             <li>

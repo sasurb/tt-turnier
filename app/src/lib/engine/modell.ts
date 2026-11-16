@@ -6,10 +6,12 @@ import type { Autor } from '@shared/protokoll';
  */
 
 /**
- * Spielsystem: jeder gegen jeden, Gruppen + K.-o., K.-o. (einfach) oder Doppel-K.-o.
- * (zweite Chance: Verlierer spielen im Verliererbaum weiter, Endspiel Sieger gegen Sieger).
+ * Spielsystem: jeder gegen jeden, Gruppen + K.-o., K.-o. (einfach), Doppel-K.-o.
+ * (zweite Chance: Verlierer spielen im Verliererbaum weiter, Endspiel Sieger gegen Sieger),
+ * Schweizer System oder Kaiserturnier (beide Runde für Runde ausgelost, siehe runden.ts).
  */
-export type Modus = 'jgj' | 'gruppen_ko' | 'ko' | 'doppel_ko';
+export type Modus = 'jgj' | 'gruppen_ko' | 'ko' | 'doppel_ko' | 'schweizer' | 'kaiser';
+export const MODI: readonly Modus[] = ['gruppen_ko', 'jgj', 'ko', 'doppel_ko', 'schweizer', 'kaiser'];
 /** Einzel, Doppel (zwei Spieler je Teilnehmer) oder Mixed (Doppel aus Frau und Mann) */
 export type KonkurrenzArt = 'einzel' | 'doppel' | 'mixed';
 /** Rangfolge in Gruppen: DTTB-Wettspielordnung D 7.5 oder ITTF-Regel 3.7.5 */
@@ -37,7 +39,8 @@ export const ALLES_OEFFENTLICH: Veroeffentlichung = {
   tabellen: true,
   ko: true,
 };
-export type BestOf = 3 | 5 | 7;
+/** Best of 1 = ein Gewinnsatz (z. B. beim Kaiserturnier) */
+export type BestOf = 1 | 3 | 5 | 7;
 export type Geschlecht = 'm' | 'w' | 'd';
 /** Angaben, die die Turnierleitung zusätzlich zu Name und Verein im Turnier führen kann */
 export type Angabe = 'ttr' | 'klasse' | 'geschlecht' | 'jahrgang';
@@ -104,6 +107,14 @@ export interface KonkurrenzEinstellungen {
    * dann entscheidet ein zweites Endspiel. Aus = ein Endspiel entscheidet.
    */
   finaleWiederholung: boolean;
+  /** Schweizer System und Kaiserturnier: Anzahl Runden; null = automatisch */
+  runden: number | null;
+  /**
+   * Vorgabeturnier: Der schwächere Teilnehmer beginnt jeden Satz mit Vorgabepunkten –
+   * je so vielen TTR-Punkten Unterschied ein Punkt (null = ohne Vorgabe), höchstens vorgabeMax.
+   */
+  vorgabe: number | null;
+  vorgabeMax: number;
 }
 
 export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
@@ -134,6 +145,9 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
     art: 'einzel',
     trostrunde: false,
     finaleWiederholung: false,
+    runden: null,
+    vorgabe: null,
+    vorgabeMax: 8,
   };
 }
 
@@ -145,7 +159,7 @@ export interface Paar {
 
 /** Hat die Konkurrenz einen K.-o.-Teil? */
 export function mitKo(modus: Modus): boolean {
-  return modus !== 'jgj';
+  return modus === 'gruppen_ko' || modus === 'ko' || modus === 'doppel_ko';
 }
 
 /** Leistungsklasse eines Spielers für die Gruppenbildung; '' = ohne Klasse */

@@ -3,11 +3,13 @@ import type { LokalesEreignis } from './typen';
 import { eingabeTauschen, ergebnisGleich, ergebnisWerten } from './ergebnis';
 import { abhaengigeMitErgebnis, koAktualisieren, koAnlegen } from './ko';
 import { rundenplan } from './rundenplan';
+import { ersteRundeAnlegen, istRundenModus, letzteRunde, rundeFertig, rundenAktualisieren } from './runden';
 import { kampflosErgebnis } from './wertung';
 import {
   ALLE_ANGABEN,
   ALLES_OEFFENTLICH,
   FEST_NACH_START,
+  MODI,
   STANDARD_ANGABEN,
   mitKo,
   standardEinstellungen,
@@ -17,6 +19,7 @@ import {
   type ErgebnisEintrag,
   type KonkurrenzEinstellungen,
   type KonkurrenzZustand,
+  type Modus,
   type Schiedsrichter,
   type Seite,
   type Spiel,
@@ -131,11 +134,16 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
   const x = d as Record<string, unknown>;
   const n = text(x.name, 80);
   if (n) e.name = n;
-  if (x.modus === 'jgj' || x.modus === 'gruppen_ko' || x.modus === 'ko' || x.modus === 'doppel_ko') e.modus = x.modus;
+  if (typeof x.modus === 'string' && (MODI as readonly string[]).includes(x.modus)) e.modus = x.modus as Modus;
+  if (x.runden === null) e.runden = null;
+  else if (zahl(x.runden, 1, 30)) e.runden = x.runden as number;
+  if (x.vorgabe === null) e.vorgabe = null;
+  else if (zahl(x.vorgabe, 10, 500)) e.vorgabe = x.vorgabe as number;
+  if (zahl(x.vorgabeMax, 1, 10)) e.vorgabeMax = x.vorgabeMax as number;
   if (x.art === 'einzel' || x.art === 'doppel' || x.art === 'mixed') e.art = x.art;
   if (typeof x.trostrunde === 'boolean') e.trostrunde = x.trostrunde;
   if (typeof x.finaleWiederholung === 'boolean') e.finaleWiederholung = x.finaleWiederholung;
-  if (x.bestOf === 3 || x.bestOf === 5 || x.bestOf === 7) e.bestOf = x.bestOf;
+  if (x.bestOf === 1 || x.bestOf === 3 || x.bestOf === 5 || x.bestOf === 7) e.bestOf = x.bestOf;
   if (x.eingabe === 'punkte' || x.eingabe === 'saetze') e.eingabe = x.eingabe;
   if (x.wertung === 'dttb' || x.wertung === 'ittf') e.wertung = x.wertung;
   if (x.rueckzug === 'wo' || x.rueckzug === 'hobby') e.rueckzug = x.rueckzug;
@@ -227,7 +235,7 @@ export function teilnehmerVon(k: KonkurrenzZustand, spieler: string): string | n
 /** Teilnehmer, die zurückgezogen haben (ausdrücklich oder – WO D 7.9 – durch kampflos/Aufgabe in der Gruppe), in Reihenfolge */
 export function zurueckgezogen(k: KonkurrenzZustand): string[] {
   const liste = [...k.rueckzuege].sort((a, b) => a.nr - b.nr).map((r) => ({ id: r.teilnehmer, zeit: r.zeit }));
-  if (k.einst.rueckzug === 'wo') {
+  if (k.einst.rueckzug === 'wo' && !istRundenModus(k.einst.modus)) {
     for (const id of k.reihenfolge) {
       const s = k.spiele[id]!;
       if (s.phase !== 'gruppen' || !s.eintrag) continue;
@@ -276,6 +284,11 @@ function gruppenAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>) {
 
 function statusAktualisieren(k: KonkurrenzZustand) {
   const zurueck = new Set(zurueckgezogen(k));
+  if (k.gestartet.gruppen && istRundenModus(k.einst.modus)) {
+    rundenAktualisieren(k, zurueck);
+    k.status = rundeFertig(k, letzteRunde(k)) ? 'beendet' : 'gruppen';
+    return;
+  }
   if (k.gestartet.gruppen) gruppenAktualisieren(k, zurueck);
   if (k.gestartet.ko) koAktualisieren(k, zurueck);
   if (!begonnen(k)) k.status = 'meldung';
@@ -694,6 +707,10 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
           warnen('Ungültige Gruppenauslosung.');
           break;
         }
+        if (istRundenModus(k.einst.modus) && g.length !== 1) {
+          warnen('Beim Schweizer System und Kaiserturnier gibt es nur eine Startliste.');
+          break;
+        }
         k.auslosungGruppen = { zufall, gruppen: g as string[][] };
       } else if (d.phase === 'ko') {
         if (k.gestartet.ko || (k.einst.modus === 'gruppen_ko' && !k.gestartet.gruppen) || !mitKo(k.einst.modus)) {
@@ -728,7 +745,10 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
           warnen('Die Auslosung passt nicht zu den Meldungen – bitte neu auslosen.');
           break;
         }
-        gruppenAnlegen(k);
+        if (istRundenModus(k.einst.modus)) {
+          k.gruppen = [{ nr: 0, mitglieder: [...k.auslosungGruppen!.gruppen[0]!], los: leer() }];
+          k.reihenfolge.push(...ersteRundeAnlegen(k));
+        } else gruppenAnlegen(k);
         k.gestartet.gruppen = true;
       } else if (d.phase === 'ko') {
         if (k.gestartet.ko || !mitKo(k.einst.modus) || !k.auslosungKo) break;

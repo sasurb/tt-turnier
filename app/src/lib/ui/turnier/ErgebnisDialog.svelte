@@ -2,7 +2,8 @@
   import { seiteVon } from '../../engine/zustand';
   import { ART, type Rolle } from '@shared/protokoll';
   import { T } from '../../texte';
-  import { name } from '../../engine/abfragen';
+  import { name, vorgabeVon } from '../../engine/abfragen';
+  import { istRundenModus } from '../../engine/runden';
   import { ergebnisText, ergebnisWerten, gewinnSaetze, satzAusVerliererpunkten } from '../../engine/ergebnis';
   import type { ErgebnisEingabe, ErgebnisEintrag, KonkurrenzZustand, Seite, Spiel } from '../../engine/modell';
   import type { TurnierZustand } from '../../engine/zustand';
@@ -34,6 +35,7 @@
   const darf = $derived(amtlich || meineSeite !== null);
   const nurSaetze = $derived(k.einst.eingabe === 'saetze');
   const gewinn = $derived(gewinnSaetze(k.einst.bestOf));
+  const vorgabe = $derived(vorgabeVon(z, k, spiel));
   const nameA = $derived(name(z, spiel.a) + (meineSeite === 'a' ? ` (${T.erg.du})` : ''));
   const nameB = $derived(name(z, spiel.b) + (meineSeite === 'b' ? ` (${T.erg.du})` : ''));
   const kannEintragen = $derived(darf && (spiel.status === 'offen' || spiel.status === 'gespielt') && !spiel.gestrichen && !spiel.gesperrt && !(spiel.kampflosDurchRueckzug && !spiel.eintrag));
@@ -149,6 +151,7 @@
     <div>
       <div class="leise">{k.einst.name}</div>
       <h2 id="erg-titel">{nameA} <span class="leise">–</span> {nameB}</h2>
+      {#if vorgabe}<p class="vorgabe" data-testid="vorgabe">{T.spiele.vorgabe(name(z, vorgabe.seite === 'a' ? spiel.a : spiel.b), vorgabe.punkte)}</p>{/if}
     </div>
     <button class="zweit klein" onclick={() => dialog?.close()} aria-label={T.app.schliessen}>✕</button>
   </div>
@@ -216,7 +219,7 @@
             <button type="button" class="chip" class:aktiv={wer === 'b'} aria-pressed={wer === 'b'} onclick={() => (wer = 'b')}>{nameB}</button>
           </div>
         </fieldset>
-        {#if spiel.phase === 'gruppen' && k.einst.rueckzug === 'wo'}<p class="leise">{T.erg.woHinweis}</p>{/if}
+        {#if spiel.phase === 'gruppen' && k.einst.rueckzug === 'wo' && !istRundenModus(k.einst.modus)}<p class="leise">{T.erg.woHinweis}</p>{/if}
       {/if}
 
       {#if art !== 'kampflos'}
@@ -336,4 +339,5 @@
   .unten { margin-top: 14px; }
   .marke.stand-angefochten, .marke.stand-konflikt { color: var(--rot); border-color: var(--rot); }
   .marke.stand-bestaetigt { color: var(--gruen); border-color: var(--gruen); }
+  .vorgabe { margin: 4px 0 0; font-weight: 600; color: var(--blau); }
 </style>

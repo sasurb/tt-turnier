@@ -106,7 +106,7 @@ Spieler: `spieler.angelegt|geaendert|entfernt`. Konkurrenzen: `konkurrenz.angele
 `spiel.entschieden`, `spiel.zurueckgesetzt`, `spiel.aufgerufen` (`{konkurrenz, spiel, tisch, schiri?}`,
 `schiri` = `{spieler}` oder `{name}`, höchstens 80 Zeichen), `spiel.aufruf_zurueck`. Tische: `tisch.gesperrt`
 (`{tisch, gesperrt}`). K.-o.-Varianten (Trostrunde, Doppel-K.-o., zweites Endspiel) und Doppel/Mixed
-stehen in den Konkurrenz-Einstellungen (`art`, `trostrunde`, `finaleWiederholung`, Modus `doppel_ko`). Der Server wertet nur `turnier.abgeschlossen` aus (letzte Sicherung).
+stehen in den Konkurrenz-Einstellungen (`art`, `trostrunde`, `finaleWiederholung`, Modus `doppel_ko`). Ab 0.8: Modi `schweizer` und `kaiser` (eine Startliste als einzige „Gruppe“ in `auslosung.gesetzt`, Runden entstehen in der Engine aus den Ergebnissen; Spiel-IDs `sw-<runde>-<nr>` bzw. `ks-<runde>-<nr>`), `runden` (1–30, null = automatisch), Vorgabe `vorgabe` (TTR-Punkte je Vorgabepunkt, 10–500, null = aus) und `vorgabeMax` (1–10), `bestOf` 1 erlaubt. Der Server wertet nur `turnier.abgeschlossen` aus (letzte Sicherung).
 
 Die Auslosung wird mit ihrem Ergebnis gespeichert (nicht nur mit dem Zufallswert), damit spätere
 App-Versionen mit geänderten Verfahren alte Turniere unverändert anzeigen.
