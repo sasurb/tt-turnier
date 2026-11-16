@@ -30,6 +30,8 @@
   let liste = $state<AnmeldungEintrag[]>([]);
   let qr = $state(false);
   let sendet = $state(false);
+  /** Ab Server 0.12: Online-Anmeldung für das Konto freigegeben? (null = ältere Server: immer) */
+  let freigabe = $state<{ erlaubt: boolean; ab: string | null } | null>(null);
 
   // Formular
   let offen = $state(false);
@@ -97,6 +99,7 @@
       const a = await api.anmeldungen(token, turnierId);
       einst = a.einstellungen;
       liste = a.anmeldungen;
+      freigabe = a.freigabe ?? null;
       formularAus(a.einstellungen);
       fehler = '';
       // Konkurrenzen (Namen, Höchstzahl, Startgeld, von Hand Gemeldete) still nachziehen
@@ -235,12 +238,15 @@
     {/if}
     {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
     {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
+    {#if freigabe && !freigabe.erlaubt}
+      <div class="meldung info" role="status" data-testid="anmeldung-freigabe">{T.anm.nochNichtFrei(freigabe.ab)}</div>
+    {/if}
     <div class="reihe">
       {#if einst?.offen}
         <button disabled={sendet} onclick={() => speichern(true)}>{T.anm.speichern}</button>
         <button class="zweit" disabled={sendet} onclick={() => speichern(false)} data-testid="anmeldung-schliessen">{T.anm.schliessen}</button>
       {:else}
-        <button disabled={sendet || !z.datum || !z.konkurrenzReihe.length} onclick={() => speichern(true)} data-testid="anmeldung-oeffnen">{T.anm.oeffnen}</button>
+        <button disabled={sendet || !z.datum || !z.konkurrenzReihe.length || (freigabe !== null && !freigabe.erlaubt)} onclick={() => speichern(true)} data-testid="anmeldung-oeffnen">{T.anm.oeffnen}</button>
       {/if}
     </div>
   {/if}

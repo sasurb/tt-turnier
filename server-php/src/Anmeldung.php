@@ -71,6 +71,10 @@ final class Anmeldung
         if (!($e['offen'] ?? false) || $t['datum'] === null || $this->heute() >= (string)$t['datum']) {
             return false;
         }
+        // Konto gesperrt oder (noch) nicht für die Online-Anmeldung freigegeben (Etappe 10)
+        if (!$this->api->anmeldungFreigabe((int)$t['konto_id'])['erlaubt']) {
+            return false;
+        }
         $schluss = $e['schluss'] ?? null;
         return $schluss === null || $this->api->jetzt() < (int)strtotime((string)$schluss);
     }
@@ -642,7 +646,7 @@ final class Anmeldung
             ];
         }
         // Für die Leitung mit „vorab“ (von Hand Gemeldete), damit die App Änderungen erkennt
-        return ['einstellungen' => $e, 'anmeldungen' => $aus];
+        return ['einstellungen' => $e, 'anmeldungen' => $aus, 'freigabe' => $this->api->anmeldungFreigabe((int)$t['konto_id'])];
     }
 
     public function liste(Anfrage $a): array
@@ -708,6 +712,13 @@ final class Anmeldung
             'bank' => $bank,
             'ort' => is_string($r['ort'] ?? null) ? mb_substr(trim($r['ort']), 0, 120) : '',
         ];
+        // Freigabe zuletzt prüfen (erst die Eingaben, damit Fehler darin sofort auffallen)
+        $frei = $this->api->anmeldungFreigabe((int)$t['konto_id']);
+        if ($offen && !$frei['erlaubt']) {
+            throw new ApiFehler('keine_berechtigung', $frei['ab'] !== null
+                ? 'Die Online-Anmeldung steht neuen Konten ab ' . gmdate('d.m.Y', (int)strtotime($frei['ab'])) . ' zur Verfügung (Schutz vor Missbrauch). Der Administrator kann sie früher freischalten.'
+                : 'Die Online-Anmeldung ist für dieses Konto nicht freigegeben. Bitte wende dich an den Administrator.');
+        }
         $alt = self::einst($t);
         $this->db->ausfuehren('UPDATE turniere SET anmeldung = ? WHERE id = ?', [json_encode($e, JSON_UNESCAPED_UNICODE), $t['id']]);
         $s = $this->api->sitzung($a);

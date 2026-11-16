@@ -194,6 +194,10 @@ export class Api {
       rumpf: a,
     });
   }
+  /** Admin: Online-Anmeldung für ein Konto (ab 0.12) */
+  kontoAnmeldung(token: string, id: number, anmeldung: 'auto' | 'frei' | 'gesperrt') {
+    return this.rufe<{ konto: Konto }>('POST', 'konto.anmeldung', { token, rumpf: { id, anmeldung } });
+  }
   kontoSperren(token: string, id: number, gesperrt: boolean) {
     return this.rufe<{ konto: Konto }>('POST', 'konto.sperren', {
       token,

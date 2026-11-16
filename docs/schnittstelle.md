@@ -45,6 +45,7 @@ Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 | GET | `konten` | Admin | alle Konten mit letzter Anmeldung und Turnierzahl |
 | POST | `konto.anlegen` | Admin | Turnierleitungs-Konto anlegen `{name, email, passwort}` (Rolle technisch `veranstalter`) |
 | POST | `konto.sperren` | Admin | `{id, gesperrt}`; Sperre beendet alle Sitzungen des Kontos |
+| POST | `konto.anmeldung` | Admin | `{id, anmeldung: auto\|frei\|gesperrt}` – Online-Anmeldung für das Konto (ab 0.12) |
 | GET | `turniere` | Konto | eigene Turniere; Admin mit `&alle=1` alle |
 | POST | `turnier.anlegen` | Konto | `{name, datum, sicherungAn?}` → `{turnier, token, leitung}`; `turnier.id` ist die 8-stellige Turnierkennung, `leitung` die erste Leitungskennung (auf den Kontonamen) |
 | GET | `turnier&id=…` | offen | Name, Datum, Turnierleitung (`veranstalter`); mit Token zusätzlich `rechte` (`leitung`/`helfer`/`spieler`/null) und `spieler` |
@@ -311,3 +312,26 @@ das Turnierdatum nicht entfernen. Die Bankverbindung liefert nur der Stand einer
 - `konto.einstellungen` speichert zusätzlich `kasse` (Vorgabe für Quittungen, IBAN wird geprüft).
 - Spieler- und Konkurrenz-IDs: `/^[a-z0-9]{1,16}$/` (Engine).
 - Neuer Fehlercode `abgelaufen` (410): Bestätigungslink abgelaufen bzw. Anmeldung geschlossen.
+
+## Etappe 10 (ab 0.12, Schema 8)
+
+- **Entfernte Spieler:** In den Sichten `spieler`, `zuschauer` und `kurz` ersetzen die Server bei `spieler.angelegt`
+  und `spieler.geaendert` alle Angaben zu Spielern, die per `spieler.entfernt` entfernt wurden (nicht zurückgenommen)
+  oder deren Anlegen zurückgenommen wurde: Es bleiben `id` und bei `spieler.angelegt` `vorname: "Entfernt"`, ein
+  leerer `nachname` und ein leerer `verein`. Gezählt werden nur Einträge der Leitung. Die Antwort trägt dann `filter`
+  (16 Zeichen, sha256 der sortierten IDs). Ändert er sich, holt das Gerät alles neu ab, wie bei einem Wechsel der Sicht.
+  Gleiche Regel in `Api::entfernteAus` (PHP) und `Zentrale.entfernteSpieler` (Java).
+- **Lizenz (click-TT, vorbereitet):** Feld `lizenz` an Spielern, nur in der vollen Sicht (`docs/erweiterungen.md`).
+- **Sicht `helfer`** (Helfer ohne Aufgabe Kasse) ab 0.12 zusätzlich ohne `jahrgang`, `geschlecht`, `pool`, `lizenz`.
+  In der Sicht `spieler` fehlen bei entfernten Spielern auch `autor.name` und der Name im Schiedsrichter (`schiri` → `{spieler}`).
+- **Sicherung von der Zentrale (`sicherung.senden`):** zählt zur Tagesgrenze des Kontos; nicht freigegebene Konten
+  (siehe Online-Anmeldung) nur an die eigene Adresse (403).
+- **Grenzen:** `turnier.anlegen` höchstens 20 je Konto und Tag und 300 je Konto (Admin ausgenommen; 429 bzw. 413).
+  Höchstens 150 Sicherungsmails je Konto und Tag (darüber still übersprungen, die Datei bleibt herunterladbar).
+- **Sicherungsempfänger:** Fügt jemand anderes als das Eigentümer-Konto Empfänger hinzu (`turnier.einstellungen`),
+  geht eine Mail an das Konto.
+- **Online-Anmeldung:** Öffnen nur, wenn das Konto freigegeben ist. Das gilt für den Admin immer, sonst nach Freigabe
+  (`konten.anmeldung_frei = 1`) oder nach 7 Tagen Kontoalter, solange nicht gesperrt (`0`). Bei einem gesperrten
+  Konto schließt die Anmeldeseite (`moeglich: false`). `GET anmeldungen` liefert `freigabe {erlaubt, ab}`.
+  `Konto.anmeldung` = `auto | frei | gesperrt`.
+

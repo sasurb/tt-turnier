@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
 
@@ -28,7 +29,9 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.11.0";
+    public static final String VERSION = "0.12.0";
+    /** Platzhalter für Namen entfernter Spieler (wie PHP Api::ENTFERNT_NAME) */
+    static final String ENTFERNT_NAME = "Entfernt";
     public static final int PROTOKOLL = 1;
     public static final String ONLINE_STANDARD = "https://saschaurban.de/tt-turnier/api/index.php";
 
@@ -837,6 +840,8 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             int start = (int) Math.max(0, Math.min(ab, t.ereignisse.size()));
             while (start > 0 && zahl(t.ereignisse.get(start - 1).get("seq"), 0) > ab) start--;
             long bis = ab;
+            // Spieler und Zuschauer: Namen entfernter Spieler ersetzen (wie PHP, Etappe 10)
+            Set<String> weg = ("spieler".equals(sicht) || "zuschauer".equals(sicht) || "kurz".equals(sicht)) ? entfernteSpieler(t.ereignisse) : Collections.emptySet();
             for (int i = start; i < t.ereignisse.size(); i++) {
                 Map<String, Object> e = t.ereignisse.get(i);
                 long seq = zahl(e.get("seq"), 0);
@@ -846,9 +851,11 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                 // Zahlungen und Check-in nur in der vollen Sicht (wie PHP)
                 if (!"voll".equals(sicht) && NUR_VOLLE_SICHT.contains(e.get("art"))) continue;
                 Map<String, Object> m = ausgabe(e, true);
-                aus.add("voll".equals(sicht) ? m : gefiltert(m, sicht));
+                aus.add("voll".equals(sicht) ? m : gefiltert(m, sicht, weg));
             }
-            return Json.obj("ereignisse", aus, "hoechsteSeq", t.hoechsteSeq(), "mehr", mehr, "sicht", sicht, "bis", bis);
+            Map<String, Object> antwort = Json.obj("ereignisse", aus, "hoechsteSeq", t.hoechsteSeq(), "mehr", mehr, "sicht", sicht, "bis", bis);
+            if (!weg.isEmpty()) antwort.put("filter", filterKennung(weg));
+            return antwort;
         }
     }
 
@@ -895,19 +902,84 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         return n.substring(0, n.offsetByCodePoints(0, 1)).toUpperCase(Locale.GERMAN) + ".";
     }
 
-    private static Map<String, Object> gefiltert(Map<String, Object> e, String sicht) {
+    /** Fingerabdruck der Menge entfernter Spieler (wie PHP Api::filterKennung) */
+    static String filterKennung(Set<String> weg) {
+        List<String> ids = new ArrayList<>(weg);
+        Collections.sort(ids);
+        return sha256(String.join(",", ids)).substring(0, 16);
+    }
+
+    private static boolean leitungAutor(Map<String, Object> e) {
+        Map<String, Object> au = Json.alsObjekt(e.get("autor"));
+        String r = au == null ? "" : String.valueOf(au.get("rolle"));
+        return "leitung".equals(r) || "admin".equals(r) || "veranstalter".equals(r);
+    }
+
+    /** Entfernte Spieler (spieler.entfernt nicht zurückgenommen, oder jedes Anlegen zurückgenommen) – wie PHP Api::entfernteAus */
+    static Set<String> entfernteSpieler(List<Map<String, Object>> liste) {
+        Map<String, String[]> ziel = new LinkedHashMap<>();
+        Map<String, Boolean> zurueck = new HashMap<>();
+        for (Map<String, Object> e : liste) {
+            String art = String.valueOf(e.get("art"));
+            if (!"spieler.angelegt".equals(art) && !"spieler.entfernt".equals(art) && !"eintrag.zurueckgenommen".equals(art)) continue;
+            Map<String, Object> d = Json.alsObjekt(e.get("daten"));
+            if (d == null) continue;
+            if ("eintrag.zurueckgenommen".equals(art)) {
+                if (!leitungAutor(e) || !(d.get("ereignisse") instanceof List)) continue;
+                boolean z = !Boolean.FALSE.equals(d.get("zurueck"));
+                List<?> ids = (List<?>) d.get("ereignisse");
+                for (int i = 0; i < Math.min(200, ids.size()); i++) {
+                    Object id = ids.get(i);
+                    if (id instanceof String && ziel.containsKey(id)) zurueck.put((String) id, z);
+                }
+                continue;
+            }
+            Object sp = d.get("id");
+            if (!(sp instanceof String) || ("spieler.entfernt".equals(art) && !leitungAutor(e))) continue;
+            String eid = String.valueOf(e.get("id"));
+            if (!ziel.containsKey(eid)) ziel.put(eid, new String[] {art, (String) sp});
+        }
+        Map<String, Boolean> angelegt = new HashMap<>();
+        Set<String> weg = new TreeSet<>();
+        for (Map.Entry<String, String[]> z : ziel.entrySet()) {
+            boolean gilt = !Boolean.TRUE.equals(zurueck.get(z.getKey()));
+            String sp = z.getValue()[1];
+            if ("spieler.angelegt".equals(z.getValue()[0])) angelegt.put(sp, angelegt.getOrDefault(sp, false) || gilt);
+            else if (gilt) weg.add(sp);
+        }
+        for (Map.Entry<String, Boolean> a : angelegt.entrySet()) if (!a.getValue()) weg.add(a.getKey());
+        return weg;
+    }
+
+    private static Map<String, Object> gefiltert(Map<String, Object> e, String sicht, Set<String> weg) {
         if ("helfer".equals(sicht)) {
             Map<String, Object> d0 = Json.alsObjekt(e.get("daten"));
-            if (!"turnier.daten".equals(e.get("art")) || d0 == null || !d0.containsKey("kasse")) return e;
+            String art0 = String.valueOf(e.get("art"));
+            boolean spielerArt = "spieler.angelegt".equals(art0) || "spieler.geaendert".equals(art0);
+            if (d0 == null || !(("turnier.daten".equals(art0) && d0.containsKey("kasse")) || spielerArt)) return e;
             Map<String, Object> m = new LinkedHashMap<>(e);
             Map<String, Object> d = new LinkedHashMap<>(d0);
             d.remove("kasse");
+            if (spielerArt) {
+                // Datensparsamkeit (wie PHP): Jahrgang, Geschlecht, Pool-Bezug und Lizenz nur für Leitung und Kasse
+                d.remove("jahrgang");
+                d.remove("geschlecht");
+                d.remove("pool");
+                d.remove("lizenz");
+            }
             m.put("daten", d);
             return m;
         }
         boolean kurz = "kurz".equals(sicht);
         boolean zuschauer = !"spieler".equals(sicht);
         Map<String, Object> m = new LinkedHashMap<>(e);
+        Map<String, Object> au0 = Json.alsObjekt(e.get("autor"));
+        if (!zuschauer && au0 != null && au0.get("spieler") instanceof String && weg.contains(au0.get("spieler"))) {
+            // Entfernte Person hat selbst eingetragen: Name nicht mehr am Eintrag (wie PHP)
+            Map<String, Object> autor = new LinkedHashMap<>(au0);
+            autor.put("name", "");
+            m.put("autor", autor);
+        }
         if (zuschauer) {
             Map<String, Object> au = Json.alsObjekt(e.get("autor"));
             Map<String, Object> autor = new LinkedHashMap<>();
@@ -928,12 +1000,26 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             d.remove("jahrgang");
             d.remove("geschlecht");
             d.remove("pool");
-            if (kurz && d.get("nachname") instanceof String) d.put("nachname", kurzname((String) d.get("nachname")));
-        } else if (zuschauer && "spiel.aufgerufen".equals(art) && d.containsKey("schiri")) {
+            d.remove("lizenz");
+            if (d.get("id") instanceof String && weg.contains(d.get("id"))) {
+                // Entfernter Spieler: keine Angaben zur Person mehr
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("id", d.get("id"));
+                if ("spieler.angelegt".equals(art)) {
+                    r.put("vorname", ENTFERNT_NAME);
+                    r.put("nachname", "");
+                    r.put("verein", "");
+                }
+                d = r;
+            } else if (kurz && d.get("nachname") instanceof String) d.put("nachname", kurzname((String) d.get("nachname")));
+        } else if ("spiel.aufgerufen".equals(art) && d.containsKey("schiri")) {
             Map<String, Object> sc = Json.alsObjekt(d.get("schiri"));
             Object sp = sc == null ? null : sc.get("spieler");
-            if (sp instanceof String) d.put("schiri", Json.obj("spieler", sp));
-            else d.remove("schiri");
+            if (!(sp instanceof String)) {
+                if (zuschauer) d.remove("schiri");
+            } else if (zuschauer || weg.contains(sp)) {
+                d.put("schiri", Json.obj("spieler", sp));
+            }
         }
         m.put("daten", d);
         return m;

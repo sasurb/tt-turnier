@@ -283,7 +283,7 @@ $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
-pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.11.0' && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
+pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.12.0' && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1'], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
@@ -712,6 +712,16 @@ pruefe($s === 403 || $s === 409, 'fremdes Konto kann nicht zurückgeben');
 $sich = ['format' => 'tt-turnier-sicherung', 'version' => 1, 'erstellt' => '2026-12-12T10:00:00Z',
     'turnier' => ['id' => '47381920', 'name' => 'Offline-Turnier', 'datum' => null, 'modus' => 'online'],
     'ereignisse' => [ereignis('z4-000200', 'turnier.abgeschlossen', [])]];
+// Etappe 10: neue Konten senden Sicherungen nur an die eigene Adresse, bis sie freigegeben sind
+[$s, $d] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => '47381920', 'name' => 'Offline-Turnier'], 'empfaenger' => ['sicherung@example.org'], 'sicherung' => $sich], $zk);
+pruefe($s === 403, 'Neues Konto: Sicherung von der Zentrale nur an die eigene Adresse');
+[$s] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => '47381920', 'name' => 'Offline-Turnier'], 'empfaenger' => ['z@example.org'], 'sicherung' => $sich], $zk);
+pruefe($s === 200 && mailAn($mailer4, 'z@example.org') !== null, 'Neues Konto: an die eigene Adresse geht es');
+[, $d] = rufe($api, 'POST', 'login', ['email' => 'admin@example.org', 'passwort' => 'geheim123'], null, [], '10.4.0.9');
+$adm4 = $d['token'];
+[, $d] = rufe($api, 'GET', 'konten', null, $adm4);
+$zid4 = array_values(array_filter($d['konten'], fn($k) => $k['email'] === 'z@example.org'))[0]['id'];
+rufe($api, 'POST', 'konto.anmeldung', ['id' => $zid4, 'anmeldung' => 'frei'], $adm4);
 [$s, $d] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => '47381920', 'name' => 'Offline-Turnier', 'datum' => '2026-12-13'],
     'empfaenger' => ['sicherung@example.org'], 'anlass' => 'Turnier abgeschlossen (Zentrale)',
     'uebersicht' => ['text' => "Sieger: Anna", 'zeit' => '2026-12-12T10:00:00Z'], 'sicherung' => $sich], $zk);
@@ -872,6 +882,20 @@ pruefe($s === 400, 'falsche IBAN abgewiesen');
 [, $d2] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Ohne Datum', 'datum' => null], $konto);
 [$s] = rufe($api, 'POST', 'anmeldung.einstellungen', ['turnier' => $d2['turnier']['id']] + $einst, $konto);
 pruefe($s === 400, 'Anmeldung öffnen braucht ein Turnierdatum (Löschfrist)');
+// Etappe 10: neue Konten bieten die Online-Anmeldung erst nach 7 Tagen an (oder nach Freigabe durch den Admin)
+[$s, $d] = rufe($api, 'POST', 'anmeldung.einstellungen', $einst, $leit);
+pruefe($s === 403 && str_contains($d['meldung'] ?? '', 'Administrator'), 'Neues Konto: Online-Anmeldung erst nach 7 Tagen');
+[, $d] = rufe($api, 'GET', 'anmeldungen', null, $leit, ['turnier' => $tid]);
+pruefe($d['freigabe']['erlaubt'] === false && $d['freigabe']['ab'] === Api::iso($zeit + 7 * 86400), 'Liste der Leitung nennt den Tag der Freigabe');
+[, $d] = rufe($api, 'POST', 'login', ['email' => 'admin@example.org', 'passwort' => 'geheim123'], null, [], '10.9.0.9');
+$admin9 = $d['token'];
+[, $d] = rufe($api, 'GET', 'konten', null, $admin9);
+$sued = array_values(array_filter($d['konten'], fn($k) => $k['email'] === 'sued@example.org'))[0];
+pruefe($sued['anmeldung'] === 'auto', 'Konto: Online-Anmeldung automatisch');
+[$s] = rufe($api, 'POST', 'konto.anmeldung', ['id' => $sued['id'], 'anmeldung' => 'frei'], $konto);
+pruefe($s === 403, 'Freigabe nur durch den Admin');
+[$s, $d] = rufe($api, 'POST', 'konto.anmeldung', ['id' => $sued['id'], 'anmeldung' => 'frei'], $admin9);
+pruefe($s === 200 && $d['konto']['anmeldung'] === 'frei', 'Admin schaltet die Online-Anmeldung frei');
 [$s, $d] = rufe($api, 'POST', 'anmeldung.einstellungen', $einst, $leit);
 pruefe($s === 200 && $d['einstellungen']['offen'] === true && $d['einstellungen']['konkurrenzen'][0]['vorab'] === 0, 'Anmeldung geöffnet (Leitung sieht „vorab“)');
 [$s, $d] = rufe($api, 'GET', 'anmeldung', null, null, ['turnier' => $tid]);
@@ -1033,6 +1057,90 @@ rufe($api, 'GET', 'info');
 [, $d] = rufe($api, 'GET', 'anmeldungen', null, $leit, ['turnier' => $tid]);
 pruefe($n179 === 1 && $d['anmeldungen'] === [], 'Ersatzfrist: spätestens 180 Tage nach der Anmeldung gelöscht');
 
+echo "Etappe 10: entfernte Spieler, Grenzen, Freigaben\n";
+$zeit = 1_800_000_000;
+$mailer = new TestMailer();
+$api = neueApi($mailer);
+rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Nord', 'email' => 'nord@example.org', 'passwort' => 'nordnord1'], null, [], '10.10.0.1');
+$konto = $d['token'];
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Herbstturnier', 'datum' => '2027-03-01'], $konto);
+$tid = $d['turnier']['id'];
+$leit = $d['token'];
+$ev10 = fn(string $id, string $art, array $daten) => ['id' => $id, 'art' => $art, 'daten' => $daten, 'zeit' => '2027-01-15T10:00:00Z', 'geraet' => 'geraet-n'];
+rufe($api, 'POST', 'events', ['ereignisse' => [
+    $ev10('e10-0001', 'spieler.angelegt', ['id' => 'anna', 'vorname' => 'Anna', 'nachname' => 'Arm', 'verein' => 'TTC', 'jahrgang' => 2010, 'lizenz' => 'NU-12345']),
+    $ev10('e10-0002', 'spieler.angelegt', ['id' => 'bert', 'vorname' => 'Bert', 'nachname' => 'Bein', 'verein' => 'TTC']),
+    $ev10('e10-0003', 'spieler.geaendert', ['id' => 'bert', 'verein' => 'SV Bein']),
+    $ev10('e10-0004', 'spieler.angelegt', ['id' => 'cora', 'vorname' => 'Cora', 'nachname' => 'Copf', 'verein' => 'TTC']),
+]], $leit, ['turnier' => $tid]);
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+pruefe(!isset($d['filter']) && !isset($d['ereignisse'][0]['daten']['lizenz']) && !isset($d['ereignisse'][0]['daten']['jahrgang']), 'Ohne entfernte Spieler kein Filter; Lizenz und Jahrgang nicht für Zuschauer');
+rufe($api, 'POST', 'events', ['ereignisse' => [
+    $ev10('e10-0005', 'spieler.entfernt', ['id' => 'bert']),
+    $ev10('e10-0006', 'eintrag.zurueckgenommen', ['ereignisse' => ['e10-0004'], 'zurueck' => true]),
+]], $leit, ['turnier' => $tid]);
+$namen = function (array $d): array {
+    $aus = [];
+    foreach ($d['ereignisse'] as $e) {
+        if (in_array($e['art'], ['spieler.angelegt', 'spieler.geaendert'], true)) {
+            $aus[] = $e['daten']['id'] . ':' . ($e['daten']['vorname'] ?? '') . '/' . ($e['daten']['nachname'] ?? '') . '/' . ($e['daten']['verein'] ?? '');
+        }
+    }
+    return $aus;
+};
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+$f1 = $d['filter'] ?? null;
+pruefe($namen($d) === ['anna:Anna/Arm/TTC', 'bert:Entfernt//', 'bert://', 'cora:Entfernt//'] && is_string($f1) && strlen($f1) === 16,
+    'Zuschauer: Namen entfernter und zurückgenommener Spieler ersetzt, Filter-Kennung gesetzt');
+rufe($api, 'POST', 'events', ['ereignisse' => [$ev10('e10-0050', 'spiel.aufgerufen', ['konkurrenz' => 'k', 'spiel' => 's', 'tisch' => 1, 'schiri' => ['spieler' => 'bert', 'name' => 'Bert Bein']])]], $leit, ['turnier' => $tid]);
+[, $d] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $tid, 'eintraege' => [['rolle' => 'spieler', 'bezug' => 'anna', 'name' => 'Anna Arm']]], $leit);
+$ac = array_values(array_filter($d['codes'], fn($c) => $c['bezug'] === 'anna'))[0]['code'];
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => $ac]);
+[, $d] = rufe($api, 'GET', 'events', null, $d['token'], ['turnier' => $tid, 'ab' => '0']);
+$auf = array_values(array_filter($d['ereignisse'], fn($e) => $e['art'] === 'spiel.aufgerufen'))[0] ?? null;
+pruefe($d['sicht'] === 'spieler' && $auf !== null && $auf['daten']['schiri'] === ['spieler' => 'bert'], 'Spieler-Sicht: Schiedsrichter-Name einer entfernten Person entfernt');
+[, $d] = rufe($api, 'GET', 'events', null, $leit, ['turnier' => $tid, 'ab' => '0']);
+pruefe(in_array('bert:Bert/Bein/TTC', $namen($d), true) && !isset($d['filter']), 'Leitung sieht alles, ohne Filter');
+[, $d] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $tid, 'eintraege' => [['rolle' => 'helfer', 'bezug' => 'h-auf', 'name' => 'Aufruf Ali', 'aufgaben' => ['aufruf']]]], $leit);
+$hc = array_values(array_filter($d['codes'], fn($c) => $c['bezug'] === 'h-auf'))[0]['code'];
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => $hc]);
+[, $d] = rufe($api, 'GET', 'events', null, $d['token'], ['turnier' => $tid, 'ab' => '0']);
+pruefe($d['sicht'] === 'helfer' && !isset($d['ereignisse'][0]['daten']['jahrgang']) && !isset($d['ereignisse'][0]['daten']['lizenz']) && $d['ereignisse'][0]['daten']['vorname'] === 'Anna',
+    'Helfer ohne Kasse: kein Jahrgang, keine Lizenz (Datensparsamkeit)');
+rufe($api, 'POST', 'events', ['ereignisse' => [$ev10('e10-0007', 'eintrag.zurueckgenommen', ['ereignisse' => ['e10-0005'], 'zurueck' => true])]], $leit, ['turnier' => $tid]);
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
+pruefe(in_array('bert:Bert/Bein/TTC', $namen($d), true) && ($d['filter'] ?? null) !== $f1 && isset($d['filter']), 'Entfernen rückgängig: Name wieder da, Filter-Kennung ändert sich');
+pruefe(Api::entfernteAus([
+    ['id' => 'x1', 'art' => 'spieler.angelegt', 'daten' => ['id' => 'p'], 'leitung' => true],
+    ['id' => 'x2', 'art' => 'spieler.entfernt', 'daten' => ['id' => 'p'], 'leitung' => false],
+    ['id' => 'x3', 'art' => 'eintrag.zurueckgenommen', 'daten' => ['ereignisse' => ['x1']], 'leitung' => false],
+]) === [], 'Entfernen/Zurücknehmen zählt nur von der Leitung');
+// Turniere anlegen: höchstens 20 am Tag (Admin ausgenommen)
+$stati = [];
+for ($i = 0; $i < 20; $i++) {
+    [$st] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Test ' . $i], $konto);
+    $stati[] = $st;
+}
+pruefe(array_count_values($stati) === [200 => 19, 429 => 1], 'Höchstens 20 neue Turniere je Konto und Tag');
+[, $d] = rufe($api, 'POST', 'login', ['email' => 'admin@example.org', 'passwort' => 'geheim123'], null, [], '10.10.0.9');
+$admin10 = $d['token'];
+[$st] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Admin-Test'], $admin10);
+pruefe($st === 200, 'Admin ist von der Tagesgrenze ausgenommen');
+// Neue Sicherungsempfänger über eine Leitungskennung → Mail an das Konto
+[, $d] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $tid, 'eintraege' => [['rolle' => 'leitung', 'bezug' => 'l-zwei', 'name' => 'Zweite Leitung']]], $leit);
+$zw = array_values(array_filter($d['codes'], fn($c) => $c['bezug'] === 'l-zwei'))[0]['code'];
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => $zw]);
+$zwTok = $d['token'];
+$vorher = count($mailer->mails);
+[$st] = rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $tid, 'sicherungAn' => ['nord@example.org', 'fremd@example.org']], $zwTok);
+$m = mailAn($mailer, 'nord@example.org');
+pruefe($st === 200 && count($mailer->mails) === $vorher + 1 && str_contains($m->text, 'fremd@example.org') && str_contains($m->text, 'Zweite Leitung'), 'Neue Sicherungsempfänger: Mail an das Konto');
+$vorher = count($mailer->mails);
+rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $tid, 'sicherungAn' => ['nord@example.org']], $leit);
+rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $tid, 'sicherungAn' => ['nord@example.org', 'zweit@example.org']], $leit);
+pruefe(count($mailer->mails) === $vorher, 'Änderung durch das Konto selbst: keine Mail');
+
 echo "Migration von Version 1\n";
 $pdo = new PDO('sqlite::memory:');
 $alt = new Datenbank($pdo);
@@ -1046,7 +1154,7 @@ $pdo->exec("INSERT INTO konten (name, email, passwort_hash, rolle, gesperrt, ang
 $pdo->exec("INSERT INTO turniere (id, konto_id, name, datum, leitung_hash, angelegt) VALUES ('altturnier', 1, 'Alt', NULL, '" . password_hash('altesPasswort', PASSWORD_DEFAULT) . "', 1000)");
 $apiAlt = new Api($alt, ['setup_code' => 'einrichtung-123456']);
 [$s, $d] = rufe($apiAlt, 'POST', 'login', ['email' => 'alt@example.org', 'passwort' => 'altpass12']);
-pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '7', 'Schema 1 → 7 angehoben, Anmeldung geht');
+pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '8', 'Schema 1 → 8 angehoben, Anmeldung geht');
 $altTok = $d['token'];
 [$s, $d] = rufe($apiAlt, 'GET', 'turnier', null, $altTok, ['id' => 'altturnier']);
 pruefe($s === 200 && $d['turnier']['rechte'] === 'leitung', 'alte Turnierkennung (10 Zeichen) bleibt erreichbar');

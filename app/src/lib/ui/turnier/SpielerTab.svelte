@@ -6,7 +6,7 @@
   import { linkZu } from '../../router.svelte';
   import { kurzId } from '../../engine/ids';
   import { ALLE_ANGABEN, spielerName, type Angabe, type SpielerDaten } from '../../engine/modell';
-  import { begonnen, type TurnierZustand } from '../../engine/zustand';
+  import { begonnen, teilnehmerVon, type TurnierZustand } from '../../engine/zustand';
   import { imPool, pool, poolLaden, poolSpeichern } from '../../pool.svelte';
   import { klassenLaden } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
@@ -93,7 +93,18 @@
     bearbeite = null;
   }
 
+  /** Spielt schon in einer begonnenen Konkurrenz (dann nur Rückzug, kein Entfernen – wie die Engine) */
+  function spieltSchon(id: string): string | null {
+    const k = Object.values(z.konkurrenzen).find((x) => begonnen(x) && teilnehmerVon(x, id));
+    return k ? k.einst.name : null;
+  }
+
   async function entfernen(id: string) {
+    const laeuft = spieltSchon(id);
+    if (laeuft) {
+      alert(T.tspieler.entfernenLaeuft(laeuft));
+      return;
+    }
     if (confirm(T.tspieler.entfernenFrage)) await eintragen(ART.spielerEntfernt, { id });
   }
 
@@ -198,7 +209,9 @@
                 </span>
               </span>
               <button class="zweit klein" onclick={() => (bearbeite = id)}>{T.tspieler.bearbeiten}</button>
-              <button class="gefahr klein" aria-label="{T.tspieler.entfernen}: {spielerName(s)}" onclick={() => entfernen(id)}>✕</button>
+              {#if !spieltSchon(id)}
+                <button class="gefahr klein" aria-label="{T.tspieler.entfernen}: {spielerName(s)}" onclick={() => entfernen(id)}>✕</button>
+              {/if}
             </div>
           {/if}
         </li>

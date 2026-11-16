@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -95,6 +97,7 @@ public final class KernTest {
         json();
         protokoll();
         etappe9();
+        etappe10();
         http();
         String online = System.getenv("TT_ONLINE");
         if (online != null && !online.isEmpty()) zusammenspiel(online);
@@ -351,13 +354,50 @@ public final class KernTest {
         pruefe(a.s == 200 && Long.valueOf(210).equals(a.g("hoechsteSeq")), "beschädigte letzte Zeile wird übersprungen");
     }
 
+    static void etappe10() throws Exception {
+        System.out.println("Etappe 10: Namen entfernter Spieler für Zuschauer");
+        Zentrale z = new Zentrale(new Speicher(neuerOrdner()), new PlattformJvm(null), new Online(2000), () -> uhr);
+        z.setzePort(8080);
+        String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
+        A a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Entfernt-Cup"), konto);
+        String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
+        String leit = a.t("token");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(
+            ev("x-0000001", "spieler.angelegt", Json.obj("id", "anna", "vorname", "Anna", "nachname", "Arm", "verein", "TTC")),
+            ev("x-0000002", "spieler.angelegt", Json.obj("id", "bert", "vorname", "Bert", "nachname", "Bein", "verein", "TTC")),
+            ev("x-0000003", "spieler.entfernt", Json.obj("id", "bert")))), leit, q("turnier", tid), false);
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        List<String> namen = new ArrayList<>();
+        for (Object o : a.l("ereignisse")) {
+            Map<String, Object> e = Json.alsObjekt(o);
+            if ("spieler.angelegt".equals(e.get("art"))) namen.add(Json.alsObjekt(e.get("daten")).get("vorname") + "/" + Json.alsObjekt(e.get("daten")).get("nachname"));
+        }
+        String f1 = a.t("filter");
+        pruefe(liste("Anna/Arm", "Entfernt/").equals(namen) && f1 != null && f1.length() == 16, "Zuschauer: Name des entfernten Spielers ersetzt, Filter gesetzt");
+        pruefe(f1.equals(Api10.php("bert")), "Filter-Kennung wie PHP");
+        a = rufe(z, "GET", "events", null, leit, q("turnier", tid, "ab", "0"), false);
+        pruefe(a.g("filter") == null, "Leitung: kein Filter");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("x-0000004", "eintrag.zurueckgenommen", Json.obj("ereignisse", liste("x-0000003"), "zurueck", true)))), leit, q("turnier", tid), false);
+        a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        pruefe(a.g("filter") == null, "Entfernen rückgängig: kein Filter mehr");
+    }
+
+    /** Fingerabdruck wie PHP: sha256 der sortierten IDs, 16 Zeichen */
+    static final class Api10 {
+        static String php(String... ids) {
+            List<String> l = new ArrayList<>(Arrays.asList(ids));
+            Collections.sort(l);
+            return Zentrale.sha256(String.join(",", l)).substring(0, 16);
+        }
+    }
+
     static void etappe9() throws Exception {
         System.out.println("Etappe 9: Aufgaben, abgelehnte Einträge, Kasse nur in voller Sicht");
         Zentrale z = new Zentrale(new Speicher(neuerOrdner()), new PlattformJvm(null), new Online(2000), () -> uhr);
         z.setzePort(8080);
         String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
         A a = rufe(z, "GET", "info", null, null);
-        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.11.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
+        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.12.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
         a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Kassencup", "datum", "2027-02-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         String leit = a.t("token");

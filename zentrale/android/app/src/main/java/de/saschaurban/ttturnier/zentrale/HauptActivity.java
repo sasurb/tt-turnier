@@ -218,6 +218,9 @@ public final class HauptActivity extends Activity {
                 File ordner = new File(getCacheDir(), "teilen");
                 if (!ordner.isDirectory() && !ordner.mkdirs()) return;
                 String sicher = name.replaceAll("[^A-Za-z0-9._-]", "_");
+                // Kein leerer Name, kein „.“/„..“ und keine versteckte Datei im Teilen-Ordner
+                if (sicher.length() > 120) sicher = sicher.substring(sicher.length() - 120);
+                if (sicher.isEmpty() || sicher.startsWith(".")) sicher = "datei" + sicher;
                 File f = new File(ordner, sicher);
                 try (FileOutputStream o = new FileOutputStream(f)) {
                     o.write(inhalt.getBytes(StandardCharsets.UTF_8));

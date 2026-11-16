@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.11.0';
+    public const VERSION = '0.12.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_JE_TURNIER = 50000;
@@ -29,6 +29,14 @@ final class Api
     private const CODE_ROLLEN = ['leitung', 'helfer', 'spieler'];
     private const MAX_KLASSEN = 40;
     private const TAG = 86400;
+    /** Missbrauchsschutz (Etappe 10): Turniere je Konto (Admin ausgenommen) und Sicherungsmails je Konto und Tag */
+    private const TURNIERE_JE_TAG = 20;
+    private const TURNIERE_JE_KONTO = 300;
+    private const SICHERUNGEN_JE_TAG = 150;
+    /** Online-Anmeldung steht neuen Konten nach so vielen Tagen offen (der Admin kann früher freischalten oder sperren) */
+    public const ANMELDUNG_NACH_TAGEN = 7;
+    /** Platzhalter für Namen entfernter Spieler in der Sicht von Spielern und Zuschauern (shared/protokoll.ts ENTFERNT_NAME) */
+    public const ENTFERNT_NAME = 'Entfernt';
     private const KONTO_LOESCHEN_NACH = 365 * self::TAG;   // shared/protokoll.ts KONTO_LOESCHEN_NACH_TAGEN
     private const KONTO_ERINNERUNG_VORHER = 30 * self::TAG;
     private const RUECKSTELLUNG_DAUER = 3600;              // Link „Passwort zurücksetzen“: 1 Stunde
@@ -142,6 +150,7 @@ final class Api
                 'GET konten' => $this->konten($a),
                 'POST konto.anlegen' => $this->kontoAnlegen($a),
                 'POST konto.sperren' => $this->kontoSperren($a),
+                'POST konto.anmeldung' => $this->kontoAnmeldungFreigeben($a),
                 'GET turniere' => $this->turniere($a),
                 'POST turnier.anlegen' => $this->turnierAnlegen($a),
                 'GET turnier' => $this->turnier($a),
@@ -388,6 +397,8 @@ final class Api
             'angelegt' => self::iso((int)$z['angelegt']),
             'letzteAnmeldung' => self::iso($z['letzte_anmeldung'] === null ? null : (int)$z['letzte_anmeldung']),
             'zuletztAktiv' => self::iso(($z['aktiv'] ?? null) === null ? null : (int)$z['aktiv']),
+            // Online-Anmeldung: auto (nach 7 Tagen) | frei | gesperrt
+            'anmeldung' => ($z['anmeldung_frei'] ?? null) === null ? 'auto' : ((int)$z['anmeldung_frei'] === 1 ? 'frei' : 'gesperrt'),
         ];
         if (array_key_exists('turniere', $z)) {
             $k['turniere'] = (int)$z['turniere'];
@@ -659,6 +670,46 @@ final class Api
         return ['konto' => self::kontoAusgabe($k)];
     }
 
+    /** Admin: Online-Anmeldung für ein Konto freischalten (frei), sperren (gesperrt) oder automatisch (auto) */
+    private function kontoAnmeldungFreigeben(Anfrage $a): array
+    {
+        $this->konto($a, true);
+        $id = $a->rumpf['id'] ?? null;
+        $stufe = $a->rumpf['anmeldung'] ?? null;
+        if (!is_int($id) || !in_array($stufe, ['auto', 'frei', 'gesperrt'], true)) {
+            throw new ApiFehler('ungueltig', 'Felder „id“ und „anmeldung“ (auto, frei, gesperrt) erforderlich.');
+        }
+        $k = $this->db->eine('SELECT * FROM konten WHERE id = ?', [$id]);
+        if ($k === null) {
+            throw new ApiFehler('nicht_gefunden', 'Konto nicht gefunden.');
+        }
+        $wert = $stufe === 'auto' ? null : ($stufe === 'frei' ? 1 : 0);
+        $this->db->ausfuehren('UPDATE konten SET anmeldung_frei = ? WHERE id = ?', [$wert, $id]);
+        $k['anmeldung_frei'] = $wert;
+        return ['konto' => self::kontoAusgabe($k)];
+    }
+
+    /**
+     * Darf dieses Konto Online-Anmeldungen anbieten? (Schutz davor, dass ein frisch angelegtes Konto die
+     * Anmeldung als Mail-Schleuder nutzt.) Admin immer; sonst Freigabe durch den Admin oder Kontoalter.
+     * @return array{erlaubt:bool,ab:?string}
+     */
+    public function anmeldungFreigabe(int $kontoId): array
+    {
+        $k = $this->db->eine('SELECT rolle, angelegt, anmeldung_frei, gesperrt FROM konten WHERE id = ?', [$kontoId]);
+        if ($k === null || (int)$k['gesperrt'] === 1) {
+            return ['erlaubt' => false, 'ab' => null];
+        }
+        if ($k['rolle'] === 'admin' || ($k['anmeldung_frei'] !== null && (int)$k['anmeldung_frei'] === 1)) {
+            return ['erlaubt' => true, 'ab' => null];
+        }
+        if ($k['anmeldung_frei'] !== null) {
+            return ['erlaubt' => false, 'ab' => null];
+        }
+        $ab = (int)$k['angelegt'] + self::ANMELDUNG_NACH_TAGEN * self::TAG;
+        return ['erlaubt' => $this->jetzt() >= $ab, 'ab' => self::iso($ab)];
+    }
+
     private function turniere(Anfrage $a): array
     {
         $s = $this->konto($a);
@@ -673,6 +724,29 @@ final class Api
         return ['turniere' => array_map([self::class, 'turnierAusgabe'], $zeilen)];
     }
 
+    /** Grenzen für neue Turniere (Admin ausgenommen): je Konto höchstens TURNIERE_JE_KONTO, je Tag TURNIERE_JE_TAG */
+    private function turnierGrenzenPruefen(array $s): void
+    {
+        if ($s['rolle'] === 'admin') {
+            return;
+        }
+        $anzahl = (int)($this->db->eine('SELECT COUNT(*) AS n FROM turniere WHERE konto_id = ?', [$s['konto_id']])['n'] ?? 0);
+        if ($anzahl >= self::TURNIERE_JE_KONTO) {
+            throw new ApiFehler('zu_gross', 'Dein Konto hat die Höchstzahl von ' . self::TURNIERE_JE_KONTO . ' Turnieren erreicht. Bitte alte Turniere löschen.');
+        }
+        if ($this->anzahlVersuche('turnier-anlegen|' . $s['konto_id'], self::TAG) >= self::TURNIERE_JE_TAG) {
+            throw new ApiFehler('zu_viele_versuche', 'Heute wurden schon sehr viele Turniere angelegt. Bitte morgen weitermachen oder alte Testturniere verwenden.');
+        }
+    }
+
+    /** Erst nach erfolgreichem Anlegen zählen (fehlerhafte Versuche verbrauchen nichts) */
+    private function turnierGezaehlt(array $s): void
+    {
+        if ($s['rolle'] !== 'admin') {
+            $this->fehlversuch('turnier-anlegen|' . $s['konto_id']);
+        }
+    }
+
     private function turnierAnlegen(Anfrage $a): array
     {
         $s = $this->konto($a);
@@ -681,6 +755,7 @@ final class Api
         if ($datum !== null && (!is_string($datum) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum))) {
             throw new ApiFehler('ungueltig', 'Datum im Format JJJJ-MM-TT angeben.');
         }
+        $this->turnierGrenzenPruefen($s);
         $konto = $this->db->eine('SELECT email FROM konten WHERE id = ?', [$s['konto_id']]);
         $empfaenger = array_key_exists('sicherungAn', $a->rumpf ?? [])
             ? $this->empfaengerFeld($a->rumpf['sicherungAn'])
@@ -692,6 +767,7 @@ final class Api
             [$id, $s['konto_id'], $name, $datum, password_hash(bin2hex(random_bytes(16)), PASSWORD_DEFAULT), null,
              json_encode(array_values(array_filter($empfaenger))), 30, $this->jetzt()]
         );
+        $this->turnierGezaehlt($s);
         $t = $this->turnierLaden($id);
         // Leitungskennung für die anlegende Person (weitere legt die Leitung unter „Zugänge“ an)
         $leitung = $this->codeAnlegen($t, 'leitung', self::neuerBezug('l'), $s['name']);
@@ -794,9 +870,12 @@ final class Api
             'empfangen' => self::iso((int)$z['empfangen']),
             'autor' => self::autorAusgabe($z),
         ], $zeilen);
+        // Spieler und Zuschauer: Namen entfernter Spieler werden ersetzt (Etappe 10). Ändert sich die Menge,
+        // ändert sich „filter“ – die Geräte holen dann alles neu ab.
+        $weg = in_array($sicht, ['spieler', 'zuschauer', 'kurz'], true) ? $this->entfernteSpieler((string)$t['id']) : [];
         if ($sicht !== 'voll') {
             $liste = array_values(array_map(
-                static fn(array $e): array => self::gefiltert($e, $sicht),
+                static fn(array $e): array => self::gefiltert($e, $sicht, $weg),
                 array_filter($liste, static fn(array $e): bool => !in_array($e['art'], self::NUR_VOLLE_SICHT, true))
             ));
         }
@@ -806,7 +885,81 @@ final class Api
             'mehr' => $mehr,
             'sicht' => $sicht,
             'bis' => $bis,
-        ];
+        ] + ($weg === [] ? [] : ['filter' => self::filterKennung($weg)]);
+    }
+
+    /** Kurzer Fingerabdruck der Menge entfernter Spieler (shared/protokoll.ts AbholenAntwort.filter) */
+    public static function filterKennung(array $weg): string
+    {
+        $ids = array_keys($weg);
+        sort($ids, SORT_STRING);
+        return substr(hash('sha256', implode(',', $ids)), 0, 16);
+    }
+
+    /**
+     * Spieler, die nicht mehr zum Turnier gehören: per „spieler.entfernt“ entfernt (nicht zurückgenommen)
+     * oder deren Anlegen rückgängig gemacht wurde. Gleiche Regel wie die Engine (zurueckgenommeneEintraege),
+     * nur für die Arten, die hier zählen; Kern der Zentrale: Zentrale.entfernteSpieler.
+     * @return array<string,true>
+     */
+    private function entfernteSpieler(string $turnierId): array
+    {
+        $zeilen = $this->db->alle(
+            "SELECT event_id, art, daten, autor_rolle FROM ereignisse WHERE turnier_id = ? AND art IN ('spieler.angelegt', 'spieler.entfernt', 'eintrag.zurueckgenommen') ORDER BY seq",
+            [$turnierId]
+        );
+        return self::entfernteAus(array_map(static fn(array $z): array => [
+            'id' => (string)$z['event_id'],
+            'art' => (string)$z['art'],
+            'daten' => json_decode((string)$z['daten'], true),
+            'leitung' => in_array($z['autor_rolle'], ['leitung', 'admin', 'veranstalter'], true),
+        ], $zeilen));
+    }
+
+    /** @param list<array{id:string,art:string,daten:mixed,leitung:bool}> $liste in Laufnummer-Reihenfolge */
+    public static function entfernteAus(array $liste): array
+    {
+        $ziel = [];   // Ereignis-ID → [art, spieler]
+        $zurueck = []; // Ereignis-ID → zurückgenommen?
+        foreach ($liste as $e) {
+            $d = is_array($e['daten']) ? $e['daten'] : [];
+            if ($e['art'] === 'eintrag.zurueckgenommen') {
+                if (!$e['leitung'] || !is_array($d['ereignisse'] ?? null)) {
+                    continue;
+                }
+                $z = ($d['zurueck'] ?? true) !== false;
+                foreach (array_slice($d['ereignisse'], 0, 200) as $id) {
+                    if (is_string($id) && isset($ziel[$id])) {
+                        $zurueck[$id] = $z;
+                    }
+                }
+                continue;
+            }
+            $sp = $d['id'] ?? null;
+            if (!is_string($sp) || ($e['art'] === 'spieler.entfernt' && !$e['leitung'])) {
+                continue;
+            }
+            if (!isset($ziel[$e['id']])) {
+                $ziel[$e['id']] = [$e['art'], $sp];
+            }
+        }
+        $angelegt = []; // Spieler → mindestens ein gültiges Anlegen
+        $entfernt = [];
+        foreach ($ziel as $id => [$art, $sp]) {
+            $gilt = !($zurueck[$id] ?? false);
+            if ($art === 'spieler.angelegt') {
+                $angelegt[$sp] = ($angelegt[$sp] ?? false) || $gilt;
+            } elseif ($gilt) {
+                $entfernt[$sp] = true;
+            }
+        }
+        $weg = $entfernt;
+        foreach ($angelegt as $sp => $gilt) {
+            if (!$gilt) {
+                $weg[$sp] = true;
+            }
+        }
+        return $weg;
     }
 
     /**
@@ -863,19 +1016,31 @@ final class Api
         return $n === '' ? '' : mb_strtoupper(mb_substr($n, 0, 1)) . '.';
     }
 
-    /** @param array<string,mixed> $e */
-    private static function gefiltert(array $e, string $sicht): array
+    /**
+     * @param array<string,mixed> $e
+     * @param array<string,true> $weg entfernte Spieler (nur Sichten spieler/zuschauer/kurz)
+     */
+    private static function gefiltert(array $e, string $sicht, array $weg = []): array
     {
         if ($sicht === 'helfer') {
             if ($e['art'] === 'turnier.daten' && $e['daten'] instanceof \stdClass && property_exists($e['daten'], 'kasse')) {
                 $d = clone $e['daten'];
                 unset($d->kasse);
                 $e['daten'] = $d;
+            } elseif (($e['art'] === 'spieler.angelegt' || $e['art'] === 'spieler.geaendert') && $e['daten'] instanceof \stdClass) {
+                // Datensparsamkeit (ab 0.12): Jahrgang, Geschlecht, Pool-Bezug und Lizenz nur für Leitung und Kasse
+                $d = clone $e['daten'];
+                unset($d->jahrgang, $d->geschlecht, $d->pool, $d->lizenz);
+                $e['daten'] = $d;
             }
             return $e;
         }
         $kurz = $sicht === 'kurz';
         $zuschauer = $sicht !== 'spieler';
+        // Hat eine entfernte Person selbst eingetragen (eigene Kennung), steht ihr Name nicht mehr am Eintrag
+        if (!$zuschauer && isset($e['autor']['spieler']) && isset($weg[$e['autor']['spieler']])) {
+            $e['autor']['name'] = '';
+        }
         if ($zuschauer) {
             $autor = ['rolle' => $e['autor']['rolle'], 'name' => ''];
             foreach (['spieler', 'helfer', 'aufgaben'] as $f) {
@@ -893,16 +1058,19 @@ final class Api
         if ($e['art'] === 'turnier.daten') {
             unset($d->kasse); // Kasse und Bankverbindung nur für Leitung und Helfer
         } elseif ($e['art'] === 'spieler.angelegt' || $e['art'] === 'spieler.geaendert') {
-            unset($d->jahrgang, $d->geschlecht, $d->pool);
-            if ($kurz && isset($d->nachname) && is_string($d->nachname)) {
+            unset($d->jahrgang, $d->geschlecht, $d->pool, $d->lizenz);
+            if (isset($d->id) && is_string($d->id) && isset($weg[$d->id])) {
+                // Entfernter Spieler: keine Angaben zur Person mehr (bleibt nur als Platzhalter im Protokoll)
+                $d = (object)(['id' => $d->id] + ($e['art'] === 'spieler.angelegt' ? ['vorname' => self::ENTFERNT_NAME, 'nachname' => '', 'verein' => ''] : []));
+            } elseif ($kurz && isset($d->nachname) && is_string($d->nachname)) {
                 $d->nachname = self::kurzname($d->nachname);
             }
-        } elseif ($zuschauer && $e['art'] === 'spiel.aufgerufen' && property_exists($d, 'schiri')) {
+        } elseif ($e['art'] === 'spiel.aufgerufen' && property_exists($d, 'schiri')) {
             $sp = $d->schiri instanceof \stdClass && isset($d->schiri->spieler) && is_string($d->schiri->spieler) ? $d->schiri->spieler : null;
-            if ($sp === null) {
-                unset($d->schiri);
-            } else {
-                $d->schiri = (object)['spieler' => $sp];
+            if ($sp === null && $zuschauer) {
+                unset($d->schiri); // frei eingetippter Name: nicht für Zuschauer
+            } elseif ($sp !== null && ($zuschauer || isset($weg[$sp]))) {
+                $d->schiri = (object)['spieler' => $sp]; // Name kommt aus der Spielerliste (entfernt: „Entfernt“)
             }
         }
         $e['daten'] = $d;
@@ -1341,7 +1509,23 @@ final class Api
         self::nichtAufZentrale($t);
         $r = $a->rumpf ?? [];
         if (array_key_exists('sicherungAn', $r)) {
-            $this->db->ausfuehren('UPDATE turniere SET sicherung_an = ? WHERE id = ?', [json_encode($this->empfaengerFeld($r['sicherungAn'])), $t['id']]);
+            $neu = $this->empfaengerFeld($r['sicherungAn']);
+            $alt = self::empfaengerAus($t);
+            $this->db->ausfuehren('UPDATE turniere SET sicherung_an = ? WHERE id = ?', [json_encode($neu), $t['id']]);
+            // Neue Empfänger von jemand anderem als dem Eigentümer-Konto: Das Konto erfährt es (die Sicherung
+            // enthält alle Daten des Turniers – Schutz gegen Abfluss über eine weitergegebene Leitungskennung)
+            $hinzu = array_values(array_diff($neu, $alt));
+            $s = $this->sitzung($a);
+            if ($hinzu !== [] && ($s['konto_id'] ?? null) !== (int)$t['konto_id'] && $this->mailBereit()) {
+                $konto = $this->db->eine('SELECT email, name FROM konten WHERE id = ?', [(int)$t['konto_id']]);
+                if ($konto !== null) {
+                    $this->mail((string)$konto['email'], "Neue Empfänger der Sicherung: {$t['name']}", "Hallo {$konto['name']},\n\n"
+                        . "im Turnier „{$t['name']}“ gehen Sicherungen jetzt auch an:\n\n  " . implode("\n  ", $hinzu) . "\n\n"
+                        . 'Geändert von: ' . (string)($s['name'] ?? '') . "\nZeit: " . gmdate('d.m.Y H:i', $this->jetzt()) . " UTC\n\n"
+                        . "Die Sicherung enthält alle Angaben des Turniers. War das nicht abgesprochen? Dann entferne die\n"
+                        . "Adressen unter „Einstellungen“ und gib die Leitungskennungen unter „Zugänge“ neu aus:\n" . $this->appUrl() . '#/t/' . $t['id']);
+                }
+            }
         }
         // Name und Datum (ab 0.11; die App trägt zusätzlich turnier.umbenannt ein). Das Datum zählt für die
         // Löschfrist der Online-Anmeldung.
@@ -1471,6 +1655,12 @@ final class Api
      */
     private function sicherungMailen(array $t, array $empf, string $grund, ?array $uebersicht, array $ereignisse, string $json, bool $vonZentrale): bool
     {
+        // Höchstens SICHERUNGEN_JE_TAG Sicherungsmails je Konto und Tag (die Datei lässt sich jederzeit herunterladen)
+        $schluessel = 'sicherung-mail|' . (isset($t['konto_id']) ? 'k' . $t['konto_id'] : 't' . $t['id']);
+        if ($this->anzahlVersuche($schluessel, self::TAG) >= self::SICHERUNGEN_JE_TAG) {
+            return false;
+        }
+        $this->fehlversuch($schluessel);
         $abgeschlossen = false;
         foreach ($ereignisse as $e) {
             $art = is_array($e) ? ($e['art'] ?? '') : (is_object($e) ? ($e->art ?? '') : '');
@@ -1572,6 +1762,7 @@ final class Api
             if (!is_array($neu)) {
                 throw new ApiFehler('nicht_gefunden', 'Turnier nicht gefunden.');
             }
+            $this->turnierGrenzenPruefen($s);
             $n = new Anfrage('POST', '', [], $neu, null, $a->ip);
             $name = $this->text($n, 'name', 2, 160);
             $datum = $neu['datum'] ?? null;
@@ -1586,6 +1777,7 @@ final class Api
                  json_encode([(string)($konto['email'] ?? '')]), 30, $this->jetzt(),
                  mb_substr(trim((string)($a->rumpf['zentrale'] ?? 'Zentrale')), 0, 160), $zid, $this->jetzt()]
             );
+            $this->turnierGezaehlt($s);
         }
         $t = $this->turnierLaden($id);
         self::eigentuemerPruefen($s, $t);
@@ -1743,9 +1935,16 @@ final class Api
             $zeit = is_string($ueb['zeit'] ?? null) ? strtotime($ueb['zeit']) : false;
             $uebersicht = ['text' => $ueb['text'], 'zeit' => $zeit === false ? $this->jetzt() : $zeit];
         }
-        $konto = $this->db->eine('SELECT name FROM konten WHERE id = ?', [$s['konto_id']]);
+        $konto = $this->db->eine('SELECT name, email FROM konten WHERE id = ?', [$s['konto_id']]);
+        // Noch nicht freigegebene Konten (jünger als 7 Tage): Sicherung nur an die eigene Adresse (gegen Mail-Missbrauch)
+        if (!$this->anmeldungFreigabe((int)$s['konto_id'])['erlaubt'] && array_diff($empf, [(string)($konto['email'] ?? '')]) !== []) {
+            throw new ApiFehler('keine_berechtigung', 'Neue Konten können Sicherungen in den ersten ' . self::ANMELDUNG_NACH_TAGEN . ' Tagen nur an die eigene E-Mail-Adresse senden. Der Administrator kann das Konto früher freischalten.');
+        }
+        if ($this->anzahlVersuche('sicherung-mail|k' . $s['konto_id'], self::TAG) >= self::SICHERUNGEN_JE_TAG) {
+            throw new ApiFehler('zu_viele_versuche', 'Heute wurden schon sehr viele Sicherungen gesendet. Bitte die Sicherungsdatei herunterladen.');
+        }
         $ok = $this->sicherungMailen(
-            ['id' => $tr['id'], 'name' => mb_substr(trim($tr['name']), 0, 160), 'datum' => $datum, 'veranstalter' => (string)($konto['name'] ?? '')],
+            ['id' => $tr['id'], 'konto_id' => $s['konto_id'], 'name' => mb_substr(trim($tr['name']), 0, 160), 'datum' => $datum, 'veranstalter' => (string)($konto['name'] ?? '')],
             $empf, $anlass, $uebersicht, $sich['ereignisse'], (string)$json, true
         );
         if (!$ok) {

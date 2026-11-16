@@ -61,6 +61,11 @@ export interface SpielerDaten {
   jahrgang?: number | null;
   /** ID im Spielerpool des Kontos bzw. Geräts (zum Wiederfinden) */
   pool?: string | null;
+  /**
+   * Vorbereitung click-TT (ab 0.12, noch ohne Oberfläche): Spieler-ID bzw. Lizenznummer aus click-TT für
+   * Import und Ergebnismeldung (docs/erweiterungen.md). Wie Jahrgang nur in der vollen Sicht.
+   */
+  lizenz?: string | null;
 }
 
 export interface TurnierSpieler extends SpielerDaten {

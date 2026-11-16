@@ -6,6 +6,7 @@
   import { api } from '../dienste';
   import { anmeldungAbgelaufen, app, fehlerText, kontoTurnierOeffnen } from '../app.svelte';
   import PasswortFeld from './PasswortFeld.svelte';
+  import Hilfe from './Hilfe.svelte';
 
   const sitzung = $derived(app.sitzung);
   let konten = $state<Konto[]>([]);
@@ -58,6 +59,17 @@
     }
   }
 
+  async function anmeldungSetzen(k: Konto, wert: 'auto' | 'frei' | 'gesperrt') {
+    if (!sitzung) return;
+    try {
+      await api.kontoAnmeldung(sitzung.token, k.id, wert);
+      meldung = { ok: true, text: T.admin.anmeldungGespeichert(k.name) };
+      await laden();
+    } catch (x) {
+      if (!anmeldungAbgelaufen(x)) meldung = { ok: false, text: fehlerText(x, T.app.fehlerAllgemein) };
+    }
+  }
+
   function wann(iso: string | null) {
     return iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : T.admin.nie;
   }
@@ -84,6 +96,17 @@
             {#if k.gesperrt}<span class="marke gesperrt">{T.admin.gesperrt}</span>{/if}
             <br /><span class="leise">{k.email}</span>
             <br /><span class="leise">{T.admin.zuletztAktiv}: {wann(k.zuletztAktiv ?? k.letzteAnmeldung)} · {T.admin.turniere}: {k.turniere ?? 0}</span>
+            {#if k.rolle !== 'admin' && k.anmeldung}
+              <div class="anmeldung">
+                <label for="anm-{k.id}">{T.admin.anmeldung}</label>
+                <Hilfe text={T.admin.anmeldungHilfe} />
+                <select id="anm-{k.id}" value={k.anmeldung} onchange={(e) => anmeldungSetzen(k, (e.currentTarget as HTMLSelectElement).value as 'auto' | 'frei' | 'gesperrt')} data-testid="admin-anmeldung">
+                  <option value="auto">{T.admin.anmeldungAuto}</option>
+                  <option value="frei">{T.admin.anmeldungFrei}</option>
+                  <option value="gesperrt">{T.admin.anmeldungGesperrt}</option>
+                </select>
+              </div>
+            {/if}
           </div>
           {#if k.id !== sitzung.konto.id}
             <button class="klein" class:gefahr={!k.gesperrt} class:zweit={k.gesperrt} onclick={() => umschalten(k)}>
@@ -127,4 +150,7 @@
 
 <style>
   .marke.gesperrt { color: var(--rot); border-color: var(--rot); }
+  .anmeldung { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; }
+  .anmeldung label { font-size: 0.95rem; }
+  .anmeldung select { min-height: 44px; max-width: 100%; }
 </style>

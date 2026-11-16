@@ -196,6 +196,8 @@ function spielerDatenLesen(d: Record<string, unknown>): Partial<SpielerDaten> {
   else if (typeof d.klasse === 'string') r.klasse = d.klasse.trim().slice(0, 40) || null;
   if (d.geschlecht === null || d.geschlecht === 'm' || d.geschlecht === 'w' || d.geschlecht === 'd') r.geschlecht = d.geschlecht;
   if (d.pool === null || typeof d.pool === 'string') r.pool = d.pool === null ? null : String(d.pool).slice(0, 64);
+  if (d.lizenz === null) r.lizenz = null;
+  else if (typeof d.lizenz === 'string' && /^[A-Za-z0-9-]{1,20}$/.test(d.lizenz.trim())) r.lizenz = d.lizenz.trim();
   return r;
 }
 
@@ -455,7 +457,10 @@ function gruppenSpielAnlegen(k: KonkurrenzZustand, nr: number, a: string, b: str
 
 /** Unabhängige Kopie einer Konkurrenz (zum Durchrechnen einer Änderung, ohne den Stand anzufassen) */
 function kopie(k: KonkurrenzZustand): KonkurrenzZustand {
-  return JSON.parse(JSON.stringify(k)) as KonkurrenzZustand;
+  // Prototypfreie Objekte wie im Zustand (leer()): IDs wie „constructor“ dürfen nichts von Object.prototype finden
+  return JSON.parse(JSON.stringify(k), (_s, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v) ? Object.assign(Object.create(null) as object, v) : v,
+  ) as KonkurrenzZustand;
 }
 
 /** Spiele, die schon ein Ergebnis haben oder an einem Tisch stehen, dürfen sich nicht ändern */

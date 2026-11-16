@@ -1,6 +1,6 @@
 import { MAX_EREIGNISSE_JE_AUFRUF } from '@shared/protokoll';
 import { Api, ApiFehler } from './api';
-import type { EreignisSpeicher } from './speicher';
+import type { EreignisSpeicher, GespeicherteSicht } from './speicher';
 import { ausServer } from './typen';
 
 export type Verbindung = 'unbekannt' | 'verbunden' | 'offline' | 'nicht_angemeldet' | 'fehler';
@@ -142,17 +142,22 @@ export class Abgleich {
         }
         if (a.sicht) {
           const bisher = await speicher.sicht(turnier);
-          if (bisher !== a.sicht) {
-            await speicher.setzeSicht(turnier, a.sicht);
+          // Ab 0.12 gehört die Filter-Kennung (entfernte Spieler) zur Sicht: ändert sie sich, wird neu abgeholt
+          const kennung: GespeicherteSicht = a.filter ? `${a.sicht}|${a.filter}` : a.sicht;
+          if (bisher !== kennung) {
             // Alter Bestand ohne Angabe stammt von einer Version, die immer alles lieferte
             if (ab > 0 && !(bisher === null && a.sicht === 'voll')) {
               // Wechselt die Sicht mitten im Neuaufbau noch einmal, von vorn; nach 3 Versuchen beim nächsten Durchlauf
               if (++neuAufbauten > 3) throw new Error('Die Sicht auf das Turnier hat sich mehrfach geändert.');
+              // Erst verwerfen, dann die neue Sicht merken: Bricht die App dazwischen ab, bleibt die alte Kennung
+              // stehen und der Neuaufbau wird beim nächsten Mal nachgeholt
               await speicher.bestaetigteVerwerfen(turnier);
+              await speicher.setzeSicht(turnier, kennung);
               ab = 0;
               neueDaten = true;
               continue;
             }
+            await speicher.setzeSicht(turnier, kennung);
           }
         }
         if (a.ereignisse.length > 0) {

@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 7;
+    public const SCHEMA_VERSION = 8;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -165,7 +165,18 @@ final class Datenbank
             }
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['7', 'schema']);
         }
-        // Spätere Versionen: if ($version < 8) { … UPDATE meta … }
+        if ($version < 8) {
+            // Etappe 10: Freigabe der Online-Anmeldung je Konto (NULL = automatisch nach 7 Tagen, 1 = frei, 0 = gesperrt)
+            try {
+                $this->pdo->exec('ALTER TABLE konten ADD COLUMN anmeldung_frei INTEGER NULL');
+            } catch (\PDOException $e) {
+                if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                    throw $e;
+                }
+            }
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['8', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 9) { … UPDATE meta … }
     }
 
     /**

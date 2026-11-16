@@ -135,11 +135,13 @@ export const T = {
     nurZentraleGeraet: 'Neue Turniere legt man am Gerät der Zentrale an. Andere Geräte treten mit einer Kennung bei.',
   },
   fuss: {
+    hilfe: 'Hilfe',
     impressum: 'Impressum',
     datenschutz: 'Datenschutz',
     kontakt: 'Kontakt',
   },
   start: {
+    hilfe: 'Neu hier? Hilfe und Anleitung ›',
     willkommen: 'Tischtennisturniere auf Handy, Tablet und PC: anlegen, auslosen, Ergebnisse gemeinsam eintragen.',
     hallo: (name: string) => `Hallo ${name}!`,
     neuesTurnier: 'Neues Turnier',
@@ -256,8 +258,27 @@ export const T = {
     adminKeinLoeschen: 'Das Administrator-Konto kann nicht gelöscht werden.',
     zurVerwaltung: 'Zur Verwaltung',
   },
+  handbuch: {
+    titel: 'Hilfe und Anleitung',
+    einleitung: 'Kurze Anleitungen für alles, was die App kann. Wähle deine Rolle oder suche nach einem Stichwort.',
+    suchen: 'Suchen',
+    suchenBeispiel: 'z. B. Auslosung, Kasse, Freilos',
+    fuer: 'Für wen?',
+    alle: 'Alle',
+    nichts: 'Dazu gibt es noch keine Anleitung. Frag gern über das Kontaktformular.',
+    link: 'Link zu diesem Kapitel',
+    weiter: 'Nichts gefunden?',
+    kapitel: (n: number) => `${n} Kapitel`,
+  },
   admin: {
     titel: 'Verwaltung',
+    anmeldung: 'Online-Anmeldung',
+    anmeldungHilfe:
+      'Über die Online-Anmeldung verschickt der Server Mails an die angegebenen Adressen. Damit niemand ein frisch angelegtes Konto dafür missbraucht, steht sie neuen Konten erst nach 7 Tagen zur Verfügung. Kennst du die Turnierleitung, kannst du sie hier sofort freischalten – oder sperren.',
+    anmeldungAuto: 'automatisch nach 7 Tagen',
+    anmeldungFrei: 'freigeschaltet',
+    anmeldungGesperrt: 'gesperrt',
+    anmeldungGespeichert: (name: string) => `Online-Anmeldung für „${name}“ gespeichert.`,
     konten: 'Konten',
     neuesKonto: 'Konto für jemanden anlegen',
     name: 'Name (Verein oder Person)',
@@ -468,6 +489,7 @@ export const T = {
     kennungUngueltig: 'Deine Kennung gilt nicht mehr (gesperrt oder neu ausgegeben). Bitte bei der Turnierleitung nach der neuen Kennung fragen.',
   },
   tspieler: {
+    entfernenLaeuft: (k: string) => `Dieser Spieler spielt schon in „${k}“ und kann nicht mehr entfernt werden. Nutze dort „Zurückziehen“.`,
     titel: 'Spieler im Turnier',
     leer: 'Noch keine Spieler. Füge sie aus dem Spielerpool hinzu oder lege neue an.',
     ausPool: 'Aus dem Spielerpool',
@@ -1295,6 +1317,10 @@ export const T = {
     startgeld: (turnier: string) => `Startgeld ${turnier}`,
   },
   anm: {
+    nochNichtFrei: (ab: string | null) =>
+      ab
+        ? `Die Online-Anmeldung steht neuen Konten ab ${new Date(ab).toLocaleDateString('de-DE')} zur Verfügung – so kann niemand ein frisch angelegtes Konto zum Verschicken von Mails missbrauchen. Der Administrator kann sie früher freischalten (Kontaktformular).`
+        : 'Die Online-Anmeldung ist für dein Konto gesperrt. Bitte wende dich über das Kontaktformular an den Administrator.',
     titel: 'Online-Anmeldung',
     hilfe:
       'Spieler melden sich über einen Link selbst an und bestätigen per Mail. Ist eine Konkurrenz voll, kommen sie auf die Warteliste und rücken automatisch nach, wenn jemand absagt (mit Mail). Ins Turnier kommen Anmeldungen erst, wenn du sie übernimmst. Datenschutz: E-Mail-Adressen sieht nur die Leitung; 30 Tage nach dem Turniertag werden alle Anmeldungen gelöscht.',

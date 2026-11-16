@@ -26,6 +26,7 @@
   import LiveAnsicht from './lib/ui/LiveAnsicht.svelte';
   import DruckAnsicht from './lib/ui/DruckAnsicht.svelte';
   import Meldung from './lib/ui/Meldung.svelte';
+  import Handbuch from './lib/ui/Handbuch.svelte';
 
   onMount(() => void serverLaden());
 </script>
@@ -72,6 +73,8 @@
     <Pool />
   {:else if route.seite === 'zentrale'}
     <Zentrale />
+  {:else if route.seite === 'hilfe'}
+    <Handbuch kapitel={route.param} />
   {:else if route.seite === 'meldung' && route.param}
     {#key `${route.param}/${route.rest[0] ?? ''}`}<Meldung turnier={route.param} schluessel={route.rest[0] ?? null} />{/key}
   {:else if (route.seite === 't' || route.seite === 'c') && route.param}

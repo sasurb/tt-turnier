@@ -112,7 +112,14 @@ export interface Konto {
   /** Letzte Nutzung (Anmeldung oder Aufruf mit Konto-Token); Grundlage der Löschung nach 12 Monaten. */
   zuletztAktiv: string | null;
   turniere?: number;
+  /**
+   * Ab 0.12: Online-Anmeldung für dieses Konto – auto (ab ANMELDUNG_NACH_TAGEN Tagen Kontoalter),
+   * frei (vom Admin früher freigeschaltet) oder gesperrt (vom Admin gesperrt). Schutz vor Missbrauch als Mail-Versand.
+   */
+  anmeldung?: 'auto' | 'frei' | 'gesperrt';
 }
+export const ANMELDUNG_NACH_TAGEN = 7;
+/** POST konto.anmeldung { id, anmeldung } – nur Admin (ab 0.12) */
 
 /** Konten ohne Nutzung werden nach so vielen Tagen gelöscht (Administrator ausgenommen). */
 export const KONTO_LOESCHEN_NACH_TAGEN = 365;
@@ -525,6 +532,12 @@ export interface AbholenAntwort {
    */
   sicht?: Sicht;
   /**
+   * Ab 0.12 (Datenschutz, nur Sichten spieler/zuschauer/kurz): Fingerabdruck der Menge entfernter Spieler.
+   * Deren Namen ersetzen die Server durch ENTFERNT_NAME (spieler.angelegt/geaendert ohne Angaben zur Person).
+   * Ändert er sich, holt das Gerät alles neu ab – wie bei einem Wechsel der Sicht.
+   */
+  filter?: string;
+  /**
    * Ab 0.11: bis zu dieser Laufnummer gelesen. Der Datenschutz-Filter kann Einträge weglassen (z. B.
    * Startgeld für Zuschauer) – das Gerät holt beim nächsten Mal ab hier ab.
    */
@@ -724,7 +737,11 @@ export interface AnmeldungEintrag {
 export interface AnmeldungenAntwort {
   einstellungen: AnmeldungEinstellungen;
   anmeldungen: AnmeldungEintrag[];
+  /** Ab 0.12: darf das Konto die Anmeldung öffnen? ab = Tag der automatischen Freigabe (ISO) */
+  freigabe?: { erlaubt: boolean; ab: string | null };
 }
+/** Platzhalter, den die Server Spielern und Zuschauern statt des Namens entfernter Spieler liefern (ab 0.12) */
+export const ENTFERNT_NAME = 'Entfernt';
 /** POST anmeldung.einstellungen { turnier, ...AnmeldungEinstellungen } – nur Leitung */
 /** POST anmeldung.aendern { turnier, id, konkurrenz, status } – Leitung setzt Platz/Warteliste/abgemeldet (Mail an die Person) */
 export interface AnmeldungAendernAnfrage {

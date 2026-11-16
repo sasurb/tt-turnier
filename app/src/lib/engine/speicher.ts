@@ -1,4 +1,7 @@
 import type { Sicht } from '@shared/protokoll';
+
+/** Gespeicherte Sicht, ab 0.12 mit Filter-Kennung („zuschauer|ab12…“, siehe AbholenAntwort.filter) */
+export type GespeicherteSicht = Sicht | `${Sicht}|${string}`;
 import type { LokalesEreignis } from './typen';
 import { sortieren } from './typen';
 
@@ -19,8 +22,8 @@ export interface EreignisSpeicher {
   abgeholtBis(turnier: string): Promise<number>;
   setzeAbgeholtBis(turnier: string, seq: number): Promise<void>;
   /** Mit welcher Sicht (voll/Zuschauer) die abgeholten Ereignisse geliefert wurden; null = unbekannt */
-  sicht(turnier: string): Promise<Sicht | null>;
-  setzeSicht(turnier: string, sicht: Sicht): Promise<void>;
+  sicht(turnier: string): Promise<GespeicherteSicht | null>;
+  setzeSicht(turnier: string, sicht: GespeicherteSicht): Promise<void>;
   /** Alle vom Server bestätigten Ereignisse verwerfen (ausstehende bleiben), Laufnummer auf 0 – für neues Abholen */
   bestaetigteVerwerfen(turnier: string): Promise<void>;
   /** Vom Server abgelehnte eigene Einträge markieren (Status „abgelehnt“, mit Grund) */
@@ -34,7 +37,7 @@ export interface EreignisSpeicher {
 export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
   private ereignisse = new Map<string, LokalesEreignis>();
   private meta = new Map<string, number>();
-  private sichten = new Map<string, Sicht>();
+  private sichten = new Map<string, GespeicherteSicht>();
 
   async alle(turnier: string) {
     return sortieren([...this.ereignisse.values()].filter((e) => e.turnier === turnier));
@@ -58,7 +61,7 @@ export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
   async sicht(turnier: string) {
     return this.sichten.get(turnier) ?? null;
   }
-  async setzeSicht(turnier: string, sicht: Sicht) {
+  async setzeSicht(turnier: string, sicht: GespeicherteSicht) {
     this.sichten.set(turnier, sicht);
   }
   async bestaetigteVerwerfen(turnier: string) {
@@ -143,20 +146,20 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     await fertig(tx);
   }
 
-  private async metaLesen(turnier: string): Promise<{ turnier: string; seq: number; sicht?: Sicht }> {
+  private async metaLesen(turnier: string): Promise<{ turnier: string; seq: number; sicht?: GespeicherteSicht }> {
     const db = await this.db;
     const tx = db.transaction('meta', 'readonly');
-    const m = (await anfrage(tx.objectStore('meta').get(turnier))) as { seq: number; sicht?: Sicht } | undefined;
+    const m = (await anfrage(tx.objectStore('meta').get(turnier))) as { seq: number; sicht?: GespeicherteSicht } | undefined;
     return { turnier, seq: m?.seq ?? 0, ...(m?.sicht ? { sicht: m.sicht } : {}) };
   }
 
-  private async metaAendern(turnier: string, f: (m: { turnier: string; seq: number; sicht?: Sicht }) => void) {
+  private async metaAendern(turnier: string, f: (m: { turnier: string; seq: number; sicht?: GespeicherteSicht }) => void) {
     const db = await this.db;
     const tx = db.transaction('meta', 'readwrite');
     const store = tx.objectStore('meta');
     const r = store.get(turnier);
     r.onsuccess = () => {
-      const alt = r.result as { seq: number; sicht?: Sicht } | undefined;
+      const alt = r.result as { seq: number; sicht?: GespeicherteSicht } | undefined;
       const m = { turnier, seq: alt?.seq ?? 0, ...(alt?.sicht ? { sicht: alt.sicht } : {}) };
       f(m);
       store.put(m);
@@ -176,7 +179,7 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     return (await this.metaLesen(turnier)).sicht ?? null;
   }
 
-  async setzeSicht(turnier: string, sicht: Sicht) {
+  async setzeSicht(turnier: string, sicht: GespeicherteSicht) {
     await this.metaAendern(turnier, (m) => (m.sicht = sicht));
   }
 
