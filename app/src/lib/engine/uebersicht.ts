@@ -1,7 +1,7 @@
 import { name, platzierungen, runden, tabelle } from './abfragen';
 import { ergebnisText } from './ergebnis';
 import { rundenName, baumRunden, trostPlatzierungen } from './ko';
-import { gruppenName, type KonkurrenzZustand, type Spiel } from './modell';
+import { gruppenName, istSchweizerArt, punkteText, type KonkurrenzZustand, type Spiel } from './modell';
 import { istRundenModus, kaiserTabelle, letzteRunde, schweizerTabelle } from './runden';
 import { zurueckgezogen, type TurnierZustand } from './zustand';
 
@@ -98,11 +98,11 @@ function rundenText(z: TurnierZustand, k: KonkurrenzZustand): string[] {
   const l: string[] = [];
   const zur = zurueckgezogen(k);
   const zusatz = (id: string, zr: boolean) => name(z, id) + (zr ? ' (zur.)' : '');
-  if (k.einst.modus === 'schweizer') {
-    l.push('', 'Rangliste (Schweizer System)');
+  if (istSchweizerArt(k.einst.modus)) {
+    l.push('', k.einst.modus === 'cup' ? 'Rangliste (Cup-System)' : 'Rangliste (Schweizer System)');
     l.push(`  ${'Pl'.padEnd(3)}${links('Name', 26)}${rechts('Pkt', 4)}${rechts('Buchholz', 9)}${rechts('Fein', 6)}${rechts('Sätze', 8)}`);
     for (const r of schweizerTabelle(k, zur))
-      l.push(`  ${rechts(r.platz, 2)} ${links(zusatz(r.id, r.zurueckgezogen), 26)}${rechts(r.punkte, 4)}${rechts(r.buchholz, 9)}${rechts(r.feinbuchholz, 6)}${rechts(`${r.saetzeG}:${r.saetzeV}`, 8)}`);
+      l.push(`  ${rechts(r.platz, 2)} ${links(zusatz(r.id, r.zurueckgezogen), 26)}${rechts(punkteText(r.punkte), 4)}${rechts(r.buchholz, 9)}${rechts(r.feinbuchholz, 6)}${rechts(`${r.saetzeG}:${r.saetzeV}`, 8)}`);
   } else {
     const t = kaiserTabelle(k, zur);
     l.push('', `Rangleiter (Kaiserturnier, nach Runde ${t.nachRunde})`);

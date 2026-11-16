@@ -52,8 +52,18 @@ function zaehlen(saetze: [number, number][]) {
 
 export type Wertungsergebnis = { ok: true; ergebnis: Ergebnis } | { ok: false; fehler: string };
 
-/** Prüft eine Eingabe und liefert das gewertete Ergebnis. */
-export function ergebnisWerten(e: ErgebnisEingabe, bestOf: BestOf, eingabe: Eingabe): Wertungsergebnis {
+/** Erwartete Zahl gespielter Sätze (für Zeitschätzungen) */
+export function erwarteteSaetze(bestOf: BestOf, feste: number | null = null): number {
+  if (feste) return feste;
+  return bestOf === 1 ? 1 : bestOf === 3 ? 2.5 : bestOf === 5 ? 4 : 5.5;
+}
+
+/**
+ * Prüft eine Eingabe und liefert das gewertete Ergebnis.
+ * Mit `feste` (2 oder 4) werden genau so viele Sätze gespielt; Unentschieden ist möglich.
+ */
+export function ergebnisWerten(e: ErgebnisEingabe, bestOf: BestOf, eingabe: Eingabe, feste: number | null = null): Wertungsergebnis {
+  if (feste) return festeWerten(e, feste, eingabe);
   const k = gewinnSaetze(bestOf);
   const nurSaetze = eingabe === 'saetze';
   const fehler = (t: string): Wertungsergebnis => ({ ok: false, fehler: t });
@@ -123,6 +133,65 @@ export function ergebnisWerten(e: ErgebnisEingabe, bestOf: BestOf, eingabe: Eing
     ok: true,
     ergebnis: { saetze: saetze.map((s) => [s[0], s[1]] as [number, number]), satzA: sa, satzB: sb, ballA, ballB, gewinner: sa > sb ? 'a' : 'b', art: 'normal' },
   };
+}
+
+/** Wertung bei fester Satzzahl n: alle n Sätze werden gespielt, Unentschieden möglich */
+function festeWerten(e: ErgebnisEingabe, n: number, eingabe: Eingabe): Wertungsergebnis {
+  const nurSaetze = eingabe === 'saetze';
+  const fehler = (t: string): Wertungsergebnis => ({ ok: false, fehler: t });
+  const sieger = (sa: number, sb: number): Seite | null => (sa > sb ? 'a' : sb > sa ? 'b' : null);
+  if (e.kampflos) {
+    if (e.kampflos !== 'a' && e.kampflos !== 'b') return fehler('Ungültige Angabe.');
+    const g = andere(e.kampflos);
+    const satz: [number, number] = g === 'a' ? [11, 0] : [0, 11];
+    const saetze = nurSaetze ? null : Array.from({ length: n }, () => [...satz] as [number, number]);
+    const [ballA, ballB] = saetze ? summe(saetze) : [null, null];
+    return { ok: true, ergebnis: { saetze, satzA: g === 'a' ? n : 0, satzB: g === 'b' ? n : 0, ballA, ballB, gewinner: g, art: 'kampflos' } };
+  }
+  if (e.aufgabe) {
+    // Wer aufgibt, verliert (D 7.10); die restlichen Sätze gehen an den Gegner
+    if (e.aufgabe !== 'a' && e.aufgabe !== 'b') return fehler('Ungültige Angabe.');
+    const g = andere(e.aufgabe);
+    if (nurSaetze) {
+      const [sa, sb] = e.stand ?? [0, 0];
+      if (!ganz(sa, n) || !ganz(sb, n) || sa + sb >= n) return fehler(`Satzstand bei Aufgabe: zusammen weniger als ${n} Sätze.`);
+      const rest = n - sa - sb;
+      return { ok: true, ergebnis: { saetze: null, satzA: sa + (g === 'a' ? rest : 0), satzB: sb + (g === 'b' ? rest : 0), ballA: null, ballB: null, gewinner: g, art: 'aufgabe' } };
+    }
+    const gespielt = e.saetze ?? [];
+    for (const [x, y] of gespielt) {
+      const f = satzFehler(x, y);
+      if (f) return fehler(f);
+    }
+    if (gespielt.length >= n) return fehler('Alle Sätze sind gespielt – bitte ohne Aufgabe eintragen.');
+    const saetze = gespielt.map((s) => [...s] as [number, number]);
+    const [la, lb] = e.laufend ?? [0, 0];
+    if (!ganz(la) || !ganz(lb)) return fehler('Bitte den Stand im angefangenen Satz als ganze Punkte eingeben.');
+    const x = e.aufgabe === 'a' ? la : lb;
+    const s = Math.max(11, x + 2);
+    saetze.push(e.aufgabe === 'a' ? [x, s] : [s, x]);
+    while (saetze.length < n) saetze.push(g === 'a' ? [11, 0] : [0, 11]);
+    const [satzA, satzB] = zaehlen(saetze);
+    const [ballA, ballB] = summe(saetze);
+    return { ok: true, ergebnis: { saetze, satzA, satzB, ballA, ballB, gewinner: g, art: 'aufgabe' } };
+  }
+  if (nurSaetze) {
+    const st = e.stand;
+    if (!st || !ganz(st[0], n) || !ganz(st[1], n) || st[0] + st[1] !== n) return fehler(`Es werden genau ${n} Sätze gespielt – bitte den Satzstand angeben.`);
+    return { ok: true, ergebnis: { saetze: null, satzA: st[0], satzB: st[1], ballA: null, ballB: null, gewinner: sieger(st[0], st[1]), art: 'normal' } };
+  }
+  const saetze = e.saetze;
+  if (!Array.isArray(saetze) || saetze.length === 0) return fehler('Bitte die Sätze eintragen.');
+  for (let i = 0; i < saetze.length; i++) {
+    const satz = saetze[i];
+    if (!Array.isArray(satz) || satz.length !== 2) return fehler('Ungültiger Satz.');
+    const f = satzFehler(satz[0], satz[1]);
+    if (f) return fehler(`Satz ${i + 1}: ${f}`);
+  }
+  if (saetze.length !== n) return fehler(`Es werden genau ${n} Sätze gespielt (${saetze.length} eingetragen).`);
+  const [sa, sb] = zaehlen(saetze);
+  const [ballA, ballB] = summe(saetze);
+  return { ok: true, ergebnis: { saetze: saetze.map((s) => [s[0], s[1]] as [number, number]), satzA: sa, satzB: sb, ballA, ballB, gewinner: sieger(sa, sb), art: 'normal' } };
 }
 
 /** Eingabe aus Sicht der anderen Seite (A und B vertauscht) */

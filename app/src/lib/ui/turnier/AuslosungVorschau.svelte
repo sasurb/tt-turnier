@@ -15,6 +15,8 @@
     startliste = false,
     plaetze = null,
     tauschen = null,
+    gesperrt = null,
+    verschieben = false,
   }: {
     z: TurnierZustand;
     gruppen?: string[][] | null;
@@ -24,6 +26,10 @@
     startliste?: boolean;
     plaetze?: (string | null)[] | null;
     tauschen?: ((a: string, b: string) => Promise<void>) | null;
+    /** Im laufenden Turnier: diese Teilnehmer lassen sich nicht mehr bewegen (🔒) */
+    gesperrt?: ReadonlySet<string> | null;
+    /** Gruppen: je Gruppe ein Feld „+ hierher“ zum Verschieben (Platz „g:<nr>:leer“) */
+    verschieben?: boolean;
   } = $props();
 
   let erster = $state<string | null>(null);
@@ -31,6 +37,7 @@
 
   async function tippen(platz: string, wer: string) {
     if (!tauschen) return;
+    if (!erster && platz.endsWith(':leer')) return;
     if (!erster) {
       erster = platz;
       hinweis = T.konk.gewaehlt(wer);
@@ -66,11 +73,14 @@
         <ol>
           {#each g as id, i (id)}
             <li>
-              <button class="platz" class:gewaehlt={erster === `g:${nr}:${i}`} disabled={!tauschen} onclick={() => tippen(`g:${nr}:${i}`, name(z, id))}>
-                <span>{name(z, id)}</span><span class="leise">{verein(id)}</span>
+              <button class="platz" class:gewaehlt={erster === `g:${nr}:${i}`} disabled={!tauschen || !!gesperrt?.has(id)} onclick={() => tippen(`g:${nr}:${i}`, name(z, id))}>
+                <span>{name(z, id)}</span><span class="leise">{gesperrt?.has(id) ? T.konk.aendernGesperrt : verein(id)}</span>
               </button>
             </li>
           {/each}
+          {#if verschieben && tauschen && erster && !erster.startsWith(`g:${nr}:`)}
+            <li><button class="platz leer" onclick={() => tippen(`g:${nr}:leer`, '')} data-testid="hierher">{T.konk.aendernHierher}</button></li>
+          {/if}
         </ol>
       </div>
     {/each}
@@ -81,8 +91,8 @@
       <li class="paar">
         {#each [2 * i, 2 * i + 1] as p (p)}
           {@const id = plaetze[p] ?? null}
-          <button class="platz" class:frei={!id} class:gewaehlt={erster === `p:${p}`} disabled={!tauschen} onclick={() => tippen(`p:${p}`, id ? name(z, id) : T.konk.freilos)}>
-            <span>{id ? name(z, id) : T.konk.freilos}</span><span class="leise">{verein(id)}</span>
+          <button class="platz" class:frei={!id} class:gewaehlt={erster === `p:${p}`} disabled={!tauschen || (!!id && !!gesperrt?.has(id))} onclick={() => tippen(`p:${p}`, id ? name(z, id) : T.konk.freilos)}>
+            <span>{id ? name(z, id) : T.konk.freilos}</span><span class="leise">{id && gesperrt?.has(id) ? T.konk.aendernGesperrt : verein(id)}</span>
           </button>
         {/each}
       </li>
@@ -113,6 +123,7 @@
   .platz:hover:not(:disabled) { background: var(--grund); border-color: var(--blau); }
   .platz.gewaehlt { border-color: var(--orange); background: color-mix(in srgb, var(--orange) 12%, var(--flaeche)); }
   .platz.frei { color: var(--leise); font-style: italic; }
+  .platz.leer { border-style: dashed; color: var(--blau); align-items: center; }
   .platz .leise { font-weight: 400; font-size: 0.8rem; }
   .ko { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 10px; }
   .paar { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--linie); border-radius: 10px; }

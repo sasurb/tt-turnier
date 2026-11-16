@@ -525,7 +525,7 @@ describe('Gruppen + K.-o.', () => {
       verein: '',
     });
     t.e(ART.teilnehmerGemeldet, { konkurrenz: 'k', id: 'e' });
-    expect(t.z.warnungen.at(-1)!.text).toMatch(/Nachmelden/);
+    expect(t.z.warnungen.at(-1)!.text).toMatch(/Gruppe für die Nachmeldung/);
   });
 
   it('Zulassung warnt nur', () => {

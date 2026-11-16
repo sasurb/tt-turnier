@@ -11,6 +11,8 @@ import {
   FEST_NACH_START,
   MODI,
   STANDARD_ANGABEN,
+  UHRZEIT_MUSTER,
+  festeSaetzeVon,
   mitKo,
   standardEinstellungen,
   type Angabe,
@@ -48,6 +50,12 @@ export interface TurnierZustand {
   namen: NamenFuerZuschauer;
   /** Pausenschutz: so viele Minuten nach dem letzten Spiel gilt ein Spieler noch als „in der Pause“ (0 = aus) */
   pause: number;
+  /** Geplanter Beginn „HH:MM“ (für den Zeitplan); null = ab jetzt */
+  beginn: string | null;
+  /** Minuten je Satz für den Zeitplan; null = aus den gespielten Spielen lernen (Standard 4) */
+  satzMinuten: number | null;
+  /** Rückgängig gemachte Einträge (IDs, siehe eintrag.zurueckgenommen) */
+  zurueckgenommen: string[];
   abgeschlossen: boolean;
   notizen: {
     id: string;
@@ -76,6 +84,9 @@ export function leererZustand(): TurnierZustand {
     veroeffentlichung: { ...ALLES_OEFFENTLICH },
     namen: 'voll',
     pause: 0,
+    beginn: null,
+    satzMinuten: null,
+    zurueckgenommen: [],
     abgeschlossen: false,
     notizen: [],
     anzahlEreignisse: 0,
@@ -168,6 +179,9 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
   }
   const vo = veroeffentlichungLesen(x.veroeffentlichung);
   if (vo !== undefined) e.veroeffentlichung = vo;
+  if (x.festeSaetze === null || x.festeSaetze === 2 || x.festeSaetze === 4) e.festeSaetze = x.festeSaetze;
+  if (typeof x.beschleunigt === 'boolean') e.beschleunigt = x.beschleunigt;
+  if (x.beginn === null || (typeof x.beginn === 'string' && UHRZEIT_MUSTER.test(x.beginn))) e.beginn = x.beginn;
   const z = x.zulassung as Record<string, unknown> | undefined;
   if (z && typeof z === 'object') {
     for (const f of ['ttrMin', 'ttrMax'] as const) {
@@ -333,17 +347,22 @@ function gruppenAnlegen(k: KonkurrenzZustand) {
   let index = 0;
   for (let r = 0; r < maxRunden; r++) {
     gruppen.forEach((m, nr) => {
-      for (const [x, y] of plaene[nr]![r] ?? []) {
-        const a = m[x]!;
-        const b = m[y]!;
-        const id = `g${nr}-${a}-${b}`;
-        k.spiele[id] = {
+      for (const [x, y] of plaene[nr]![r] ?? []) gruppenSpielAnlegen(k, nr, m[x]!, m[y]!, r + 1, index++);
+    });
+  }
+}
+
+/** Gruppenspiel anlegen (ID „g<Gruppe>-<A>-<B>“) und an die Spielfolge hängen */
+function gruppenSpielAnlegen(k: KonkurrenzZustand, nr: number, a: string, b: string, runde: number, index: number): boolean {
+  const id = `g${nr}-${a}-${b}`;
+  if (k.spiele[id]) return false;
+  k.spiele[id] = {
           id,
           konkurrenz: k.id,
           phase: 'gruppen',
           gruppe: nr,
-          runde: r + 1,
-          index: index++,
+          runde,
+          index,
           a,
           b,
           aFrei: false,
@@ -368,11 +387,145 @@ function gruppenAnlegen(k: KonkurrenzZustand) {
           tisch: null,
           aufgerufen: null,
           schiri: null,
+          plan: null,
         };
-        k.reihenfolge.push(id);
+  k.reihenfolge.push(id);
+  return true;
+}
+
+/* ---------------- Änderungen im laufenden Turnier ---------------- */
+
+/** Unabhängige Kopie einer Konkurrenz (zum Durchrechnen einer Änderung, ohne den Stand anzufassen) */
+function kopie(k: KonkurrenzZustand): KonkurrenzZustand {
+  return JSON.parse(JSON.stringify(k)) as KonkurrenzZustand;
+}
+
+/** Spiele, die schon ein Ergebnis haben oder an einem Tisch stehen, dürfen sich nicht ändern */
+function festgelegt(s: Spiel): boolean {
+  return !!s.eintrag || (s.tisch !== null && s.status === 'offen');
+}
+
+/**
+ * Prüft einen geänderten K.-o.-Plan (Plätze der ersten Runde) im laufenden Turnier: Kein Spiel mit
+ * Ergebnis oder Aufruf darf dadurch eine andere Besetzung bekommen. null = in Ordnung, sonst Grund.
+ */
+export function koPlaetzePruefen(k: KonkurrenzZustand, neu: (string | null)[]): string | null {
+  const alt = k.auslosungKo?.plaetze;
+  if (!alt || !k.gestartet.ko) return 'Der K.-o.-Teil hat noch nicht begonnen.';
+  if (neu.length !== alt.length) return 'Die Zahl der Plätze passt nicht.';
+  const ids = neu.filter((x): x is string => typeof x === 'string');
+  if (new Set(ids).size !== ids.length) return 'Ein Teilnehmer steht doppelt im Plan.';
+  if (!ids.every((x) => k.meldungen.includes(x))) return 'Unbekannter Teilnehmer im Plan.';
+  const k2 = kopie(k);
+  k2.auslosungKo!.plaetze = [...neu];
+  koAktualisieren(k2, new Set(zurueckgezogen(k2)));
+  for (const s of Object.values(k.spiele)) {
+    if (s.phase !== 'ko' || !festgelegt(s)) continue;
+    const t = k2.spiele[s.id]!;
+    if (t.a !== s.a || t.b !== s.b) return 'Ein betroffenes Spiel hat schon ein Ergebnis oder ist aufgerufen.';
+  }
+  return null;
+}
+
+/** Freie K.-o.-Plätze (Freilose), auf die ein Teilnehmer nachgemeldet werden kann */
+export function nachmeldePlaetzeKo(k: KonkurrenzZustand): number[] {
+  const p = k.auslosungKo?.plaetze;
+  if (!p || !k.gestartet.ko || erstePhase(k) !== 'ko') return [];
+  const aus: number[] = [];
+  p.forEach((x, i) => {
+    if (x !== null) return;
+    const neu = [...p];
+    neu[i] = '\u0000probe';
+    const k2 = kopie(k);
+    k2.meldungen.push('\u0000probe');
+    if (koPlaetzePruefen(k2, neu) === null) aus.push(i);
+  });
+  return aus;
+}
+
+/** Spiele, die eine neue Gruppeneinteilung wegfallen ließe (Paarung nicht mehr in derselben Gruppe) */
+function wegfallendeGruppenspiele(k: KonkurrenzZustand, neu: string[][]): Spiel[] {
+  const gruppeVon = new Map<string, number>();
+  neu.forEach((g, nr) => g.forEach((id) => gruppeVon.set(id, nr)));
+  return Object.values(k.spiele).filter((s) => s.phase === 'gruppen' && (gruppeVon.get(s.a!) !== s.gruppe || gruppeVon.get(s.b!) !== s.gruppe));
+}
+
+/**
+ * Prüft eine neue Gruppeneinteilung im laufenden Turnier (gleiche Teilnehmer, gleiche Gruppenzahl).
+ * Wer schon ein Ergebnis hat oder an einem Tisch steht, kann nur mit Spielen umziehen, die
+ * dadurch nicht wegfallen. null = in Ordnung, sonst Grund.
+ */
+export function gruppenAenderungPruefen(k: KonkurrenzZustand, neu: string[][]): string | null {
+  if (!k.gestartet.gruppen || k.gestartet.ko || istRundenModus(k.einst.modus) || erstePhase(k) !== 'gruppen') return 'Die Gruppen lassen sich jetzt nicht ändern.';
+  if (!Array.isArray(neu) || neu.length !== k.gruppen.length) return 'Die Zahl der Gruppen muss gleich bleiben.';
+  if (!neu.every((g) => Array.isArray(g) && g.length >= 2 && g.length <= 16 && g.every((x) => typeof x === 'string'))) return 'Jede Gruppe braucht mindestens zwei Teilnehmer.';
+  const flach = neu.flat();
+  const alt = k.gruppen.flatMap((g) => g.mitglieder);
+  if (new Set(flach).size !== flach.length || !gleicheMenge(flach, alt)) return 'Die Teilnehmer müssen dieselben bleiben.';
+  if (wegfallendeGruppenspiele(k, neu).some(festgelegt)) return 'Wer schon gespielt hat oder gerade an einem Tisch steht, bleibt in seiner Gruppe.';
+  return null;
+}
+
+function gruppenAendern(k: KonkurrenzZustand, neu: string[][]) {
+  for (const s of wegfallendeGruppenspiele(k, neu)) delete k.spiele[s.id];
+  k.reihenfolge = k.reihenfolge.filter((id) => k.spiele[id]);
+  let index = Math.max(-1, ...Object.values(k.spiele).map((s) => s.index)) + 1;
+  neu.forEach((m, nr) => {
+    const g = k.gruppen[nr]!;
+    if (!gleicheMenge(g.mitglieder, m) || g.mitglieder.some((x, i) => m[i] !== x)) g.los = leer();
+    g.mitglieder = [...m];
+    // fehlende Paarungen in der Reihenfolge des Rundenplans ergänzen
+    rundenplan(m.length).forEach((runde, r) => {
+      for (const [x, y] of runde) {
+        const a = m[x]!;
+        const b = m[y]!;
+        if (k.spiele[`g${nr}-${a}-${b}`] || k.spiele[`g${nr}-${b}-${a}`]) continue;
+        gruppenSpielAnlegen(k, nr, a, b, r + 1, index++);
       }
     });
+  });
+  if (k.einst.modus === 'gruppen_ko') k.auslosungKo = null; // Endrunde muss neu ausgelost werden
+}
+
+/**
+ * Nachmeldung nach dem Start: Gruppen – neue Spiele gegen alle der Gruppe; K.-o. – auf einen
+ * Freilos-Platz; Schweizer/Cup/Kaiser – spielt ab der nächsten Runde mit. null = in Ordnung.
+ */
+function nachmelden(k: KonkurrenzZustand, id: string, d: Record<string, unknown>): string | null {
+  if (k.status === 'beendet') return `„${k.einst.name}“ ist schon beendet.`;
+  if (istRundenModus(k.einst.modus)) {
+    k.gruppen[0]!.mitglieder.push(id);
+    k.meldungen.push(id);
+    return null;
   }
+  if (k.gestartet.ko) {
+    if (erstePhase(k) !== 'ko') return 'Die Endrunde läuft schon – nachmelden geht nur während der Gruppenspiele.';
+    const platz = zahl(d.platz, 0, 1023);
+    const p = k.auslosungKo!.plaetze;
+    if (platz === undefined || platz === null || platz >= p.length || p[platz] !== null) return 'Bitte einen freien Platz (Freilos) im K.-o.-Plan wählen.';
+    const neu = [...p];
+    neu[platz] = id;
+    k.meldungen.push(id);
+    const f = koPlaetzePruefen(k, neu);
+    if (f) {
+      k.meldungen.pop();
+      return f;
+    }
+    k.auslosungKo!.plaetze = neu;
+    return null;
+  }
+  const nr = zahl(d.gruppe, 0, 255);
+  const g = nr === undefined || nr === null ? undefined : k.gruppen[nr];
+  if (!g) return 'Bitte eine Gruppe für die Nachmeldung wählen.';
+  if (g.mitglieder.length >= 16) return 'Die Gruppe ist voll.';
+  let index = Math.max(-1, ...Object.values(k.spiele).map((s) => s.index)) + 1;
+  const runden = Math.max(1, ...Object.values(k.spiele).filter((s) => s.gruppe === g.nr).map((s) => s.runde));
+  // Nachholspiele früh einplanen (kleine Rundennummern), damit der Nachgemeldete aufholt
+  g.mitglieder.forEach((x, i) => gruppenSpielAnlegen(k, g.nr, x, id, Math.min(i + 1, runden), index++));
+  g.mitglieder.push(id);
+  k.meldungen.push(id);
+  if (k.einst.modus === 'gruppen_ko') k.auslosungKo = null;
+  return null;
 }
 
 /* ---------------- Ergebnisse ---------------- */
@@ -508,6 +661,9 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (d.namen === 'voll' || d.namen === 'kurz') z.namen = d.namen;
       const pause = zahl(d.pause, 0, 60);
       if (pause !== undefined && pause !== null) z.pause = pause;
+      if (d.beginn === null || (typeof d.beginn === 'string' && UHRZEIT_MUSTER.test(d.beginn))) z.beginn = d.beginn;
+      const sm = zahl(d.satzMinuten, 2, 15);
+      if (sm !== undefined) z.satzMinuten = sm;
       // „Ergebnisse veröffentlichen“: Abweichungen der Konkurrenzen zurücknehmen
       if (d.alleKonkurrenzen === true) for (const k of Object.values(z.konkurrenzen)) k.einst.veroeffentlichung = null;
       break;
@@ -621,7 +777,9 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       }
       if (k.meldungen.includes(id)) break;
       if (begonnen(k)) {
-        warnen(`„${k.einst.name}“ hat schon begonnen – Nachmelden ist nicht mehr möglich.`);
+        const f = nachmelden(k, id, d);
+        if (f) warnen(f);
+        statusAktualisieren(k);
         break;
       }
       k.meldungen.push(id);
@@ -641,13 +799,19 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         warnen('Paar konnte nicht gemeldet werden.');
         break;
       }
-      if (begonnen(k)) {
-        warnen(`„${k.einst.name}“ hat schon begonnen – Nachmelden ist nicht mehr möglich.`);
-        break;
-      }
       const belegt = sp.find((x) => teilnehmerVon(k, x));
       if (belegt) {
         warnen(`${z.spieler[belegt]!.vorname} ${z.spieler[belegt]!.nachname} ist in „${k.einst.name}“ schon gemeldet.`);
+        break;
+      }
+      if (begonnen(k)) {
+        k.paare[id] = { id, spieler: [sp[0]!, sp[1]!] };
+        const f = nachmelden(k, id, d);
+        if (f) {
+          delete k.paare[id];
+          warnen(f);
+        }
+        statusAktualisieren(k);
         break;
       }
       // Mixed (Frau + Mann) prüft die Oberfläche vor dem Senden: Die Berechnung darf keine Angaben
@@ -803,6 +967,54 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       break;
     }
 
+    case ART.auslosungGeaendert: {
+      if (!nurLeitung()) break;
+      const k = konkurrenz();
+      if (!k) break;
+      if (d.phase === 'ko') {
+        const p = Array.isArray(d.plaetze) && d.plaetze.every((x) => x === null || typeof x === 'string') ? (d.plaetze as (string | null)[]) : null;
+        const alt = k.auslosungKo?.plaetze ?? [];
+        const f = !p
+          ? 'Ungültiger K.-o.-Plan.'
+          : p.filter((x) => x === null).length !== alt.filter((x) => x === null).length || !gleicheMenge(p.filter((x): x is string => !!x), alt.filter((x): x is string => !!x))
+            ? 'Beim Ändern des K.-o.-Plans bleiben die Teilnehmer dieselben.'
+            : koPlaetzePruefen(k, p);
+        if (f) {
+          warnen(f);
+          break;
+        }
+        k.auslosungKo!.plaetze = [...p!];
+      } else {
+        const g = Array.isArray(d.gruppen) ? (d.gruppen as string[][]) : [];
+        const f = gruppenAenderungPruefen(k, g);
+        if (f) {
+          warnen(f);
+          break;
+        }
+        gruppenAendern(k, g);
+      }
+      statusAktualisieren(k);
+      break;
+    }
+    case ART.spielGeplant: {
+      if (!nurLeitung()) break;
+      const k = konkurrenz();
+      const s = k && typeof d.spiel === 'string' ? k.spiele[d.spiel] : undefined;
+      if (!k) break;
+      if (!s) {
+        warnen('Spiel nicht gefunden.');
+        break;
+      }
+      if (s.status !== 'offen' && s.status !== 'wartet') {
+        warnen('Nur offene Spiele lassen sich planen.');
+        break;
+      }
+      const tisch = zahl(d.tisch, 1, 200) ?? null;
+      const zeit = typeof d.zeit === 'string' && UHRZEIT_MUSTER.test(d.zeit) ? d.zeit : null;
+      s.plan = tisch !== null || zeit !== null ? { tisch, zeit } : null;
+      break;
+    }
+
     case ART.tischGesperrt: {
       if (!nurLeitung()) break;
       const nr = zahl(d.nr, 1, 200);
@@ -931,7 +1143,8 @@ function spielEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, e: Lok
       if (!eingabe || typeof eingabe !== 'object') return 'Ergebnis fehlt.';
       if (d.a === s.b && d.b === s.a) eingabe = eingabeTauschen(eingabe);
       else if (d.a !== s.a || d.b !== s.b) return 'Die Spieler passen nicht zu diesem Spiel.';
-      const w = ergebnisWerten(eingabe, k.einst.bestOf, k.einst.eingabe);
+      const w = ergebnisWerten(eingabe, k.einst.bestOf, k.einst.eingabe, festeSaetzeVon(k.einst));
+      if (w.ok && w.ergebnis.gewinner === null && s.phase === 'ko') return 'Im K.-o.-System gibt es kein Unentschieden.';
       if (!w.ok) return `Ergebnis ungültig: ${w.fehler}`;
       const blockiert = folgeBlockiert(k, s, w.ergebnis.gewinner);
       if (blockiert) return blockiert;
@@ -995,6 +1208,56 @@ function sicherAnwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand {
   }
 }
 
+/**
+ * Rückgängig gemachte Einträge: Die Leitung nimmt mit „eintrag.zurueckgenommen“ frühere Einträge
+ * zurück (oder stellt sie wieder her). Der letzte Stand je Eintrag gilt. Zurücknehmen lassen sich
+ * nur Einträge, die vorher im Protokoll stehen – nicht das Anlegen des Turniers und nicht das
+ * Rückgängigmachen selbst (dafür gibt es „wiederherstellen“).
+ */
+/** Nicht rücknehmbare Arten (Turnier anlegen, Rückgängig selbst, Wiederherstellen aus Sicherung, Testnotiz) */
+export const NICHT_RUECKGAENGIG: readonly string[] = [ART.turnierAngelegt, ART.eintragZurueck, ART.turnierWiederhergestellt, ART.testNotiz];
+
+/**
+ * Darf dieser Eintrag zurückgenommen werden? Zusätzlich gesperrt: Turnierangaben mit „Namen für
+ * Zuschauer“ – diese Einstellung werten auch die Server aus (Datenschutz-Filter), die vom Rückgängig
+ * nichts wissen. Sie wird stattdessen neu eingestellt.
+ */
+export function rueckgaengigErlaubt(e: Pick<LokalesEreignis, 'art' | 'daten'>): boolean {
+  if (NICHT_RUECKGAENGIG.includes(e.art)) return false;
+  if (e.art === ART.turnierDaten && e.daten && typeof e.daten === 'object' && 'namen' in e.daten) return false;
+  return true;
+}
+
+export function zurueckgenommeneEintraege(ereignisse: Pick<LokalesEreignis, 'id' | 'art' | 'daten' | 'autor'>[]): Set<string> {
+  const pos = new Map<string, number>();
+  ereignisse.forEach((e, i) => {
+    if (!pos.has(e.id)) pos.set(e.id, i);
+  });
+  const stand = new Map<string, boolean>();
+  ereignisse.forEach((e, i) => {
+    if (e.art !== ART.eintragZurueck || !istLeitung(e.autor)) return;
+    const d = (e.daten ?? {}) as Record<string, unknown>;
+    if (!Array.isArray(d.ereignisse)) return;
+    const zurueck = d.zurueck !== false;
+    for (const id of d.ereignisse.slice(0, 200)) {
+      if (typeof id !== 'string') continue;
+      const p = pos.get(id);
+      if (p === undefined || p >= i) continue;
+      const ziel = ereignisse[p]!;
+      if (!rueckgaengigErlaubt(ziel)) continue;
+      stand.set(id, zurueck);
+    }
+  });
+  return new Set([...stand].filter(([, v]) => v).map(([id]) => id));
+}
+
 export function berechnen(ereignisse: LokalesEreignis[]): TurnierZustand {
-  return ereignisse.reduce(sicherAnwenden, leererZustand());
+  const weg = zurueckgenommeneEintraege(ereignisse);
+  const z = leererZustand();
+  for (const e of ereignisse) {
+    if (e.art === ART.eintragZurueck || weg.has(e.id)) z.anzahlEreignisse++;
+    else sicherAnwenden(z, e);
+  }
+  z.zurueckgenommen = [...weg];
+  return z;
 }

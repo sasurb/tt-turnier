@@ -4,12 +4,13 @@
   import { T } from '../../texte';
   import { kurzId } from '../../engine/ids';
   import { standardEinstellungen, ttrBereichName, type KonkurrenzEinstellungen } from '../../engine/modell';
-  import type { TurnierZustand } from '../../engine/zustand';
+  import { begonnen, teilnehmerVon, type TurnierZustand } from '../../engine/zustand';
   import { pool, poolLaden } from '../../pool.svelte';
   import { klassenLaden } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
   import KonkurrenzDetail from './KonkurrenzDetail.svelte';
   import KonkurrenzForm from './KonkurrenzForm.svelte';
+  import { alsEineAktion } from '../../aktion';
 
   let { z, eintragen }: { z: TurnierZustand; eintragen: (art: string, d: Record<string, unknown>) => Promise<unknown> } = $props();
   // svelte-ignore state_referenced_locally
@@ -25,6 +26,57 @@
     void poolLaden();
     void klassenLaden();
   });
+
+  /* ---------- Konkurrenzen zusammenlegen (vor dem Start) ---------- */
+  const zusammenlegbar = $derived(z.konkurrenzReihe.map((id) => z.konkurrenzen[id]!).filter((k) => !begonnen(k)));
+  let zlOffen = $state(false);
+  let zlVon = $state('');
+  let zlNach = $state('');
+  let zlName = $state('');
+  let zlHinweis = $state('');
+  const zlZiele = $derived(zusammenlegbar.filter((k) => k.id !== zlVon && k.einst.art === z.konkurrenzen[zlVon]?.einst.art));
+  /** Liste vereinen; ist eine leer (= keine Einschränkung), bleibt es ohne Einschränkung */
+  function liste<W>(x: W[], y: W[]): W[] {
+    return x.length && y.length ? [...new Set([...x, ...y])] : [];
+  }
+  function zulassungVereinen(a: KonkurrenzEinstellungen['zulassung'], b: KonkurrenzEinstellungen['zulassung']): KonkurrenzEinstellungen['zulassung'] {
+    const min = (x: number | null, y: number | null) => (x === null || y === null ? null : Math.min(x, y));
+    const max = (x: number | null, y: number | null) => (x === null || y === null ? null : Math.max(x, y));
+    return {
+      ttrMin: min(a.ttrMin, b.ttrMin),
+      ttrMax: max(a.ttrMax, b.ttrMax),
+      jahrgangVon: min(a.jahrgangVon, b.jahrgangVon),
+      jahrgangBis: max(a.jahrgangBis, b.jahrgangBis),
+      klassen: liste(a.klassen, b.klassen),
+      geschlecht: liste(a.geschlecht, b.geschlecht),
+    };
+  }
+  async function zusammenlegen() {
+    const von = z.konkurrenzen[zlVon];
+    const nach = z.konkurrenzen[zlNach];
+    if (!von || !nach || begonnen(von) || begonnen(nach)) return;
+    if (!confirm(T.konk.zusammenlegenFrage(von.einst.name, nach.einst.name))) return;
+    laeuft = true;
+    try {
+      const name = zlName.trim() || nach.einst.name;
+      await alsEineAktion(async () => {
+        for (const tid of von.meldungen) {
+          const p = von.paare[tid];
+          if (p) {
+            if (p.spieler.some((sp) => teilnehmerVon(nach, sp))) continue;
+            await eintragen(ART.paarGemeldet, { konkurrenz: nach.id, id: nach.paare[tid] ? 'p-' + kurzId() : tid, spieler: [...p.spieler] });
+          } else if (!nach.meldungen.includes(tid)) await eintragen(ART.teilnehmerGemeldet, { konkurrenz: nach.id, id: tid });
+        }
+        await eintragen(ART.konkurrenzGeaendert, { id: nach.id, einst: { ...$state.snapshot(nach.einst), name, zulassung: zulassungVereinen(nach.einst.zulassung, von.einst.zulassung) } });
+        await eintragen(ART.konkurrenzEntfernt, { id: von.id });
+      });
+      zlHinweis = T.konk.zusammenlegenFertig(name);
+      zlVon = zlNach = zlName = '';
+      zlOffen = false;
+    } finally {
+      laeuft = false;
+    }
+  }
 
   async function anlegen(e: KonkurrenzEinstellungen) {
     await eintragen(ART.konkurrenzAngelegt, { id: kurzId(), einst: e });
@@ -70,16 +122,18 @@
   async function klassenAnlegen() {
     laeuft = true;
     try {
-      for (const g of vorschau) {
-        const id = kurzId();
-        const einst: KonkurrenzEinstellungen = {
-          ...JSON.parse(JSON.stringify($state.snapshot(vorlage))),
-          name: g.name,
-          zulassung: { ...standardEinstellungen().zulassung, ...g.zulassung },
-        };
-        await eintragen(ART.konkurrenzAngelegt, { id, einst });
-        for (const sid of g.spieler) await eintragen(ART.teilnehmerGemeldet, { konkurrenz: id, id: sid });
-      }
+      await alsEineAktion(async () => {
+        for (const g of vorschau) {
+          const id = kurzId();
+          const einst: KonkurrenzEinstellungen = {
+            ...JSON.parse(JSON.stringify($state.snapshot(vorlage))),
+            name: g.name,
+            zulassung: { ...standardEinstellungen().zulassung, ...g.zulassung },
+          };
+          await eintragen(ART.konkurrenzAngelegt, { id, einst });
+          for (const sid of g.spieler) await eintragen(ART.teilnehmerGemeldet, { konkurrenz: id, id: sid });
+        }
+      });
       assistent = false;
       neu = false;
     } finally {
@@ -133,7 +187,36 @@
     <div class="reihe">
       <button onclick={() => (neu = true)}>+ {T.konk.neu}</button>
       <button class="zweit" onclick={() => (assistent = true)} data-testid="klassen-assistent">{T.konk.klassenAssistent}</button>
+      {#if zusammenlegbar.length >= 2}<button class="zweit" onclick={() => (zlOffen = !zlOffen)} aria-expanded={zlOffen} data-testid="zusammenlegen">{T.konk.zusammenlegen}</button>{/if}
     </div>
+    {#if zlOffen}
+      <div class="zusammen" data-testid="zusammenlegen-form">
+        <h3>{T.konk.zusammenlegen}<Hilfe text={T.konk.zusammenlegenHilfe} /></h3>
+        <div class="zl-raster">
+          <div>
+            <label for="zlv">{T.konk.zusammenlegenVon}</label>
+            <select id="zlv" bind:value={zlVon} onchange={() => (zlNach = '')}>
+              <option value="">–</option>
+              {#each zusammenlegbar as k (k.id)}<option value={k.id}>{k.einst.name} ({k.meldungen.length})</option>{/each}
+            </select>
+          </div>
+          <div>
+            <label for="zln">{T.konk.zusammenlegenNach}</label>
+            <select id="zln" bind:value={zlNach} disabled={!zlVon}>
+              <option value="">–</option>
+              {#each zlZiele as k (k.id)}<option value={k.id}>{k.einst.name} ({k.meldungen.length})</option>{/each}
+            </select>
+          </div>
+        </div>
+        <label for="zlname">{T.konk.zusammenlegenName}</label>
+        <input id="zlname" bind:value={zlName} maxlength="80" placeholder={z.konkurrenzen[zlNach]?.einst.name ?? ''} />
+        <div class="reihe" style="margin-top:12px">
+          <button disabled={!zlVon || !zlNach || laeuft} onclick={zusammenlegen} data-testid="zusammenlegen-knopf">{T.konk.zusammenlegenKnopf}</button>
+          <button class="zweit" onclick={() => (zlOffen = false)}>{T.app.abbrechen}</button>
+        </div>
+      </div>
+    {/if}
+    {#if zlHinweis}<p class="meldung ok" role="status">{zlHinweis}</p>{/if}
   {/if}
 </section>
 
@@ -146,5 +229,10 @@
   h4 { margin: 12px 0 4px; }
   .oder { margin-top: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .vorlage { margin-top: 12px; }
+  .zusammen { margin-top: 14px; border-top: 1px solid var(--linie); padding-top: 10px; }
+  .zl-raster { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  @media (max-width: 480px) {
+    .zl-raster { grid-template-columns: 1fr; }
+  }
   .vorlage summary { font-size: 0.95rem; color: var(--blau); }
 </style>

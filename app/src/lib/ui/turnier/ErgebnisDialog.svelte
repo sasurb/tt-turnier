@@ -5,7 +5,7 @@
   import { name, vorgabeVon } from '../../engine/abfragen';
   import { istRundenModus } from '../../engine/runden';
   import { ergebnisText, ergebnisWerten, gewinnSaetze, satzAusVerliererpunkten } from '../../engine/ergebnis';
-  import type { ErgebnisEingabe, ErgebnisEintrag, KonkurrenzZustand, Seite, Spiel } from '../../engine/modell';
+  import { festeSaetzeVon, type ErgebnisEingabe, type ErgebnisEintrag, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
   import type { TurnierZustand } from '../../engine/zustand';
 
   let {
@@ -34,6 +34,8 @@
   const amtlich = $derived(leitung || rolle === 'helfer' || (helfer && meineSeite === null));
   const darf = $derived(amtlich || meineSeite !== null);
   const nurSaetze = $derived(k.einst.eingabe === 'saetze');
+  /** Feste Satzzahl (Schweizer/Cup): alle Sätze werden gespielt, Unentschieden möglich */
+  const feste = $derived(festeSaetzeVon(k.einst));
   const gewinn = $derived(gewinnSaetze(k.einst.bestOf));
   const vorgabe = $derived(vorgabeVon(z, k, spiel));
   const nameA = $derived(name(z, spiel.a) + (meineSeite === 'a' ? ` (${T.erg.du})` : ''));
@@ -77,7 +79,7 @@
     }
     return nurSaetze ? (stand ? { stand } : {}) : { saetze: saetzeAusZeilen() };
   });
-  const wertung = $derived(ergebnisWerten(eingabe, k.einst.bestOf, k.einst.eingabe));
+  const wertung = $derived(ergebnisWerten(eingabe, k.einst.bestOf, k.einst.eingabe, feste));
 
   /** Wie viele Satzzeilen zeigen: bis entschieden, höchstens Best of */
   const satzStand = $derived.by(() => {
@@ -89,14 +91,18 @@
   $effect(() => {
     if (art !== 'normal' && art !== 'aufgabe') return;
     const voll = zeilen.every((z) => z.gewinner && z.verlierer !== '');
-    const entschieden = satzStand[0] >= gewinn || satzStand[1] >= gewinn;
-    if (voll && !entschieden && zeilen.length < k.einst.bestOf) zeilen.push({ gewinner: null, verlierer: '' });
+    const entschieden = feste ? saetzeAusZeilen().length >= feste : satzStand[0] >= gewinn || satzStand[1] >= gewinn;
+    if (voll && !entschieden && zeilen.length < (feste ?? k.einst.bestOf)) zeilen.push({ gewinner: null, verlierer: '' });
     // überflüssige leere Zeilen nach der Entscheidung entfernen
     if (entschieden && zeilen.length > saetzeAusZeilen().length) zeilen = zeilen.slice(0, saetzeAusZeilen().length);
   });
 
   const standWahl = $derived.by(() => {
     const l: [number, number][] = [];
+    if (feste) {
+      for (let a = feste; a >= 0; a--) l.push([a, feste - a]);
+      return l;
+    }
     for (let v = 0; v < gewinn; v++) l.push([gewinn, v]);
     for (let v = gewinn - 1; v >= 0; v--) l.push([v, gewinn]);
     return l;
@@ -105,6 +111,10 @@
   /** Satzstand im Moment der Aufgabe: beide noch unter der Gewinnzahl */
   const standAufgabe = $derived.by(() => {
     const l: [number, number][] = [];
+    if (feste) {
+      for (let a = 0; a < feste; a++) for (let b = 0; a + b < feste; b++) l.push([a, b]);
+      return l;
+    }
     for (let a = 0; a < gewinn; a++) for (let b = 0; b < gewinn; b++) l.push([a, b]);
     return l;
   });
@@ -234,6 +244,7 @@
           </fieldset>
         {:else}
           <p class="leise">{T.erg.verliererHilfe}</p>
+          {#if feste}<p class="leise" data-testid="feste-hinweis">{T.erg.festText(feste)}</p>{/if}
           {#each zeilen as zeile, i (i)}
             <div class="satz" data-testid="satz-{i + 1}">
               <span class="satz-nr">{T.erg.satz(i + 1)}</span>
@@ -276,7 +287,7 @@
 
       <div class="vorschau" aria-live="polite">
         {#if wertung.ok}
-          <strong>{ergebnisText(wertung.ergebnis)}</strong> – {wertung.ergebnis.gewinner === 'a' ? name(z, spiel.a) : name(z, spiel.b)} gewinnt
+          <strong>{ergebnisText(wertung.ergebnis)}</strong> – {wertung.ergebnis.gewinner === null ? T.erg.unentschieden : T.erg.gewinnt(wertung.ergebnis.gewinner === 'a' ? name(z, spiel.a) : name(z, spiel.b))}
         {:else}
           <span class="leise">{wertung.fehler}</span>
         {/if}

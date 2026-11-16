@@ -9,7 +9,7 @@
   import { berechnen, spielerVon, type TurnierZustand } from '../engine/zustand';
   import { anstehendeSpiele, endstand, name, nameLang, platzText, rundeVon, sichtbar, tabelle, trostPlaetze, vorgabeVon } from '../engine/abfragen';
   import { baumRunden, koRunden, rundenName } from '../engine/ko';
-  import { gruppenName, mitKo, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
+  import { gruppenName, istSchweizerArt, mitKo, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
   import { istRundenModus, kaiserTabelle, letzteRunde, schweizerTabelle } from '../engine/runden';
   import { ergebnisText } from '../engine/ergebnis';
   import { zurueckgezogen } from '../engine/zustand';
@@ -452,11 +452,11 @@
               </ol>
             {/if}
             {#if v.tabellen && istRundenModus(k.einst.modus)}
-              <h3>{k.einst.modus === 'schweizer' ? T.tab.rangliste : T.tab.rangleiter} · {T.tab.rundeStand(letzteRunde(k), letzteRunde(k))}</h3>
+              <h3>{istSchweizerArt(k.einst.modus) ? T.tab.rangliste : T.tab.rangleiter} · {T.tab.rundeStand(letzteRunde(k), letzteRunde(k))}</h3>
               <table class="liste">
                 <tbody>
-                  {#if k.einst.modus === 'schweizer'}
-                    {#each schweizerTabelle(k, zurueckgezogen(k)) as r (r.id)}<tr><td class="z">{r.platz}</td><td>{name(z, r.id, k)}</td><td class="z">{r.punkte} {T.tab.punkte}</td><td class="z">{T.tab.buchholz} {r.buchholz}</td></tr>{/each}
+                  {#if istSchweizerArt(k.einst.modus)}
+                    {#each schweizerTabelle(k, zurueckgezogen(k)) as r (r.id)}<tr><td class="z">{r.platz}</td><td>{name(z, r.id, k)}</td><td class="z">{punkteText(r.punkte)} {T.tab.punkte}</td><td class="z">{T.tab.buchholz} {punkteText(r.buchholz)}</td></tr>{/each}
                   {:else}
                     {#each kaiserTabelle(k, zurueckgezogen(k)).zeilen as r (r.id)}<tr><td class="z">{r.platz}</td><td>{name(z, r.id, k)}</td><td class="z">{r.siege}:{r.niederlagen}</td></tr>{/each}
                   {/if}

@@ -496,6 +496,22 @@ export const ART = {
   spielAufrufZurueck: 'spiel.aufruf_zurueck',
   /** Tisch sperren/freigeben (Daten: { nr, gesperrt }) */
   tischGesperrt: 'tisch.gesperrt',
+  /**
+   * Ab 0.10: Spiel vorplanen – Tisch und/oder Uhrzeit (Daten: { konkurrenz, spiel, tisch: Zahl|null, zeit: "HH:MM"|null }).
+   * Nur Leitung. Der Zeitplan und das automatische Belegen halten sich daran.
+   */
+  spielGeplant: 'spiel.geplant',
+  /**
+   * Ab 0.10: Auslosung im laufenden Turnier ändern (nur Leitung). Gruppen: { konkurrenz, phase: "gruppen",
+   * gruppen: [[ids]] } – dieselben Teilnehmer, neu verteilt; K.-o.: { konkurrenz, phase: "ko", plaetze }.
+   * Spiele mit Ergebnis oder Aufruf dürfen sich dadurch nicht ändern.
+   */
+  auslosungGeaendert: 'auslosung.geaendert',
+  /**
+   * Ab 0.10: Rückgängig machen bzw. wiederherstellen (nur Leitung). Daten: { ereignisse: [IDs], zurueck: true|false }.
+   * Die genannten früheren Einträge zählen nicht mehr (zurueck=true) bzw. wieder (false). Nichts wird gelöscht.
+   */
+  eintragZurueck: 'eintrag.zurueckgenommen',
 } as const;
 
 /* ---------- Android-Zentrale (ab 0.5) ----------

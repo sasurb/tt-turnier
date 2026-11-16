@@ -2,7 +2,7 @@
   import { T } from '../../texte';
   import { name } from '../../engine/abfragen';
   import { kaiserTabelle, letzteRunde, rundenZahl, schweizerTabelle } from '../../engine/runden';
-  import type { KonkurrenzZustand } from '../../engine/modell';
+  import { istSchweizerArt, punkteText, type KonkurrenzZustand } from '../../engine/modell';
   import { zurueckgezogen, type TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
 
@@ -10,7 +10,7 @@
   let { z, k }: { z: TurnierZustand; k: KonkurrenzZustand } = $props();
 
   const zur = $derived(zurueckgezogen(k));
-  const schweizer = $derived(k.einst.modus === 'schweizer' ? schweizerTabelle(k, zur) : []);
+  const schweizer = $derived(istSchweizerArt(k.einst.modus) ? schweizerTabelle(k, zur) : []);
   const kaiser = $derived(k.einst.modus === 'kaiser' ? kaiserTabelle(k, zur) : null);
   const R = $derived(rundenZahl(k));
   const aktuell = $derived(letzteRunde(k));
@@ -24,8 +24,8 @@
   {T.tab.rundeStand(aktuell, R)}{#if k.status !== 'beendet'} · {T.tab.naechsteRunde}{/if}
 </p>
 
-{#if k.einst.modus === 'schweizer'}
-  <h3>{T.tab.rangliste}<Hilfe text={T.tab.schweizerHilfe} /></h3>
+{#if istSchweizerArt(k.einst.modus)}
+  <h3>{T.tab.rangliste}<Hilfe text={k.einst.modus === 'cup' ? T.tab.cupHilfe : T.tab.schweizerHilfe} /></h3>
   <div class="rollen">
     <table data-testid="rangliste">
       <thead>
@@ -47,9 +47,9 @@
               {#if verein(r.id)}<span class="leise verein">{verein(r.id)}</span>{/if}
               {#if r.zurueckgezogen}<span class="marke">{T.tab.zurueckgezogen}</span>{/if}
             </td>
-            <td class="z fett">{r.punkte}</td>
-            <td class="z">{r.buchholz}</td>
-            <td class="z breit-nur">{r.feinbuchholz}</td>
+            <td class="z fett">{punkteText(r.punkte)}</td>
+            <td class="z">{punkteText(r.buchholz)}</td>
+            <td class="z breit-nur">{punkteText(r.feinbuchholz)}</td>
             <td class="z">{r.saetzeG}:{r.saetzeV}</td>
           </tr>
         {/each}

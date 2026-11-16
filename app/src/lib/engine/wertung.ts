@@ -1,5 +1,5 @@
 import { gewinnSaetze } from './ergebnis';
-import type { Ergebnis, Gruppe, KonkurrenzEinstellungen, Spiel } from './modell';
+import { festeSaetzeVon, type Ergebnis, type Gruppe, type KonkurrenzEinstellungen, type Spiel } from './modell';
 
 /**
  * Gruppentabellen „Jeder gegen jeden“.
@@ -53,7 +53,7 @@ export function losSchluessel(ids: string[]): string {
 }
 
 function kampflosErgebnis(verlierer: 'a' | 'b', einst: KonkurrenzEinstellungen): Ergebnis {
-  const k = gewinnSaetze(einst.bestOf);
+  const k = festeSaetzeVon(einst) ?? gewinnSaetze(einst.bestOf);
   const punkte = einst.eingabe === 'punkte';
   const satz: [number, number] = verlierer === 'a' ? [0, 11] : [11, 0];
   const saetze = punkte ? Array.from({ length: k }, () => [...satz] as [number, number]) : null;

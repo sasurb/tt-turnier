@@ -250,6 +250,12 @@ public final class KernTest {
         String spH = a.t("token");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000010", "tisch.gesperrt", Json.obj()))), spH, q("turnier", tid), false);
         pruefe(a.s == 403, "Spieler-Helfer: keine Tische sperren");
+        // Etappe 8: Vorplanen, Auslosung ändern, Rückgängig – nur Leitung
+        String[] nurLeitung = {"spiel.geplant", "auslosung.geaendert", "eintrag.zurueckgenommen"};
+        for (int i = 0; i < nurLeitung.length; i++) {
+            a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-00008" + i + "0", nurLeitung[i], Json.obj()))), spH, q("turnier", tid), false);
+            pruefe(a.s == 403, "Spieler-Helfer: kein " + nurLeitung[i]);
+        }
         rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("s-0000004", "spiel.ergebnis", Json.obj()))), spH, q("turnier", tid), false);
         a = rufe(z, "GET", "events", null, spH, q("turnier", tid, "ab", "204"), false);
         autor = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("autor"));

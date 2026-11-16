@@ -60,8 +60,9 @@ jobs:
           TT_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TT_KEY_PASSWORT: ${{ secrets.ANDROID_KEY_PASSWORT }}
           TT_VERSION_CODE: ${{ github.run_number }}
-          TT_VERSION_NAME: 0.5.0 (${{ github.run_number }})
         run: |
+          # Versionsname wie die App (app/package.json), damit Gerät und Server dieselbe Nummer zeigen
+          export TT_VERSION_NAME="$(node -p "require('../../app/package.json').version") (${{ github.run_number }})"
           [ -z "${TT_KEYSTORE:-}" ] && echo "::warning::Keine Signatur-Secrets – APK mit Test-Schlüssel (Updates müssen dann neu installiert werden). Siehe docs/zentrale.md."
           gradle --no-daemon assembleRelease
           cp app/build/outputs/apk/release/app-release.apk ../../tt-zentrale.apk

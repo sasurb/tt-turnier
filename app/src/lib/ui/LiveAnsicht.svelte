@@ -9,7 +9,7 @@
   import { berechnen, zurueckgezogen, type TurnierZustand } from '../engine/zustand';
   import { alleSpiele, anstehendeSpiele, name, oeffentlich, platzierungen, rundeVon, sichtbar, tabelle, tische, trostPlaetze } from '../engine/abfragen';
   import { baumRunden, koRunden, rundenName } from '../engine/ko';
-  import { gruppenName, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
+  import { gruppenName, istSchweizerArt, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
   import { istRundenModus, kaiserTabelle, letzteRunde, rundenZahl, schweizerTabelle } from '../engine/runden';
   import { ergebnisText } from '../engine/ergebnis';
   import { geraetId, gemerktesTurnier } from '../einstellungen';
@@ -394,11 +394,11 @@
         <h2 class="seitentitel">{k.einst.name} · {T.tab.rundeStand(letzteRunde(k), rundenZahl(k))}</h2>
         <section class="block">
           <table>
-            {#if k.einst.modus === 'schweizer'}
+            {#if istSchweizerArt(k.einst.modus)}
               <thead><tr><th class="z">{T.tab.platz}</th><th>{T.tab.spieler}</th><th class="z">{T.tab.punkte}</th><th class="z">{T.tab.buchholz}</th><th class="z">{T.tab.saetze}</th></tr></thead>
               <tbody>
                 {#each schweizerTabelle(k, zur).slice(0, 16) as r (r.id)}
-                  <tr class:raus={r.zurueckgezogen}><td class="z">{r.platz}</td><td><span class="name">{name(z, r.id, k)}</span>{#if verein(r.id)}<span class="verein">{verein(r.id)}</span>{/if}</td><td class="z">{r.punkte}</td><td class="z">{r.buchholz}</td><td class="z">{r.saetzeG}:{r.saetzeV}</td></tr>
+                  <tr class:raus={r.zurueckgezogen}><td class="z">{r.platz}</td><td><span class="name">{name(z, r.id, k)}</span>{#if verein(r.id)}<span class="verein">{verein(r.id)}</span>{/if}</td><td class="z">{punkteText(r.punkte)}</td><td class="z">{punkteText(r.buchholz)}</td><td class="z">{r.saetzeG}:{r.saetzeV}</td></tr>
                 {/each}
               </tbody>
             {:else}

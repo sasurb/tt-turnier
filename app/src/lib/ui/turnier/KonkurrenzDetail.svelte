@@ -4,14 +4,25 @@
   import { auslosungErstellen, endrundeErstellen, gruppenKlassen, gruppenZahlVorschlag, klassenDerMeldungen, name, nameLang, qualifikanten, teilnehmerDaten, zulassungsHinweise } from '../../engine/abfragen';
   import { setzreihe } from '../../engine/auslosung';
   import { kurzId } from '../../engine/ids';
-  import { spielerName, type KonkurrenzEinstellungen, type KonkurrenzZustand } from '../../engine/modell';
+  import { gruppenName, spielerName, type KonkurrenzEinstellungen, type KonkurrenzZustand } from '../../engine/modell';
   import { mischen, zufallAus } from '../../engine/zufall';
   import { neuerZufallswert } from '../../engine/zufall';
-  import { auslosungAktuell, begonnen, erstePhase, teilnehmerVon, zurueckgezogen, type TurnierZustand } from '../../engine/zustand';
+  import {
+    auslosungAktuell,
+    begonnen,
+    erstePhase,
+    gruppenAenderungPruefen,
+    koPlaetzePruefen,
+    nachmeldePlaetzeKo,
+    teilnehmerVon,
+    zurueckgezogen,
+    type TurnierZustand,
+  } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
   import AuslosungVorschau from './AuslosungVorschau.svelte';
   import { istRundenModus } from '../../engine/runden';
   import KonkurrenzForm from './KonkurrenzForm.svelte';
+  import { alsEineAktion } from '../../aktion';
 
   let {
     z,
@@ -63,7 +74,9 @@
     await los(an ? ART.teilnehmerGemeldet : ART.teilnehmerAbgemeldet, { konkurrenz: k.id, id });
   }
   async function alleMelden() {
-    for (const id of z.spielerReihe) if (!k.meldungen.includes(id)) await melden(id, true);
+    await alsEineAktion(async () => {
+      for (const id of z.spielerReihe) if (!k.meldungen.includes(id)) await melden(id, true);
+    });
   }
   async function paarMelden(a: string, b: string) {
     if (!a || !b || a === b) return;
@@ -80,7 +93,10 @@
     paar2 = '';
   }
   /** Übrige Spieler zufällig zu Paaren losen; Mixed: Frau + Mann, soweit bekannt */
-  async function paareLosen() {
+  function paareLosen() {
+    return alsEineAktion(paareLosenIntern);
+  }
+  async function paareLosenIntern() {
     const zuf = zufallAus(neuerZufallswert());
     let frei = mischen(freieSpieler, zuf);
     if (k.einst.art === 'mixed') {
@@ -140,6 +156,90 @@
       rueckzugWer = '';
     }
   }
+  /* ---------- Laufendes Turnier: Nachmelden und Auslosung ändern ---------- */
+  const rundenModus = $derived(istRundenModus(k.einst.modus));
+  /** Nachmelden geht in Gruppen (bis zur Endrunde), im K.-o. auf Freilose, in Runden-Systemen immer */
+  const nachmeldenArt = $derived<'gruppe' | 'ko' | 'runde' | null>(
+    !gestartet || k.status === 'beendet' ? null : rundenModus ? 'runde' : k.gestartet.ko ? (phase1 === 'ko' ? 'ko' : null) : 'gruppe',
+  );
+  const koFrei = $derived(nachmeldenArt === 'ko' ? nachmeldePlaetzeKo(k) : []);
+  let nachWer = $state('');
+  let nachWer2 = $state('');
+  let nachGruppe = $state<number | null>(null);
+  let nachPlatz = $state<number | null>(null);
+  let nachHinweis = $state('');
+  const kleinsteGruppe = $derived(k.gruppen.length ? k.gruppen.reduce((m, g) => (g.mitglieder.length < k.gruppen[m]!.mitglieder.length ? g.nr : m), 0) : 0);
+  function gegnerVonPlatz(i: number) {
+    const p = k.auslosungKo?.plaetze ?? [];
+    const g = p[i % 2 ? i - 1 : i + 1];
+    return g ? name(z, g) : T.konk.freilos;
+  }
+  async function nachmelden() {
+    nachHinweis = '';
+    const ort = nachmeldenArt === 'gruppe' ? { gruppe: nachGruppe ?? kleinsteGruppe } : nachmeldenArt === 'ko' ? { platz: nachPlatz ?? koFrei[0] } : {};
+    if (doppel) {
+      if (!nachWer || !nachWer2 || nachWer === nachWer2) return;
+      await los(ART.paarGemeldet, { konkurrenz: k.id, id: 'p-' + kurzId(), spieler: [nachWer, nachWer2], ...ort });
+      nachHinweis = T.konk.nachmeldenFertig(`${spielerName(z.spieler[nachWer])} / ${spielerName(z.spieler[nachWer2])}`);
+    } else {
+      if (!nachWer) return;
+      await los(ART.teilnehmerGemeldet, { konkurrenz: k.id, id: nachWer, ...ort });
+      nachHinweis = T.konk.nachmeldenFertig(spielerName(z.spieler[nachWer]));
+    }
+    nachWer = '';
+    nachWer2 = '';
+    nachPlatz = null;
+  }
+
+  /** Teilnehmer mit Ergebnis oder Aufruf in der laufenden Phase (lassen sich nicht mehr bewegen) */
+  const festeTeilnehmer = $derived.by(() => {
+    const aus = new Set<string>();
+    const phase = k.gestartet.ko ? 'ko' : 'gruppen';
+    for (const s of Object.values(k.spiele)) {
+      if (s.phase !== phase || !(s.eintrag || (s.tisch !== null && s.status === 'offen'))) continue;
+      if (s.a) aus.add(s.a);
+      if (s.b) aus.add(s.b);
+    }
+    return aus;
+  });
+  const aendernArt = $derived<'gruppen' | 'ko' | null>(
+    !gestartet || k.status === 'beendet' || rundenModus ? null : k.gestartet.ko ? 'ko' : phase1 === 'gruppen' && k.gruppen.length > 1 ? 'gruppen' : null,
+  );
+  let aendernFehler = $state('');
+  async function laufendTauschenGruppen(a: string, b: string) {
+    aendernFehler = '';
+    const g = k.gruppen.map((x) => [...x.mitglieder]);
+    const [, ga, ia] = a.split(':');
+    const [, gb, ib] = b.split(':');
+    const x = g[Number(ga)]![Number(ia)]!;
+    if (ib === 'leer') {
+      g[Number(ga)]!.splice(Number(ia), 1);
+      g[Number(gb)]!.push(x);
+    } else {
+      g[Number(ga)]![Number(ia)] = g[Number(gb)]![Number(ib)]!;
+      g[Number(gb)]![Number(ib)] = x;
+    }
+    const f = gruppenAenderungPruefen(k, g);
+    if (f) {
+      aendernFehler = T.konk.aendernNicht(f);
+      return;
+    }
+    await los(ART.auslosungGeaendert, { konkurrenz: k.id, phase: 'gruppen', gruppen: g });
+  }
+  async function laufendTauschenKo(a: string, b: string) {
+    aendernFehler = '';
+    const p = [...k.auslosungKo!.plaetze];
+    const ia = Number(a.split(':')[1]);
+    const ib = Number(b.split(':')[1]);
+    [p[ia], p[ib]] = [p[ib] ?? null, p[ia] ?? null];
+    const f = koPlaetzePruefen(k, p);
+    if (f) {
+      aendernFehler = T.konk.aendernNicht(f);
+      return;
+    }
+    await los(ART.auslosungGeaendert, { konkurrenz: k.id, phase: 'ko', plaetze: p });
+  }
+
   async function speichern(e: KonkurrenzEinstellungen) {
     await eintragen(ART.konkurrenzGeaendert, { id: k.id, einst: e });
     bearbeiten = false;
@@ -272,6 +372,65 @@
       {/if}
     {/if}
 
+    {#if nachmeldenArt}
+      <h3>{T.konk.nachmelden}<Hilfe text={T.konk.nachmeldenHilfe} /></h3>
+      {#if freieSpieler.length === 0 || (doppel && freieSpieler.length < 2)}
+        <p class="leise">{T.konk.nachmeldenKeine}</p>
+      {:else if nachmeldenArt === 'ko' && koFrei.length === 0}
+        <p class="leise">{T.konk.nachmeldenKeinPlatz}</p>
+      {:else}
+        <div class="nach-form" data-testid="nachmelden">
+          <div>
+            <label for="nw-{k.id}">{doppel ? T.konk.paarErster : T.konk.nachmeldenWer}</label>
+            <select id="nw-{k.id}" bind:value={nachWer}>
+              <option value="">–</option>
+              {#each freieSpieler.filter((id) => id !== nachWer2) as id (id)}<option value={id}>{spielerName(z.spieler[id])}</option>{/each}
+            </select>
+          </div>
+          {#if doppel}
+            <div>
+              <label for="nw2-{k.id}">{T.konk.paarZweiter}</label>
+              <select id="nw2-{k.id}" bind:value={nachWer2}>
+                <option value="">–</option>
+                {#each freieSpieler.filter((id) => id !== nachWer) as id (id)}<option value={id}>{spielerName(z.spieler[id])}</option>{/each}
+              </select>
+            </div>
+          {/if}
+          {#if nachmeldenArt === 'gruppe'}
+            <div>
+              <label for="ng-{k.id}">{T.konk.nachmeldenGruppe}</label>
+              <select id="ng-{k.id}" value={nachGruppe ?? kleinsteGruppe} onchange={(e) => (nachGruppe = Number(e.currentTarget.value))}>
+                {#each k.gruppen as g (g.nr)}<option value={g.nr}>{T.konk.gruppe(gruppenName(g.nr))} ({g.mitglieder.length})</option>{/each}
+              </select>
+            </div>
+          {:else if nachmeldenArt === 'ko'}
+            <div>
+              <label for="np-{k.id}">{T.konk.nachmeldenPlatz}</label>
+              <select id="np-{k.id}" value={nachPlatz ?? koFrei[0]} onchange={(e) => (nachPlatz = Number(e.currentTarget.value))}>
+                {#each koFrei as i (i)}<option value={i}>{T.konk.nachmeldenPlatzGegen(i, gegnerVonPlatz(i))}</option>{/each}
+              </select>
+            </div>
+          {/if}
+          <button class="zweit" disabled={!nachWer || (doppel && !nachWer2)} onclick={nachmelden} data-testid="nachmelden-knopf">{T.konk.nachmeldenKnopf}</button>
+        </div>
+        {#if nachmeldenArt === 'runde'}<p class="leise">{T.konk.nachmeldenRunde}</p>{/if}
+      {/if}
+      {#if nachHinweis}<p class="meldung ok" role="status">{nachHinweis}</p>{/if}
+    {/if}
+
+    {#if aendernArt}
+      <details class="aendern" data-testid="auslosung-aendern">
+        <summary>{T.konk.aendern}</summary>
+        <p class="leise">{T.konk.aendernHilfe}</p>
+        {#if aendernFehler}<div class="meldung fehler" role="alert">{aendernFehler}</div>{/if}
+        {#if aendernArt === 'gruppen'}
+          <AuslosungVorschau {z} gruppen={k.gruppen.map((g) => g.mitglieder)} tauschen={laufendTauschenGruppen} gesperrt={festeTeilnehmer} verschieben />
+        {:else if k.auslosungKo}
+          <AuslosungVorschau {z} plaetze={k.auslosungKo.plaetze} tauschen={laufendTauschenKo} gesperrt={festeTeilnehmer} />
+        {/if}
+      </details>
+    {/if}
+
     {#if k.status !== 'beendet' && aktive.length}
       <h3>{T.konk.rueckzugTitel}<Hilfe text={T.konk.rueckzugText} /></h3>
       <div class="reihe">
@@ -307,5 +466,8 @@
   .setzliste li { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--linie); }
   .nr { width: 2rem; font-variant-numeric: tabular-nums; color: var(--leise); }
   .knoepfe { margin: 12px 0; }
+  .nach-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 8px; align-items: end; margin: 8px 0; }
+  .aendern { margin-top: 16px; }
+  .aendern summary { font-weight: 700; }
   .start { margin-top: 16px; background: var(--gruen); }
 </style>

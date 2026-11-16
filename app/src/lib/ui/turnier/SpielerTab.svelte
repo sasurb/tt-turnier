@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { alsEineAktion } from '../../aktion';
   import { onMount } from 'svelte';
   import { ART, type PoolSpieler } from '@shared/protokoll';
   import { T } from '../../texte';
@@ -49,14 +50,16 @@
 
   async function ausPoolUebernehmen() {
     let n = 0;
-    for (const pid of gewaehlt) {
-      const p = pool.liste.find((x) => x.id === pid);
-      if (!p || imTurnier.has(p.id)) continue;
-      const id = kurzId();
-      await eintragen(ART.spielerAngelegt, { id, ...fuersTurnier({ ...p, pool: p.id }) });
-      await melden(id);
-      n++;
-    }
+    await alsEineAktion(async () => {
+      for (const pid of gewaehlt) {
+        const p = pool.liste.find((x) => x.id === pid);
+        if (!p || imTurnier.has(p.id)) continue;
+        const id = kurzId();
+        await eintragen(ART.spielerAngelegt, { id, ...fuersTurnier({ ...p, pool: p.id }) });
+        await melden(id);
+        n++;
+      }
+    });
     meldung = T.tspieler.anzahl(n) + ' ✓';
     gewaehlt = [];
     modus = '';
@@ -74,8 +77,10 @@
       poolId = p!.id;
     }
     const id = kurzId();
-    await eintragen(ART.spielerAngelegt, { id, ...fuersTurnier({ ...d, pool: poolId }) });
-    await melden(id);
+    await alsEineAktion(async () => {
+      await eintragen(ART.spielerAngelegt, { id, ...fuersTurnier({ ...d, pool: poolId }) });
+      await melden(id);
+    });
     meldung = `${spielerName(d)} ✓`;
   }
 

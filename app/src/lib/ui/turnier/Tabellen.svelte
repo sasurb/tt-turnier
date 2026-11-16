@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { alsEineAktion } from '../../aktion';
   import { ART } from '@shared/protokoll';
   import { T } from '../../texte';
   import { gruppenKlassen, name, platzierungen, sichtbar, tabelle, trostPlaetze } from '../../engine/abfragen';
@@ -30,7 +31,9 @@
   async function los(nr: number, gruppen: string[][]) {
     if (!k || !confirm(T.tab.losFrage)) return;
     const zf = zufallAus(neuerZufallswert());
-    for (const g of gruppen) await eintragen(ART.gruppeLos, { konkurrenz: k.id, gruppe: nr, reihenfolge: mischen(g, zf) });
+    await alsEineAktion(async () => {
+      for (const g of gruppen) await eintragen(ART.gruppeLos, { konkurrenz: k.id, gruppe: nr, reihenfolge: mischen(g, zf) });
+    });
   }
 </script>
 
@@ -139,7 +142,7 @@
 
 <style>
   .wahl-konk { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; }
-  .wahl-konk button { min-height: 40px; background: var(--flaeche); color: var(--text); border: 1px solid var(--linie); white-space: nowrap; }
+  .wahl-konk button { min-height: 44px; background: var(--flaeche); color: var(--text); border: 1px solid var(--linie); white-space: nowrap; }
   .wahl-konk button.aktiv { background: var(--blau); color: #fff; border-color: var(--blau); }
   h3 { margin-top: 16px; display: flex; align-items: center; gap: 8px; }
   .klasse { font-weight: 500; }

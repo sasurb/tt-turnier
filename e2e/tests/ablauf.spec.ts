@@ -252,7 +252,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
 
   // Protokoll steht ganz unten in den Einstellungen
   await page.getByRole('link', { name: 'Einstellungen' }).click();
-  await page.getByText('Protokoll', { exact: false }).last().click();
+  await page.locator('summary', { hasText: 'Protokoll' }).click();
   await expect(page.getByText(/von Anna Alpha \(Spieler\)/)).toBeVisible({
     timeout: 15_000,
   });
@@ -350,7 +350,7 @@ test('Demo ohne Server: Turnier nur auf diesem Gerät, Sicherung herunterladen u
   await page.getByRole('link', { name: 'Spieler', exact: true }).click();
   await expect(page.getByText('Lotte Lokal')).toBeVisible();
   await page.getByRole('link', { name: 'Einstellungen' }).click();
-  await page.getByText('Protokoll', { exact: false }).last().click();
+  await page.locator('summary', { hasText: 'Protokoll' }).click();
   await expect(page.getByText(/Aus Sicherung wiederhergestellt/)).toBeVisible();
 });
 

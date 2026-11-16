@@ -2,6 +2,8 @@ import { anzahlGesetzte, anzahlGruppen, gruppenAuslosen, koAuslosen, naechsteZwe
 import { koPlatzierungen, koRunden, rundenName, trostPlatzierungen, type Platzierung } from './ko';
 import {
   gruppenName,
+  istSchweizerArt,
+  uhrzeitMs,
   istKurzname,
   klasseVon,
   kurzname,
@@ -236,7 +238,7 @@ export function runden(k: KonkurrenzZustand): number {
 
 /** Lesbare Runde eines Spiels: „Gruppe A · Runde 2“, „Halbfinale“, „Trostrunde: Endspiel“, „Verliererrunde 3“ */
 export function rundeVon(k: KonkurrenzZustand, s: Spiel): string {
-  if (k.einst.modus === 'schweizer' && s.phase === 'gruppen') return `Runde ${s.runde}`;
+  if (istSchweizerArt(k.einst.modus) && s.phase === 'gruppen') return `Runde ${s.runde}`;
   if (k.einst.modus === 'kaiser' && s.phase === 'gruppen')
     return s.bFrei ? `Runde ${s.runde} · setzt aus` : `Runde ${s.runde} · ${s.index === 0 ? 'Kaisertisch' : `Stufe ${s.index + 1}`}`;
   if (s.phase === 'gruppen') return `Gruppe ${gruppenName(s.gruppe ?? 0)} · Runde ${s.runde}`;
@@ -343,38 +345,59 @@ export function beschaeftigt(z: TurnierZustand): Set<string> {
 
 export interface Anstehend {
   spiel: Spiel;
-  /** Beide Seiten frei (niemand spielt, pfeift oder ist noch in der Pause) */
+  /** Beide Seiten frei (niemand spielt, pfeift oder ist noch in der Pause) und nichts spricht gegen den Aufruf */
   bereit: boolean;
   /** Spieler, die noch beschäftigt sind (spielen oder pfeifen) */
   wartetAuf: string[];
   /** Spieler, die noch in der Mindestpause sind */
   inPause: string[];
+  /** Geplant oder Konkurrenz beginnt erst um diese Uhrzeit („HH:MM“), sonst null */
+  ab: string | null;
+}
+
+/** Frühester Beginn eines Spiels: Vorplanung oder Beginn der Konkurrenz (Uhrzeit „HH:MM“) */
+export function fruehestensUm(k: KonkurrenzZustand, s: Spiel): string | null {
+  const a = s.plan?.zeit ?? null;
+  const b = k.einst.beginn;
+  if (a && b) return a > b ? a : b;
+  return a ?? b;
 }
 
 /**
- * Offene, noch nicht aufgerufene Spiele in sinnvoller Reihenfolge: Runde für Runde über alle
- * Konkurrenzen hinweg (damit keine Konkurrenz hinterherhinkt), innerhalb der Runde in Spielfolge.
- * Spiele, deren Teilnehmer gerade spielen oder pfeifen, stehen hinten.
+ * Offene, noch nicht aufgerufene Spiele in sinnvoller Reihenfolge: zuerst fällige vorgeplante Spiele
+ * (nach Uhrzeit), dann Runde für Runde über alle Konkurrenzen hinweg (damit keine Konkurrenz
+ * hinterherhinkt), innerhalb der Runde in Spielfolge. Spiele, deren Teilnehmer gerade spielen oder
+ * pfeifen oder die erst später beginnen dürfen, stehen hinten.
  */
 export function anstehendeSpiele(z: TurnierZustand, jetzt = Date.now()): Anstehend[] {
   const b = beschaeftigt(z);
   const ende = z.pause > 0 ? letztesSpielEnde(z) : new Map<string, string>();
-  const liste: { s: Spiel; kIndex: number; pos: number }[] = [];
+  const liste: { s: Spiel; kIndex: number; pos: number; ab: string | null }[] = [];
   z.konkurrenzReihe.forEach((kid, kIndex) => {
     const k = z.konkurrenzen[kid]!;
     k.reihenfolge.forEach((id, pos) => {
       const s = k.spiele[id]!;
-      if (s.status === 'offen' && !s.eintrag && s.tisch === null && !s.gesperrt) liste.push({ s, kIndex, pos });
+      if (s.status === 'offen' && !s.eintrag && s.tisch === null && !s.gesperrt) liste.push({ s, kIndex, pos, ab: fruehestensUm(k, s) });
     });
   });
   const phaseRang = (s: Spiel) => (s.phase === 'gruppen' ? 0 : 1);
-  liste.sort((x, y) => phaseRang(x.s) - phaseRang(y.s) || x.s.runde - y.s.runde || x.kIndex - y.kIndex || x.pos - y.pos);
-  const aus = liste.map(({ s }) => {
+  const faellig = (x: { ab: string | null; s: Spiel }) => !!x.s.plan?.zeit && uhrzeitMs(x.s.plan.zeit, jetzt) <= jetzt;
+  liste.sort(
+    (x, y) =>
+      Number(faellig(y)) - Number(faellig(x)) ||
+      (faellig(x) && faellig(y) ? (x.s.plan!.zeit! < y.s.plan!.zeit! ? -1 : x.s.plan!.zeit! > y.s.plan!.zeit! ? 1 : 0) : 0) ||
+      phaseRang(x.s) - phaseRang(y.s) ||
+      x.s.runde - y.s.runde ||
+      x.kIndex - y.kIndex ||
+      x.pos - y.pos,
+  );
+  const aus = liste.map(({ s, ab }) => {
     const k = z.konkurrenzen[s.konkurrenz]!;
     const beteiligt = [...spielerVon(k, s.a), ...spielerVon(k, s.b)];
     const wartetAuf = beteiligt.filter((id) => b.has(id));
     const inPause = beteiligt.filter((id) => !b.has(id) && (pauseMinuten(ende, id, jetzt) ?? Infinity) < z.pause);
-    return { spiel: s, bereit: wartetAuf.length === 0 && inPause.length === 0, wartetAuf, inPause };
+    const spaeter = ab !== null && uhrzeitMs(ab, jetzt) > jetzt;
+    return { spiel: s, bereit: wartetAuf.length === 0 && inPause.length === 0 && !spaeter, wartetAuf, inPause, ab: spaeter ? ab : null };
   });
   return [...aus.filter((a) => a.bereit), ...aus.filter((a) => !a.bereit)];
 }
@@ -398,7 +421,8 @@ export function verliererAmTisch(z: TurnierZustand, nr: number, ausser: string[]
 
 /**
  * Freie Tische automatisch belegen: je freiem Tisch das nächste bereite Spiel (niemand spielt,
- * pfeift oder ist in der Mindestpause). Liefert die Aufrufe; die Oberfläche trägt sie ein.
+ * pfeift oder ist in der Mindestpause). Ein für einen Tisch vorgeplantes Spiel kommt nur an diesen
+ * Tisch – und dort vor allen anderen. Liefert die Aufrufe; die Oberfläche trägt sie ein.
  */
 export function automatischeAufrufe(
   z: TurnierZustand,
@@ -413,14 +437,24 @@ export function automatischeAufrufe(
   if (!frei.length) return [];
   const aus: { spiel: Spiel; tisch: number; schiri: string | null }[] = [];
   const vergeben = new Set<string>();
-  for (const a of anstehendeSpiele(z, jetzt)) {
-    if (!frei.length) break;
-    if (!a.bereit) continue;
+  const kandidaten = anstehendeSpiele(z, jetzt).filter((a) => {
+    if (!a.bereit) return false;
     const k = z.konkurrenzen[a.spiel.konkurrenz]!;
     const beteiligt = [...spielerVon(k, a.spiel.a), ...spielerVon(k, a.spiel.b)];
-    if (beteiligt.some((id) => vergeben.has(id))) continue; // ein Spieler nie an zwei Tischen
-    if ((ich && beteiligt.includes(ich)) || zurueckgestellt.has(`${a.spiel.konkurrenz}/${a.spiel.id}`)) continue;
-    const tisch = frei.shift()!;
+    return !(ich && beteiligt.includes(ich)) && !zurueckgestellt.has(`${a.spiel.konkurrenz}/${a.spiel.id}`);
+  });
+  const genommen = new Set<Spiel>();
+  for (const tisch of frei) {
+    const passt = (a: Anstehend) => {
+      if (genommen.has(a.spiel)) return false;
+      const k = z.konkurrenzen[a.spiel.konkurrenz]!;
+      return ![...spielerVon(k, a.spiel.a), ...spielerVon(k, a.spiel.b)].some((id) => vergeben.has(id)); // ein Spieler nie an zwei Tischen
+    };
+    const a = kandidaten.find((x) => x.spiel.plan?.tisch === tisch && passt(x)) ?? kandidaten.find((x) => (x.spiel.plan?.tisch ?? null) === null && passt(x));
+    if (!a) continue;
+    genommen.add(a.spiel);
+    const k = z.konkurrenzen[a.spiel.konkurrenz]!;
+    const beteiligt = [...spielerVon(k, a.spiel.a), ...spielerVon(k, a.spiel.b)];
     const schiri = schiriVerlierer ? verliererAmTisch(z, tisch, [...beteiligt, ...vergeben]) : null;
     for (const id of beteiligt) vergeben.add(id);
     if (schiri) vergeben.add(schiri);

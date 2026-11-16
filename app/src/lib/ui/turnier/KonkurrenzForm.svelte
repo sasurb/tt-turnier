@@ -49,7 +49,12 @@
   let vorgabeJe = $state(start.vorgabe ?? 50);
   let fehler = $state('');
   let sendet = $state(false);
-  const rundenModus = $derived(e.modus === 'schweizer' || e.modus === 'kaiser');
+  const rundenModus = $derived(e.modus === 'schweizer' || e.modus === 'cup' || e.modus === 'kaiser');
+  const schweizerArt = $derived(e.modus === 'schweizer' || e.modus === 'cup');
+  // svelte-ignore state_referenced_locally
+  let feste = $state<'normal' | '2' | '4'>(start.festeSaetze ? (String(start.festeSaetze) as '2' | '4') : 'normal');
+  // svelte-ignore state_referenced_locally
+  let beginn = $state(start.beginn ?? '');
   const mitGruppen = $derived(e.modus === 'jgj' || e.modus === 'gruppen_ko');
   const mitKo = $derived(e.modus !== 'jgj');
   const einfachesKo = $derived(e.modus === 'ko' || e.modus === 'gruppen_ko');
@@ -62,6 +67,9 @@
       name: e.name.trim(),
       gesetzte: zahl(gesetzte),
       runden: rundenModus ? zahl(runden) : null,
+      festeSaetze: schweizerArt && feste !== 'normal' ? (Number(feste) as 2 | 4) : null,
+      beschleunigt: e.modus === 'schweizer' && e.beschleunigt,
+      beginn: /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(beginn) ? beginn : null,
       vorgabe: mitVorgabe ? vorgabeJe : null,
       ttrGrenzen: [...new Set(ttrGrenzen.split(',').map((t) => parseInt(t.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 4000))].sort((a, b) => a - b),
       veroeffentlichung: veroeff === 'turnier' ? null : veroeff === 'offen' ? { tabellen: true, ko: true } : { tabellen: false, ko: false },
@@ -122,7 +130,15 @@
     {#if rundenModus}
       <div>
         <div class="label-zeile"><label for="rn-{id}">{T.konk.runden}</label><Hilfe text={T.konk.rundenHilfe} /></div>
-        <input id="rn-{id}" bind:value={runden} inputmode="numeric" placeholder={T.konk.rundenAuto(e.modus === 'kaiser' ? 7 : 4)} />
+        <input id="rn-{id}" bind:value={runden} inputmode="numeric" placeholder={T.konk.rundenAuto(e.modus === 'kaiser' ? 7 : e.modus === 'cup' ? 6 : 4)} />
+      </div>
+    {/if}
+    {#if schweizerArt}
+      <div>
+        <div class="label-zeile"><label for="fs-{id}">{T.konk.festeSaetze}</label><Hilfe text={T.konk.festeSaetzeHilfe} /></div>
+        <select id="fs-{id}" bind:value={feste} disabled={gestartet} data-testid="feste-saetze">
+          {#each ['normal', '2', '4'] as f (f)}<option value={f}>{T.konk.festeSaetzeWahl[f]}</option>{/each}
+        </select>
       </div>
     {/if}
     <div>
@@ -149,6 +165,9 @@
     {/if}
   </div>
 
+  {#if e.modus === 'schweizer'}
+    <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={e.beschleunigt} disabled={gestartet} /> {T.konk.beschleunigt}</label><Hilfe text={T.konk.beschleunigtHilfe} /></div>
+  {/if}
   {#if mitGruppen}
     <label for="we-{id}">{T.konk.wertung}</label>
     <select id="we-{id}" bind:value={e.wertung}>
@@ -212,6 +231,8 @@
       </div>
     </div>
     <label class="haken"><input type="checkbox" bind:checked={e.vereinstrennung} disabled={gestartet} /> {T.konk.vereine}</label>
+    <div class="label-zeile"><label for="bg-{id}">{T.konk.beginn}</label><Hilfe text={T.konk.beginnHilfe} /></div>
+    <input id="bg-{id}" type="time" bind:value={beginn} class="zeit" />
 
     <h3>{T.konk.zulassung}</h3>
     <p class="leise">{T.konk.zulassungText}</p>
@@ -262,4 +283,5 @@
   legend { display: flex; align-items: center; }
   .weitere summary { font-size: 1rem; }
   h3 { margin-top: 16px; }
+  .zeit { max-width: 10rem; }
 </style>

@@ -25,6 +25,17 @@ Aushang, Urkunden) – als PDF über den Druckdialog. CSV-Export für Tabellenka
 Datenschutz: Zuschauer bekommen vom Server keine Jahrgänge, kein Geschlecht und keine Namen von
 Eintragenden; auf Wunsch nur die Kurzform der Namen.
 
+**Etappe 5–6:** Tische, Spielaufruf, Schiedsrichter, Doppel/Mixed, Trostrunde, Doppel-K.-o.,
+*Schweizer System*, *Kaiserturnier*, Vorgabeturnier.
+
+**Etappe 8 – laufendes Turnier im Griff:** Jede Änderung der Leitung lässt sich rückgängig machen
+(Hinweis nach dem Speichern oder später im Protokoll; nichts wird gelöscht). Nachmelden nach dem Start
+(Gruppe, Freilos im K.-o., nächste Runde), Auslosung tauschen, solange die Betroffenen nicht gespielt
+haben, Konkurrenzen zusammenlegen. Zeitplan mit geschätzter Dauer und voraussichtlichem Ende (lernt
+die Satzdauer aus den gespielten Spielen, rechnet Folgerunden mit ein), Spiele vorplanen und per Ziehen
+auf Tische legen. Neue Spielsysteme: *Cup-System* (wie die Turnierserien mit MKTT), beschleunigtes
+Schweizer System, feste Satzzahl mit Unentschieden. Lasttest: 128 Spieler, rund 770 Einträge, Neuberechnung ca. 11 ms.
+
 - Demo (nur Einzelgerät-Modus): https://sasurb.github.io/tt-turnier/
 - Eigene Installation: [docs/strato-einrichtung.md](docs/strato-einrichtung.md) (funktioniert auf jedem PHP-Webspace)
 

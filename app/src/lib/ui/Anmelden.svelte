@@ -51,7 +51,7 @@
 
 <style>
   .vergessen { margin: 8px 0 4px; text-align: right; }
-  .vergessen a { display: inline-flex; min-height: 40px; align-items: center; }
+  .vergessen a { display: inline-flex; min-height: 44px; align-items: center; }
   .unten { margin: 12px 0 0; }
   .neu { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 </style>

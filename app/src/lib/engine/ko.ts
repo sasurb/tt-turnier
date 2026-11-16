@@ -48,6 +48,7 @@ function leeresSpiel(konkurrenz: string, id: string, runde: number, index: numbe
     tisch: null,
     aufgerufen: null,
     schiri: null,
+    plan: null,
   };
 }
 

@@ -10,8 +10,12 @@ import type { Autor } from '@shared/protokoll';
  * (zweite Chance: Verlierer spielen im Verliererbaum weiter, Endspiel Sieger gegen Sieger),
  * Schweizer System oder Kaiserturnier (beide Runde für Runde ausgelost, siehe runden.ts).
  */
-export type Modus = 'jgj' | 'gruppen_ko' | 'ko' | 'doppel_ko' | 'schweizer' | 'kaiser';
-export const MODI: readonly Modus[] = ['gruppen_ko', 'jgj', 'ko', 'doppel_ko', 'schweizer', 'kaiser'];
+export type Modus = 'jgj' | 'gruppen_ko' | 'ko' | 'doppel_ko' | 'schweizer' | 'cup' | 'kaiser';
+export const MODI: readonly Modus[] = ['gruppen_ko', 'jgj', 'ko', 'doppel_ko', 'schweizer', 'cup', 'kaiser'];
+/** Schweizer System oder Cup-System (wie bei den HTTV-Turnierserien mit MKTT): Rangliste mit Buchholz */
+export function istSchweizerArt(m: Modus): boolean {
+  return m === 'schweizer' || m === 'cup';
+}
 /** Einzel, Doppel (zwei Spieler je Teilnehmer) oder Mixed (Doppel aus Frau und Mann) */
 export type KonkurrenzArt = 'einzel' | 'doppel' | 'mixed';
 /** Rangfolge in Gruppen: DTTB-Wettspielordnung D 7.5 oder ITTF-Regel 3.7.5 */
@@ -115,6 +119,15 @@ export interface KonkurrenzEinstellungen {
    */
   vorgabe: number | null;
   vorgabeMax: number;
+  /**
+   * Schweizer System und Cup-System: Jedes Spiel hat genau so viele Sätze (2 oder 4), alle werden
+   * gespielt – Unentschieden ist möglich (Sieg 1, Unentschieden ½, Niederlage 0 Punkte). null = normal (Best of).
+   */
+  festeSaetze: 2 | 4 | null;
+  /** Beschleunigtes Schweizer System: in den ersten beiden Runden zählt die obere Hälfte der Startliste einen Punkt mehr */
+  beschleunigt: boolean;
+  /** Frühester Beginn dieser Konkurrenz („HH:MM“, für Zeitplan und Spielaufruf); null = sofort */
+  beginn: string | null;
 }
 
 export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
@@ -148,6 +161,9 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
     runden: null,
     vorgabe: null,
     vorgabeMax: 8,
+    festeSaetze: null,
+    beschleunigt: false,
+    beginn: null,
   };
 }
 
@@ -194,7 +210,14 @@ export const FEST_NACH_START: readonly (keyof KonkurrenzEinstellungen)[] = [
   'klassenTrennung',
   'ttrGrenzen',
   'art',
+  'festeSaetze',
+  'beschleunigt',
 ];
+
+/** Feste Satzzahl, soweit sie für das Spielsystem gilt (nur Schweizer System und Cup-System) */
+export function festeSaetzeVon(e: Pick<KonkurrenzEinstellungen, 'modus' | 'festeSaetze'>): 2 | 4 | null {
+  return istSchweizerArt(e.modus) ? e.festeSaetze : null;
+}
 
 export type PhaseArt = 'gruppen' | 'ko';
 export type Seite = 'a' | 'b';
@@ -230,7 +253,8 @@ export interface Ergebnis {
   /** Bälle; null, wenn nicht bekannt */
   ballA: number | null;
   ballB: number | null;
-  gewinner: Seite;
+  /** null = unentschieden (nur bei fester Satzzahl, siehe festeSaetze) */
+  gewinner: Seite | null;
   art: 'normal' | 'kampflos' | 'aufgabe';
 }
 
@@ -312,6 +336,29 @@ export interface Spiel {
   tisch: number | null;
   aufgerufen: string | null;
   schiri: Schiedsrichter | null;
+  /** Vorplanung der Leitung (Ereignis spiel.geplant): Tisch und/oder Uhrzeit „HH:MM“ */
+  plan: SpielPlan | null;
+}
+
+export interface SpielPlan {
+  tisch: number | null;
+  zeit: string | null;
+}
+
+/** Uhrzeit „HH:MM“ (00:00–23:59) */
+export const UHRZEIT_MUSTER = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+
+/** Zeitpunkt (ms) der Uhrzeit „HH:MM“ am Tag von `jetzt` (Ortszeit des Geräts) */
+export function uhrzeitMs(hhmm: string, jetzt: number): number {
+  const d = new Date(jetzt);
+  d.setHours(Number(hhmm.slice(0, 2)), Number(hhmm.slice(3, 5)), 0, 0);
+  return d.getTime();
+}
+
+/** „14:05“ aus einem Zeitpunkt */
+export function uhrzeitText(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 export interface Gruppe {
@@ -375,6 +422,13 @@ export function gruppenName(nr: number): string {
     n = Math.floor(n / 26) - 1;
   } while (n >= 0);
   return s;
+}
+
+/** Punkte mit halben Punkten: 2.5 → „2½“, 0.5 → „½“ */
+export function punkteText(n: number): string {
+  const ganz = Math.floor(n);
+  const halb = n - ganz >= 0.5;
+  return halb ? `${ganz ? ganz : ''}½` : String(ganz);
 }
 
 export function spielerName(s: Pick<SpielerDaten, 'vorname' | 'nachname'> | undefined): string {

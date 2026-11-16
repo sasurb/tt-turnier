@@ -20,6 +20,8 @@
   import { nativ } from '../nativ';
   import { erinnerungFaellig, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben, sicherungErstellen } from '../sicherung';
   import { etwasVerdeckt } from '../engine/abfragen';
+  import { MAX_JE_RUECKNAHME, rueckgaengigBar, rueckgaengigPruefen } from '../engine/verlauf';
+  import { aktuelleAktion } from '../aktion';
   import StatusAnzeige from './StatusAnzeige.svelte';
   import Hilfe from './Hilfe.svelte';
   import TurnierEinstellungen from './TurnierEinstellungen.svelte';
@@ -304,14 +306,60 @@
     sitzung?.stop();
     clearInterval(uhr);
     clearTimeout(uebersichtTimer);
+    clearTimeout(aktionTimer);
     document.removeEventListener('visibilitychange', beiSichtbarkeit);
     removeEventListener('online', beiOnline);
   });
 
-  async function eintragen(art: string, daten: Record<string, unknown>) {
+  /**
+   * Eintragen. Jede Änderung der Leitung ist eine „letzte Aktion“, die der Hinweis unten zum
+   * Rückgängigmachen anbietet; mehrere Einträge einer Aktion (siehe alsEineAktion, z. B. „Alle melden“)
+   * zusammen. `still`: automatische Einträge (Tische belegen) – ohne Hinweis.
+   */
+  let aktion = $state<{ ids: string[]; text: string; gruppe: string | null } | null>(null);
+  let aktionTimer: ReturnType<typeof setTimeout> | undefined;
+  async function eintragen(art: string, daten: Record<string, unknown>, opt: { still?: boolean } = {}) {
     if (!sitzung) throw new Error(T.app.fehlerAllgemein);
-    await sitzung.eintragen(art, daten);
+    const e = await sitzung.eintragen(art, daten);
+    if (leitung && !opt.still && rueckgaengigBar(e)) {
+      const gruppe = aktuelleAktion();
+      const text = T.verlauf.arten[art] ?? T.protokollArten[art] ?? art;
+      hinweis = null; // alter Hinweis („Rückgängig gemacht.“) passt nicht mehr
+      if (aktion && gruppe && aktion.gruppe === gruppe) aktion = { ids: [...aktion.ids, e.id], text: T.verlauf.mehrere(aktion.ids.length + 1), gruppe };
+      else aktion = { ids: [e.id], text: T.verlauf.gespeichert(text), gruppe };
+      verlaufFehler = '';
+      clearTimeout(aktionTimer);
+      aktionTimer = setTimeout(() => (aktion = null), 12_000);
+    }
+    return e;
   }
+
+  /** Einträge zurücknehmen (zurueck = true) oder wiederherstellen – vorher prüfen, ob es gefahrlos geht */
+  async function rueckgaengig(ids: string[], zurueck = true) {
+    const p = rueckgaengigPruefen(ereignisse, ids, zurueck, autor());
+    if (!p.ok) {
+      verlaufFehler = T.verlauf.nichtMoeglich(p.grund);
+      return false;
+    }
+    verlaufFehler = '';
+    // als einfache Liste speichern (Zustands-Proxys lassen sich nicht in IndexedDB ablegen); große
+    // Aktionen in Paketen, damit jeder Eintrag klein bleibt (Server nehmen höchstens 16 KB je Eintrag)
+    const liste = [...ids];
+    for (let i = 0; i < liste.length; i += MAX_JE_RUECKNAHME) await sitzung!.eintragen(ART.eintragZurueck, { ereignisse: liste.slice(i, i + MAX_JE_RUECKNAHME), zurueck });
+    hinweis = zurueck ? T.verlauf.erledigt : T.verlauf.wieder;
+    if (aktion && aktion.ids.some((x) => ids.includes(x))) aktion = null;
+    return true;
+  }
+  let verlaufFehler = $state('');
+  async function aktionZuruecknehmen() {
+    if (!aktion) return;
+    const ids = aktion.ids;
+    if (await rueckgaengig(ids)) {
+      aktion = null;
+      clearTimeout(aktionTimer);
+    }
+  }
+  const zurueckgenommen = $derived(new Set(zustand?.zurueckgenommen ?? []));
 
   // Sobald das Konto Rechte hat: Einstellungen laden und ausstehende Einträge senden
   $effect(() => {
@@ -410,6 +458,10 @@
       case ART.teilnehmerGemeldet:
       case ART.teilnehmerAbgemeldet:
         return `${z ? spName(z, String(d.id)) : ''} ${art}${k ? ` (${k})` : ''}`;
+      case ART.eintragZurueck: {
+        const n = Array.isArray(d.ereignisse) ? d.ereignisse.length : 0;
+        return d.zurueck === false ? T.verlauf.wiederText(n) : T.verlauf.zurueckText(n);
+      }
       case ART.spielErgebnis: {
         const s = z && typeof d.spiel === 'string' ? z.konkurrenzen[String(d.konkurrenz)]?.spiele[d.spiel] : undefined;
         const namen = z ? `${spName(z, String(d.a ?? ''))} – ${spName(z, String(d.b ?? ''))}` : '';
@@ -533,7 +585,7 @@
         z={zustand}
         abgeschlossen={zustand.abgeschlossen}
         anzahl={zustand.anzahlEreignisse}
-        eintragen={(art, daten) => sitzung!.eintragen(art, daten ?? {})}
+        eintragen={(art, daten) => eintragen(art, daten ?? {})}
         sicherung={sicherungBauen}
       >
         {#snippet protokoll()}
@@ -551,14 +603,24 @@
           {#if ereignisse.length === 0}
             <p class="leise">{T.turnier.leer}</p>
           {:else}
+            {#if leitung}<p class="leise verlauf-hilfe">{T.verlauf.rueckgaengig} / {T.verlauf.wiederherstellen}<Hilfe text={T.verlauf.hilfe} /></p>{/if}
+            {#if verlaufFehler}<div class="meldung fehler" role="alert">{verlaufFehler}</div>{/if}
             <ul class="liste" data-testid="protokoll">
               {#each [...ereignisse].reverse() as e (e.id)}
-                <li class="eintrag" class:wartet={e.status === 'ausstehend'}>
-                  <div>{beschreibung(e)}</div>
-                  <div class="leise">
-                    {#if e.seq !== null && e.status === 'bestaetigt'}#{e.seq} · {/if}
-                    {zeit(e.zeit)} · {T.turnier.von} {e.autor?.name ?? '–'}{e.autor && e.autor.rolle !== 'leitung' ? ` (${e.autor.rolle === 'spieler' && e.autor.helfer ? T.zugang.spielerHelfer : T.rollen[e.autor.rolle]})` : ''}
-                    {#if e.status === 'ausstehend'}<span class="marke">{T.turnier.ausstehend}</span>{/if}
+                {@const weg = zurueckgenommen.has(e.id)}
+                <li class="eintrag" class:wartet={e.status === 'ausstehend'} class:weg>
+                  <div class="eintrag-zeile">
+                    <div class="wachsen">
+                      <div class="text">{beschreibung(e)}{#if weg}<span class="marke">{T.verlauf.zurueckgenommen}</span>{/if}</div>
+                      <div class="leise">
+                        {#if e.seq !== null && e.status === 'bestaetigt'}#{e.seq} · {/if}
+                        {zeit(e.zeit)} · {T.turnier.von} {e.autor?.name ?? '–'}{e.autor && e.autor.rolle !== 'leitung' ? ` (${e.autor.rolle === 'spieler' && e.autor.helfer ? T.zugang.spielerHelfer : T.rollen[e.autor.rolle]})` : ''}
+                        {#if e.status === 'ausstehend'}<span class="marke">{T.turnier.ausstehend}</span>{/if}
+                      </div>
+                    </div>
+                    {#if leitung && darfSchreiben && rueckgaengigBar(e)}
+                      <button class="zweit klein" onclick={() => rueckgaengig([e.id], !weg)} data-testid="verlauf-knopf">{weg ? T.verlauf.wiederherstellen : T.verlauf.rueckgaengig}</button>
+                    {/if}
                   </div>
                 </li>
               {/each}
@@ -571,6 +633,15 @@
     {#if offenesSpiel}
       <ErgebnisDialog z={zustand} k={offenesSpiel.k} spiel={offenesSpiel.s} {rolle} {ich} helfer={helferRecht} {eintragen} schliessen={() => (offen = null)} />
     {/if}
+  {/if}
+  {#if aktion || (verlaufFehler && aktiv !== 'einstellungen')}
+    <div class="aktion" role="status" aria-live="polite" data-testid="aktion">
+      <span class="wachsen">{verlaufFehler && aktiv !== 'einstellungen' ? verlaufFehler : aktion?.text}</span>
+      {#if aktion && !verlaufFehler}
+        <button class="klein" onclick={aktionZuruecknehmen} data-testid="rueckgaengig">↶ {T.verlauf.rueckgaengig}</button>
+      {/if}
+      <button class="zweit klein" aria-label={T.verlauf.schliessen} onclick={() => ((aktion = null), (verlaufFehler = ''))}>✕</button>
+    </div>
   {/if}
 {/if}
 
@@ -620,6 +691,30 @@
   .qr-gross { margin: 6px 0 12px; }
   .meldung.aufruf { background: color-mix(in srgb, var(--gruen) 14%, var(--flaeche)); border: 2px solid var(--gruen); font-weight: 700; font-size: 1.1rem; }
   .warnungen { margin-bottom: 12px; }
+  .eintrag-zeile { display: flex; gap: 10px; align-items: center; }
+  .eintrag-zeile button { flex: none; min-height: 44px; }
+  .eintrag.weg .text { text-decoration: line-through; color: var(--leise); }
+  .eintrag.weg .marke { margin-left: 6px; text-decoration: none; display: inline-block; }
+  .verlauf-hilfe { display: flex; align-items: center; gap: 4px; }
+  .aktion {
+    position: fixed;
+    left: 50%;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 30;
+    width: min(32rem, calc(100vw - 24px));
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px 8px 14px;
+    border-radius: 12px;
+    background: var(--text);
+    color: var(--flaeche);
+    box-shadow: 0 6px 24px rgb(0 0 0 / 30%);
+    font-weight: 600;
+  }
+  .aktion button { min-height: 44px; flex: none; }
+  .aktion .zweit { background: transparent; color: var(--flaeche); border-color: color-mix(in srgb, var(--flaeche) 50%, transparent); }
   .live-link, .live-zeile { display: flex; gap: 6px; flex-wrap: wrap; }
   .live-link a, .live-zeile a { display: inline-flex; align-items: center; min-height: 44px; }
 </style>

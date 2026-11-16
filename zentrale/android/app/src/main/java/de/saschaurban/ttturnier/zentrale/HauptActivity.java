@@ -203,6 +203,17 @@ public final class HauptActivity extends Activity {
     private final class Bruecke {
         @JavascriptInterface
         public void dateiTeilen(String name, String inhalt, String typ) {
+            // Nur bekannte Dateiarten der App (Sicherung, CSV-Export, Text); alles andere als neutrale Datei
+            String art = typ == null ? "" : typ.toLowerCase(java.util.Locale.ROOT).split(";")[0].trim();
+            final String mime;
+            final String titel;
+            switch (art) {
+                case "application/json": mime = art; titel = "Sicherung teilen"; break;
+                case "text/csv": mime = art; titel = "Tabelle teilen"; break;
+                case "text/plain": mime = art; titel = "Text teilen"; break;
+                default: mime = "application/octet-stream"; titel = "Datei teilen";
+            }
+            if (name == null || inhalt == null || inhalt.length() > 20_000_000) return;
             try {
                 File ordner = new File(getCacheDir(), "teilen");
                 if (!ordner.isDirectory() && !ordner.mkdirs()) return;
@@ -213,11 +224,11 @@ public final class HauptActivity extends Activity {
                 }
                 Uri uri = TeilenProvider.uri(sicher);
                 Intent i = new Intent(Intent.ACTION_SEND)
-                    .setType(typ)
+                    .setType(mime)
                     .putExtra(Intent.EXTRA_STREAM, uri)
                     .putExtra(Intent.EXTRA_SUBJECT, name)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                runOnUiThread(() -> startActivity(Intent.createChooser(i, "Sicherung teilen")));
+                runOnUiThread(() -> startActivity(Intent.createChooser(i, titel)));
             } catch (IOException x) {
                 // Teilen nicht möglich
             }

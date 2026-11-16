@@ -276,7 +276,7 @@ $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
-pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.9.0' && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
+pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.10.0' && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1'], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
@@ -516,6 +516,13 @@ pruefe($s === 200, 'Helfer darf Spiele aufrufen');
 pruefe($s === 403, 'Spieler darf keine Spiele aufrufen');
 [$s] = rufe($api, 'POST', 'events', ['ereignisse' => [$ev('e3-000017', 'tisch.gesperrt')]], $tokH, ['turnier' => $tid]);
 pruefe($s === 403, 'Helfer darf keine Tische sperren');
+// Etappe 8: Vorplanen, Auslosung ändern, Rückgängig – nur Leitung
+foreach (['spiel.geplant', 'auslosung.geaendert', 'eintrag.zurueckgenommen'] as $i => $art) {
+    [$s] = rufe($api, 'POST', 'events', ['ereignisse' => [$ev('e8-00000' . $i, $art)]], $tokH, ['turnier' => $tid]);
+    pruefe($s === 403, "Helfer darf kein $art senden");
+    [$s] = rufe($api, 'POST', 'events', ['ereignisse' => [$ev('e8-00001' . $i, $art)]], $tokSp, ['turnier' => $tid]);
+    pruefe($s === 403, "Spieler darf kein $art senden");
+}
 [$s, $d] = rufe($api, 'GET', 'events', null, $tokH, ['turnier' => $tid, 'ab' => '0']);
 $autor = $d['ereignisse'][0]['autor'] ?? [];
 pruefe($autor === ['rolle' => 'spieler', 'name' => 'Anna Neu', 'spieler' => 'sp1'], 'Autor mit Spieler-ID, gesetzt vom Server');

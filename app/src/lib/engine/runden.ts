@@ -1,5 +1,5 @@
 import { kampflosErgebnis } from './wertung';
-import type { KonkurrenzZustand, Modus, Spiel } from './modell';
+import { istSchweizerArt, type KonkurrenzZustand, type Modus, type Spiel } from './modell';
 
 /**
  * Spielsysteme, die Runde für Runde ausgelost werden: Schweizer System und Kaiserturnier.
@@ -17,28 +17,44 @@ import type { KonkurrenzZustand, Modus, Spiel } from './modell';
  * Zahl setzt der Unterste aus und rückt in der nächsten Runde wieder ein. Endstand ist die
  * Rangleiter nach der letzten Runde – oben steht der Kaiser.
  *
+ * Cup-System (wie bei den HTTV-Turnierserien, Turnierprogramm MKTT): 6 Runden. Runde 1 wie beim
+ * Schweizer System (1–9, 2–10 …, bei ungerader Zahl hat der Mittlere ein Freilos). Runden 2–4: innerhalb
+ * der Ergebnisgruppen Erster gegen Letzten, Zweiter gegen Vorletzten …; ungerade Gruppen werden mit dem
+ * Besten der Gruppe darunter aufgefüllt. Runden 5–6: Nachbarn der Rangliste (1–2, 3–4 …). Nie zweimal
+ * dieselbe Paarung. Freilos (einmal je Spieler) von der Mitte abwärts, sonst von der Mitte aufwärts.
+ * Rangfolge: Siege, Buchholz, Feinbuchholz, Satzdifferenz, gewonnene Sätze, Startrang.
+ *
+ * Feste Satzzahl (Schweizer/Cup, Einstellung festeSaetze): Unentschieden zählt ½ Punkt.
+ * Beschleunigtes Schweizer System: In den Runden 1 und 2 zählt die obere Hälfte der Startliste für die
+ * Paarung einen Punkt mehr – die Starken treffen früher aufeinander, das Feld trennt sich schneller.
+ *
  * Die nächste Runde entsteht, sobald alle Spiele der laufenden Runde entschieden sind. Solange
  * an einer neuen Runde nichts eingetragen und kein Spiel aufgerufen ist, wird sie bei jeder
  * Änderung neu berechnet (z. B. nach einer Ergebniskorrektur oder einem Rückzug).
  */
 
-export type RundenModus = 'schweizer' | 'kaiser';
+export type RundenModus = 'schweizer' | 'cup' | 'kaiser';
 
 export function istRundenModus(m: Modus): m is RundenModus {
-  return m === 'schweizer' || m === 'kaiser';
+  return m === 'schweizer' || m === 'cup' || m === 'kaiser';
 }
 
-/** Rundenzahl: eingestellt oder automatisch (Schweizer: ⌈log₂ n⌉ + 1, Kaiser: 7), höchstens n − 1 beim Schweizer System */
+/** Automatische Rundenzahl (Schweizer: ⌈log₂ n⌉ + 1, Cup: 6, Kaiser: 7) */
+export function rundenAuto(modus: Modus, n: number): number {
+  if (modus === 'schweizer') return Math.ceil(Math.log2(Math.max(2, n))) + 1;
+  if (modus === 'cup') return 6;
+  return 7;
+}
+
+/** Rundenzahl: eingestellt oder automatisch, höchstens n − 1 beim Schweizer und Cup-System */
 export function rundenZahl(k: KonkurrenzZustand): number {
   const n = k.gruppen[0]?.mitglieder.length ?? k.meldungen.length;
-  if (k.einst.modus === 'schweizer') {
-    const auto = Math.ceil(Math.log2(Math.max(2, n))) + 1;
-    return Math.max(1, Math.min(k.einst.runden ?? auto, Math.max(1, n - 1)));
-  }
-  return Math.max(1, k.einst.runden ?? 7);
+  const r = k.einst.runden ?? rundenAuto(k.einst.modus, n);
+  if (istSchweizerArt(k.einst.modus)) return Math.max(1, Math.min(r, Math.max(1, n - 1)));
+  return Math.max(1, r);
 }
 
-const PRAEFIX: Record<RundenModus, string> = { schweizer: 'sw', kaiser: 'ks' };
+const PRAEFIX: Record<RundenModus, string> = { schweizer: 'sw', cup: 'cp', kaiser: 'ks' };
 
 function rundenSpiele(k: KonkurrenzZustand, r: number): Spiel[] {
   return k.reihenfolge
@@ -103,6 +119,7 @@ function neuesSpiel(k: KonkurrenzZustand, r: number, index: number, a: string, b
     tisch: null,
     aufgerufen: null,
     schiri: null,
+    plan: null,
   };
 }
 
@@ -146,7 +163,7 @@ export function rundenAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>) 
   }
   const ziel = rundenZahl(k);
   while (r >= 1 && r < ziel && rundeFertig(k, r)) {
-    const paare = k.einst.modus === 'kaiser' ? kaiserPaarung(k, zurueck) : schweizerPaarung(k, zurueck);
+    const paare = k.einst.modus === 'kaiser' ? kaiserPaarung(k, zurueck) : k.einst.modus === 'cup' ? cupPaarung(k, zurueck, r + 1) : schweizerPaarung(k, zurueck, r + 1);
     if (paare.filter(([, b]) => b !== null).length === 0) break; // niemand mehr zum Spielen
     r++;
     paare.forEach(([a, b], i) => {
@@ -167,9 +184,20 @@ export function ersteRundeAnlegen(k: KonkurrenzZustand): string[] {
     if (start.length % 2) paare.push([start[start.length - 1]!, null]);
   } else {
     const liste = [...start];
-    const frei = liste.length % 2 ? liste.pop()! : null;
-    const h = liste.length / 2;
-    for (let i = 0; i < h; i++) paare.push([liste[i]!, liste[i + h]!]);
+    // Ungerade Zahl: Schweizer – der Letzte hat ein Freilos; Cup – der Mittlere
+    const fi = liste.length % 2 ? (k.einst.modus === 'cup' ? Math.floor(liste.length / 2) : liste.length - 1) : -1;
+    const frei = fi >= 0 ? liste.splice(fi, 1)[0]! : null;
+    const haelfte = (l: string[]) => {
+      const h = l.length / 2;
+      for (let i = 0; i < h; i++) paare.push([l[i]!, l[i + h]!]);
+    };
+    if (k.einst.modus === 'schweizer' && k.einst.beschleunigt && liste.length >= 8) {
+      // Beschleunigt: obere Hälfte unter sich (oberes gegen unteres Viertel), untere Hälfte ebenso
+      let h = liste.length / 2;
+      if (h % 2) h++;
+      haelfte(liste.slice(0, h));
+      haelfte(liste.slice(h));
+    } else haelfte(liste);
     if (frei) paare.push([frei, null]);
   }
   return paare.map(([a, b], i) => {
@@ -186,6 +214,7 @@ export interface SchweizerZeile {
   platz: number;
   spiele: number;
   siege: number;
+  unentschieden: number;
   niederlagen: number;
   freilose: number;
   punkte: number;
@@ -201,6 +230,7 @@ export interface SchweizerZeile {
 interface Bilanz {
   punkte: number;
   siege: number;
+  unentschieden: number;
   niederlagen: number;
   freilose: number;
   gegner: string[];
@@ -212,7 +242,7 @@ interface Bilanz {
 
 function bilanzen(k: KonkurrenzZustand): Map<string, Bilanz> {
   const start = k.gruppen[0]?.mitglieder ?? [];
-  const m = new Map<string, Bilanz>(start.map((id) => [id, { punkte: 0, siege: 0, niederlagen: 0, freilose: 0, gegner: [], sg: 0, sv: 0, bg: 0, bv: 0 }]));
+  const m = new Map<string, Bilanz>(start.map((id) => [id, { punkte: 0, siege: 0, unentschieden: 0, niederlagen: 0, freilose: 0, gegner: [], sg: 0, sv: 0, bg: 0, bv: 0 }]));
   for (const id of k.reihenfolge) {
     const s = k.spiele[id]!;
     if (s.phase !== 'gruppen' || !s.a) continue;
@@ -221,7 +251,7 @@ function bilanzen(k: KonkurrenzZustand): Map<string, Bilanz> {
     if (s.bFrei) {
       if (s.status === 'freilos') {
         a.freilose++;
-        if (k.einst.modus === 'schweizer') a.punkte++;
+        if (istSchweizerArt(k.einst.modus)) a.punkte++;
       }
       continue;
     }
@@ -231,10 +261,17 @@ function bilanzen(k: KonkurrenzZustand): Map<string, Bilanz> {
     b.gegner.push(s.a);
     const e = s.ergebnis;
     if (!e || s.status !== 'gespielt') continue;
-    const [w, l] = e.gewinner === 'a' ? [a, b] : [b, a];
-    w.siege++;
-    w.punkte++;
-    l.niederlagen++;
+    if (e.gewinner === null) {
+      a.unentschieden++;
+      b.unentschieden++;
+      a.punkte += 0.5;
+      b.punkte += 0.5;
+    } else {
+      const [w, l] = e.gewinner === 'a' ? [a, b] : [b, a];
+      w.siege++;
+      w.punkte++;
+      l.niederlagen++;
+    }
     a.sg += e.satzA;
     a.sv += e.satzB;
     b.sg += e.satzB;
@@ -254,6 +291,7 @@ function wertungSchweizer(k: KonkurrenzZustand) {
   const b = bilanzen(k);
   const bh = new Map(start.map((id) => [id, b.get(id)!.gegner.reduce((s, g) => s + (b.get(g)?.punkte ?? 0), 0)]));
   const fbh = new Map(start.map((id) => [id, b.get(id)!.gegner.reduce((s, g) => s + (bh.get(g) ?? 0), 0)]));
+  const cup = k.einst.modus === 'cup';
   const reihe = [...start].sort((x, y) => {
     const bx = b.get(x)!;
     const by = b.get(y)!;
@@ -262,7 +300,7 @@ function wertungSchweizer(k: KonkurrenzZustand) {
       bh.get(y)! - bh.get(x)! ||
       fbh.get(y)! - fbh.get(x)! ||
       by.sg - by.sv - (bx.sg - bx.sv) ||
-      by.bg - by.bv - (bx.bg - bx.bv) ||
+      (cup ? by.sg - bx.sg : by.bg - by.bv - (bx.bg - bx.bv)) ||
       start.indexOf(x) - start.indexOf(y)
     );
   });
@@ -277,8 +315,9 @@ export function schweizerTabelle(k: KonkurrenzZustand, zurueck: string[]): Schwe
     return {
       id,
       platz: i + 1,
-      spiele: x.siege + x.niederlagen,
+      spiele: x.siege + x.niederlagen + x.unentschieden,
       siege: x.siege,
+      unentschieden: x.unentschieden,
       niederlagen: x.niederlagen,
       freilose: x.freilose,
       punkte: x.punkte,
@@ -293,10 +332,14 @@ export function schweizerTabelle(k: KonkurrenzZustand, zurueck: string[]): Schwe
   });
 }
 
-/** Paarung der nächsten Runde (Schweizer System) */
-export function schweizerPaarung(k: KonkurrenzZustand, zurueck: Set<string>): [string, string | null][] {
+/** Paarung der nächsten Runde (Schweizer System); `runde` = Nummer der neuen Runde */
+export function schweizerPaarung(k: KonkurrenzZustand, zurueck: Set<string>, runde = 2): [string, string | null][] {
   const { b, reihe } = wertungSchweizer(k);
-  const aktiv = reihe.filter((id) => !zurueck.has(id));
+  const start = k.gruppen[0]?.mitglieder ?? [];
+  // Beschleunigt: obere Hälfte der Startliste in Runde 1–2 mit einem virtuellen Punkt
+  const virtuell = k.einst.beschleunigt && runde <= 2 && start.length >= 8 ? new Set(start.slice(0, Math.ceil(start.length / 2))) : new Set<string>();
+  const punkte = (id: string) => b.get(id)!.punkte + (virtuell.has(id) ? 1 : 0);
+  const aktiv = [...reihe.filter((id) => !zurueck.has(id))].sort((x, y) => punkte(y) - punkte(x) || reihe.indexOf(x) - reihe.indexOf(y));
   const paare: [string, string | null][] = [];
   let liste = [...aktiv];
   if (liste.length % 2) {
@@ -304,7 +347,6 @@ export function schweizerPaarung(k: KonkurrenzZustand, zurueck: Set<string>): [s
     liste = liste.filter((id) => id !== frei);
     paare.push([frei, null]);
   }
-  const punkte = (id: string) => b.get(id)!.punkte;
   const gespielt = (x: string, y: string) => b.get(x)!.gegner.includes(y);
   let schritte = 0;
   const suche = (rest: string[], ohneWiederholung: boolean): [string, string][] | null => {
@@ -330,6 +372,65 @@ export function schweizerPaarung(k: KonkurrenzZustand, zurueck: Set<string>): [s
   let ergebnis = suche(liste, true);
   if (!ergebnis) {
     // Kein Feld ohne Wiederholung möglich: der Reihe nach paaren
+    ergebnis = [];
+    for (let i = 0; i + 1 < liste.length; i += 2) ergebnis.push([liste[i]!, liste[i + 1]!]);
+  }
+  return [...ergebnis, ...paare];
+}
+
+/* ---------------- Cup-System ---------------- */
+
+/** Paarung der nächsten Runde im Cup-System; `runde` = Nummer der neuen Runde (ab 2) */
+export function cupPaarung(k: KonkurrenzZustand, zurueck: Set<string>, runde: number): [string, string | null][] {
+  const { b, reihe } = wertungSchweizer(k);
+  let liste = reihe.filter((id) => !zurueck.has(id));
+  const paare: [string, string | null][] = [];
+  if (liste.length % 2) {
+    // Freilos von der Mitte abwärts, sonst von der Mitte aufwärts; jeder höchstens einmal
+    const m = Math.floor(liste.length / 2);
+    const reihenfolge = [...liste.slice(m), ...liste.slice(0, m).reverse()];
+    const frei = reihenfolge.find((id) => b.get(id)!.freilose === 0) ?? liste[m]!;
+    liste = liste.filter((id) => id !== frei);
+    paare.push([frei, null]);
+  }
+  const punkte = (id: string) => b.get(id)!.punkte;
+  const gespielt = (x: string, y: string) => b.get(x)!.gegner.includes(y);
+  // Ergebnisgruppen; ungerade Gruppen mit dem Besten der Gruppe darunter auffüllen
+  const gruppen: string[][] = [];
+  for (const id of liste) {
+    const letzte = gruppen[gruppen.length - 1];
+    if (letzte && punkte(letzte[0]!) === punkte(id)) letzte.push(id);
+    else gruppen.push([id]);
+  }
+  const gruppeVon = new Map<string, number>();
+  for (let i = 0; i < gruppen.length; i++) {
+    const g = gruppen[i]!;
+    if (g.length % 2 && gruppen[i + 1]) g.push(gruppen[i + 1]!.shift()!);
+    for (const id of g) gruppeVon.set(id, i);
+  }
+  const falten = runde <= 4;
+  let schritte = 0;
+  const suche = (rest: string[], ohneWiederholung: boolean): [string, string][] | null => {
+    if (rest.length === 0) return [];
+    if (++schritte > 20000) return null;
+    const p = rest[0]!;
+    const uebrig = rest.slice(1);
+    // Runden 2–4: in der eigenen Gruppe vom Ende her (Erster gegen Letzten); Runden 5–6: der Nächste
+    const eigene = uebrig.filter((id) => gruppeVon.get(id) === gruppeVon.get(p));
+    const vorn = falten ? [...eigene].reverse() : eigene;
+    const kandidaten = [...vorn, ...uebrig.filter((id) => !vorn.includes(id))];
+    for (const q of kandidaten) {
+      if (ohneWiederholung && gespielt(p, q)) continue;
+      const weiter = suche(
+        uebrig.filter((id) => id !== q),
+        ohneWiederholung,
+      );
+      if (weiter) return [[p, q], ...weiter];
+    }
+    return null;
+  };
+  let ergebnis = suche(liste, true);
+  if (!ergebnis) {
     ergebnis = [];
     for (let i = 0; i + 1 < liste.length; i += 2) ergebnis.push([liste[i]!, liste[i + 1]!]);
   }

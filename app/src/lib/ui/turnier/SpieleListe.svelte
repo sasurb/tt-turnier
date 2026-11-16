@@ -1,7 +1,8 @@
 <script lang="ts">
   import { T } from '../../texte';
   import { alleSpiele, pruefliste, spieleVon } from '../../engine/abfragen';
-  import type { Spiel } from '../../engine/modell';
+  import { uhrzeitText, type Spiel } from '../../engine/modell';
+  import { zeitplan } from '../../engine/zeitplan';
   import type { TurnierZustand } from '../../engine/zustand';
   import SpielKarte from './SpielKarte.svelte';
 
@@ -28,8 +29,26 @@
       return true;
     }),
   );
-  /** offene vor wartenden */
-  const sortiert = $derived(filter === 'offen' ? [...liste].sort((a, b) => Number(a.status === 'wartet') - Number(b.status === 'wartet')) : liste);
+  /** Geschätzter Beginn je offenem Spiel (Zeitplan) */
+  const plan = $derived(zeitplan(z, Date.now()));
+  function beginn(s: Spiel): number | null {
+    const e = plan.spiele.get(`${s.konkurrenz}/${s.id}`);
+    return e && !e.laeuft ? e.start : null;
+  }
+  /** Offen: laufende zuerst, dann nach geschätztem Beginn; wartende ohne Schätzung ans Ende */
+  const sortiert = $derived(
+    filter === 'offen'
+      ? [...liste].sort((a, b) => {
+          const la = a.tisch !== null ? 0 : 1;
+          const lb = b.tisch !== null ? 0 : 1;
+          return la - lb || (beginn(a) ?? Infinity) - (beginn(b) ?? Infinity) || Number(a.status === 'wartet') - Number(b.status === 'wartet');
+        })
+      : liste,
+  );
+  function zeitVon(s: Spiel): string | null {
+    const b = beginn(s);
+    return b === null ? null : uhrzeitText(b);
+  }
 </script>
 
 {#if pruef.length}
@@ -62,7 +81,7 @@
     <p class="leise">{T.spiele.leer}</p>
   {:else}
     {#each sortiert as s (s.konkurrenz + s.id)}
-      <SpielKarte {z} k={z.konkurrenzen[s.konkurrenz]!} spiel={s} {ich} {mitSchiri} mitKonkurrenz={z.konkurrenzReihe.length > 1} oeffnen={() => oeffnen(s)} />
+      <SpielKarte {z} k={z.konkurrenzen[s.konkurrenz]!} spiel={s} {ich} {mitSchiri} mitKonkurrenz={z.konkurrenzReihe.length > 1} zeit={zeitVon(s)} oeffnen={() => oeffnen(s)} />
     {/each}
   {/if}
 {/if}
@@ -71,6 +90,6 @@
   .pruef { border-color: var(--orange); }
   .filter { margin-bottom: 12px; }
   .chips { display: flex; gap: 6px; }
-  .chip { min-height: 40px; padding: 6px 14px; background: var(--flaeche); color: var(--text); border: 1px solid var(--linie); font-weight: 600; }
+  .chip { min-height: 44px; padding: 6px 14px; background: var(--flaeche); color: var(--text); border: 1px solid var(--linie); font-weight: 600; }
   .chip.aktiv { background: var(--blau); color: #fff; border-color: var(--blau); }
 </style>
