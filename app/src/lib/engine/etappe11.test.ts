@@ -22,7 +22,8 @@ function turnier(teams: string[], n: number, einst: Partial<KonkurrenzEinstellun
 }
 
 function aufstellen(t: Baukasten, spiel: string, team: string, einzel: (string | null)[], doppel: ([string, string] | null)[], autor: Autor = LEITUNG) {
-  return t.e(ART.mannschaftAufgestellt, { konkurrenz: 'm', spiel, mannschaft: team, einzel, doppel }, autor);
+  const s = t.z.konkurrenzen.m!.spiele[spiel]!;
+  return t.e(ART.mannschaftAufgestellt, { konkurrenz: 'm', spiel, mannschaft: team, gegner: s.a === team ? s.b : s.a, einzel, doppel }, autor);
 }
 
 function teilErgebnis(t: Baukasten, spiel: string, nr: number, e: ReturnType<typeof saetze>, autor: Autor = LEITUNG) {
@@ -99,7 +100,7 @@ describe('Etappe 11: Mannschaftsturniere', () => {
     expect(t.z.warnungen.at(-1)!.text).toMatch(/Mannschaftsführung|spielt nicht/);
     aufstellen(t, s.id, s.b!, [`${B}2`, `${B}1`], [[`${B}1`, `${B}2`]], spieler(`${B}1`));
     expect(Object.keys(t.z.konkurrenzen.m!.begegnungen[s.id]!.aufstellung)).toHaveLength(2);
-    // Nach der Aufdeckung ändert nur noch die Leitung
+    // Nach der Aufdeckung ändert nur noch die Leitung (auch wer vorher nur Ungültiges eingereicht hat)
     aufstellen(t, s.id, s.a!, [`${A}2`, `${A}1`], [[`${A}1`, `${A}2`]], spieler(`${A}1`));
     expect(t.z.warnungen.at(-1)!.text).toMatch(/nur die Turnierleitung/);
     // Spiel 2: A2 gegen B1 (B hat getauscht). A1 spielt dort nicht, ist aber Mannschaftsführer → darf
@@ -118,6 +119,32 @@ describe('Etappe 11: Mannschaftsturniere', () => {
     // Direktes Ergebnis auf die Begegnung ist nicht erlaubt
     t.e(ART.spielErgebnis, { konkurrenz: 'm', spiel: s.id, a: s.a, b: s.b, ergebnis: saetze(5, 5, 5) });
     expect(t.z.warnungen.at(-1)!.text).toMatch(/einzelnen Spiele/);
+  });
+
+  it('Sperre gegen Nachbessern: ungültige erste Abgabe, dann gültige nach der des Gegners → abgelehnt', () => {
+    const t = turnier(['a', 'b'], 2, { mannschaft: { system: 'corbillon2', durchspielen: false, eigen: null } });
+    t.auslosen('m');
+    t.starten('m', 'gruppen');
+    const s = Object.values(t.z.konkurrenzen.m!.spiele)[0]!;
+    const A = s.a === 'm-aaaa' ? 'a' : 'b';
+    const B = A === 'a' ? 'b' : 'a';
+    aufstellen(t, s.id, s.a!, [], [], spieler(`${A}1`));
+    expect(t.z.warnungen.at(-1)!.text).toMatch(/leer/);
+    aufstellen(t, s.id, s.b!, [`${B}1`, `${B}2`], [[`${B}1`, `${B}2`]], spieler(`${B}1`));
+    aufstellen(t, s.id, s.a!, [`${A}1`, `${A}2`], [[`${A}1`, `${A}2`]], spieler(`${A}1`));
+    expect(t.z.warnungen.at(-1)!.text).toMatch(/nur die Turnierleitung/);
+    // Spieler mit Helferrecht der Gegenseite darf nicht für A aufstellen
+    const t2 = turnier(['a', 'b'], 2, { mannschaft: { system: 'corbillon2', durchspielen: false, eigen: null } });
+    t2.auslosen('m');
+    t2.starten('m', 'gruppen');
+    const s2 = Object.values(t2.z.konkurrenzen.m!.spiele)[0]!;
+    t2.e(ART.mannschaftAufgestellt, { konkurrenz: 'm', spiel: s2.id, mannschaft: 'm-aaaa', gegner: 'm-bbbb', einzel: ['a1', 'a2'] }, { rolle: 'spieler', name: 'B2', spieler: 'b2', helfer: true });
+    expect(t2.z.warnungen.at(-1)!.text).toMatch(/Mannschaftsführung/);
+    // Falscher Gegner
+    t.e(ART.mannschaftAufgestellt, { konkurrenz: 'm', spiel: s.id, mannschaft: s.a, gegner: 'm-zzzz', einzel: [`${A}1`] }, LEITUNG);
+    expect(t.z.warnungen.at(-1)!.text).toMatch(/falschen Gegner/);
+    aufstellen(t, s.id, s.a!, [`${A}1`, `${A}2`], [[`${A}1`, `${A}2`]]);
+    expect(Object.keys(t.z.konkurrenzen.m!.begegnungen[s.id]!.aufstellung)).toHaveLength(2);
   });
 
   it('Unbesetzte Position geht kampflos an den Gegner; Unentschieden in der Gruppe 1:1 Punkte', () => {

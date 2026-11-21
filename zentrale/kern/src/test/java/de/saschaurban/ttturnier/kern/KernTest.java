@@ -415,23 +415,26 @@ public final class KernTest {
         String a2 = spielerToken(z, tid, leit, "a2");
         String b1 = spielerToken(z, tid, leit, "b1");
         String spiel = "g0-m-aaaa-m-bbbb";
-        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000006", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "einzel", liste("a1", "a2"))))), a2, q("turnier", tid), false);
-        pruefe(abgelehnt(a, "keine_berechtigung"), "Spieler ohne Führung: Aufstellung abgelehnt");
-        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000007", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", "g0-m-cccc-m-bbbb", "mannschaft", "m-aaaa", "einzel", liste("a1"))))), a1, q("turnier", tid), false);
-        pruefe(abgelehnt(a, "keine_berechtigung"), "Gruppenspiel einer fremden Begegnung: abgelehnt");
-        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000008", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "einzel", liste("a1", "a2"))))), a1, q("turnier", tid), false);
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000006", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste("a1", "a2"))))), a2, q("turnier", tid), false);
+        pruefe(abgelehnt(a, "ungueltig"), "Spieler ohne Führung: Aufstellung abgelehnt");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000016", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste())))), a1, q("turnier", tid), false);
+        pruefe(abgelehnt(a, "ungueltig"), "Leere Aufstellung abgelehnt");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000007", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", "g0-m-cccc-m-bbbb", "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste("a1"))))), a1, q("turnier", tid), false);
+        pruefe(abgelehnt(a, "ungueltig"), "Gruppenspiel einer fremden Begegnung: abgelehnt");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000008", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste("a1", "a2"))))), a1, q("turnier", tid), false);
         pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Mannschaftsführung gibt die Aufstellung ab");
         A gegner = rufe(z, "GET", "events", null, b1, q("turnier", tid, "ab", "0"), false);
         A selbst = rufe(z, "GET", "events", null, a1, q("turnier", tid, "ab", "0"), false);
         A zuschauer = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
         A leitung = rufe(z, "GET", "events", null, leit, q("turnier", tid, "ab", "0"), false);
-        pruefe(aufstellungen(gegner) == 0 && aufstellungen(zuschauer) == 0 && gegner.t("filter") != null, "Gegner und Zuschauer sehen die Aufstellung noch nicht (Filter gesetzt)");
-        pruefe(aufstellungen(selbst) == 1 && aufstellungen(leitung) == 1, "Verfasser und Leitung sehen sie");
-        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000009", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-bbbb", "einzel", liste("b1"))))), b1, q("turnier", tid), false);
+        pruefe(aufstellungen(gegner) == 0 && aufstellungen(zuschauer) == 0 && gegner.g("filter") == null, "Gegner und Zuschauer sehen die Aufstellung noch nicht");
+        A mitglied = rufe(z, "GET", "events", null, a2, q("turnier", tid, "ab", "0"), false);
+        pruefe(aufstellungen(selbst) == 1 && aufstellungen(mitglied) == 1 && aufstellungen(leitung) == 1, "Eigene Mannschaft und Leitung sehen sie");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000009", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-bbbb", "gegner", "m-aaaa", "einzel", liste("b1"))))), b1, q("turnier", tid), false);
         pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Gegner gibt ab");
         gegner = rufe(z, "GET", "events", null, b1, q("turnier", tid, "ab", "0"), false);
         zuschauer = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
-        pruefe(aufstellungen(gegner) == 2 && aufstellungen(zuschauer) == 2 && zuschauer.g("filter") == null, "Beide abgegeben: für alle sichtbar, Filter weg");
+        pruefe(aufstellungen(gegner) == 2 && aufstellungen(zuschauer) == 2 && Api10.php("aufgedeckt:m|" + spiel).equals(zuschauer.t("filter")), "Beide nennen sich: für alle sichtbar, Filter-Kennung wie PHP");
     }
 
     /** Fingerabdruck wie PHP: sha256 der sortierten IDs, 16 Zeichen */

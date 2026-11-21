@@ -1379,6 +1379,7 @@ export const T = {
     spielNr: (n: number) => `Spiel ${n}`,
     status: { wartet: 'wartet auf Aufstellung', offen: 'offen', gespielt: '', kampflos: 'kampflos', entfallen: 'entfällt' } as Record<string, string>,
     gespeichert: 'Aufstellung gespeichert.',
+    gespeichertVerdeckt: 'Aufstellung gespeichert. Sie bleibt verdeckt, bis beide Mannschaften abgegeben haben – dann siehst du sie wieder.',
     spiele: 'Spiele der Begegnung',
     wartet: 'wartet auf Aufstellung',
     kampflos: 'kampflos',

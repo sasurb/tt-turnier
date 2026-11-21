@@ -94,11 +94,13 @@
         konkurrenz: k.id,
         spiel: spiel.id,
         mannschaft: team,
+        gegner: form === 'a' ? spiel.b : spiel.a,
         einzel: einzel.map((x) => x || null),
         doppel: doppel.map(([x, y]) => (x && y ? [x, y] : null)),
       });
+      // Wer nicht zur Mannschaft gehört (Helfer), sieht die Aufstellung erst nach dem Aufdecken wieder
+      hinweis = !leitung && meineSeite !== form && !komplett ? T.mannschaft.gespeichertVerdeckt : T.mannschaft.gespeichert;
       form = null;
-      hinweis = T.mannschaft.gespeichert;
     } catch (x) {
       fehler = x instanceof Error ? x.message : String(x);
     }

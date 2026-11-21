@@ -1359,9 +1359,21 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
   const m = k.mannschaften[mid];
   if (!m || (s.a !== mid && s.b !== mid)) return 'Diese Mannschaft spielt nicht in dieser Begegnung.';
   if (s.status === 'wartet' || s.status === 'freilos' || s.status === 'entfallen' || s.gestrichen) return 'Für diese Begegnung lässt sich keine Aufstellung abgeben.';
-  const amtlich = leitung || (e.autor?.rolle === 'helfer' && (aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri'))) || (e.autor?.rolle === 'spieler' && e.autor.helfer === true && !m.spieler.includes(e.autor.spieler ?? ''));
+  const gegner = s.a === mid ? s.b : s.a;
+  if (d.gegner !== gegner) return 'Die Aufstellung nennt den falschen Gegner.';
+  // Spieler mit Helferrecht tragen nur amtlich ein, wenn die eigene Mannschaft nicht in der Begegnung spielt
+  const ichSpieler = e.autor?.spieler ?? '';
+  const inBegegnung = [s.a, s.b].some((x) => !!x && !!k.mannschaften[x]?.spieler.includes(ichSpieler));
+  const amtlich = leitung || (e.autor?.rolle === 'helfer' && (aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri'))) || (e.autor?.rolle === 'spieler' && e.autor.helfer === true && !inBegegnung);
   const fuehrung = e.autor?.rolle === 'spieler' && !!e.autor.spieler && e.autor.spieler === m.fuehrer;
   if (!amtlich && !fuehrung) return 'Die Aufstellung geben die Mannschaftsführung, Helfer oder die Turnierleitung ab.';
+  // Sperre gegen Nachbessern: Haben beide Mannschaften schon etwas eingereicht (auch Ungültiges; die Rechte prüfen
+  // Server und Engine gleich), ändert nur noch die Leitung. So bringt es nichts, die
+  // gegnerische Aufstellung mit einer ungültigen eigenen aufzudecken.
+  const b0 = begegnungDaten(k, s.id);
+  const schonEingereicht = !!b0.versuche[mid];
+  b0.versuche[mid] = true;
+  if (!leitung && schonEingereicht && gegner && b0.versuche[gegner]) return 'Beide Aufstellungen stehen – ändern kann sie jetzt nur die Turnierleitung.';
   const sys = systemVon(k.einst);
   const roh = (v: unknown) => (typeof v === 'string' && m.spieler.includes(v) ? v : null);
   const einzel = Array.from({ length: sys.einzel }, (_, i) => roh(Array.isArray(d.einzel) ? d.einzel[i] : null));
@@ -1377,7 +1389,7 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
   const imDoppel = doppel.flat().filter(Boolean) as string[];
   if (new Set(imDoppel).size !== imDoppel.length) return 'Jeder Spieler spielt nur in einem Doppel.';
   if (!imEinzel.length && !imDoppel.length) return 'Die Aufstellung ist leer.';
-  const b = begegnungDaten(k, s.id);
+  const b = b0;
   const alt = b.aufstellung[mid];
   if (alt && !leitung && aufstellungenKomplett(k, s)) return 'Beide Aufstellungen stehen – ändern kann sie jetzt nur die Turnierleitung.';
   if (alt) {

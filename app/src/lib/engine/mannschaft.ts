@@ -215,6 +215,8 @@ export interface BegegnungDaten {
   teile: Record<string, TeilZustand>;
   /** Losentscheid der Leitung bei völligem Gleichstand im K.-o. (Mannschafts-ID des Siegers) */
   los: string | null;
+  /** Mannschaften, für die schon eine Aufstellung eingereicht wurde – auch eine ungültige (Sperre gegen Nachbessern) */
+  versuche: Record<string, true>;
 }
 
 export type TeilStatus = 'wartet' | 'offen' | 'gespielt' | 'kampflos' | 'entfallen';
@@ -257,7 +259,7 @@ export function istMannschaft(k: Pick<KonkurrenzZustand, 'einst'>): boolean {
 export function begegnungDaten(k: KonkurrenzZustand, spiel: string): BegegnungDaten {
   const b = k.begegnungen[spiel];
   if (b) return b;
-  const neu: BegegnungDaten = { aufstellung: Object.create(null) as Record<string, Aufstellung>, teile: Object.create(null) as Record<string, TeilZustand>, los: null };
+  const neu: BegegnungDaten = { aufstellung: Object.create(null) as Record<string, Aufstellung>, teile: Object.create(null) as Record<string, TeilZustand>, los: null, versuche: Object.create(null) as Record<string, true> };
   k.begegnungen[spiel] = neu;
   return neu;
 }

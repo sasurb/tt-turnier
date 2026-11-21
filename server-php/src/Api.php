@@ -56,6 +56,10 @@ final class Api
         'kasse' => ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'],
         'oberschiri' => ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt', 'mannschaft.aufgestellt'],
     ];
+    /** Spiel-IDs, für die es Aufstellungen gibt: Gruppen „g<nr>-<A>-<B>“, K.-o. „ko|tr|vl|fi-<runde>-<nr>“, „ko-p3“ */
+    private const SPIEL_ID_MANNSCHAFT = '/^(g\d{1,3}-m-[A-Za-z0-9-]{4,38}-m-[A-Za-z0-9-]{4,38}|(ko|tr|vl|fi)-\d{1,2}-\d{1,3}|ko-p3)$/';
+    /** @var array<string,array<string,array{spieler:list<string>,fuehrer:?string}>> je Anfrage */
+    private array $mannschaftenCache = [];
     private const NUR_VOLLE_SICHT = ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'];
     private const MAX_POOL = 3000;
     private const MAX_UEBERSICHT = 60000;
@@ -873,8 +877,9 @@ final class Api
         // Spieler und Zuschauer: Namen entfernter Spieler werden ersetzt (Etappe 10). Ändert sich die Menge,
         // ändert sich „filter“ – die Geräte holen dann alles neu ab.
         $weg = in_array($sicht, ['spieler', 'zuschauer', 'kurz'], true) ? $this->entfernteSpieler((string)$t['id']) : [];
-        // Mannschaften: noch nicht aufgedeckte Aufstellungen (ab 0.13); gehen mit in die Filter-Kennung ein
-        $verdeckt = [];
+        // Mannschaften: noch nicht aufgedeckte Aufstellungen (ab 0.13). In die Filter-Kennung gehen nur aufgedeckte
+        // Begegnungen ein: Neu laden müssen die Geräte erst, wenn etwas sichtbar wird.
+        $filter = $weg;
         if ($sicht !== 'voll') {
             $bezug = null;
             if ($sicht === 'spieler' || $sicht === 'helfer') {
@@ -884,15 +889,14 @@ final class Api
                     $bezug = null;
                 }
             }
-            $verdeckt = $this->verdeckteAufstellungen((string)$t['id'], $bezug === null ? null : (string)$bezug);
+            [$verdeckt, $offen] = $this->verdeckteAufstellungen((string)$t['id'], $bezug === null ? null : (string)$bezug);
             $liste = array_values(array_map(
                 static fn(array $e): array => self::gefiltert($e, $sicht, $weg),
                 array_filter($liste, static fn(array $e): bool => !in_array($e['art'], self::NUR_VOLLE_SICHT, true) && !isset($verdeckt[$e['id']]))
             ));
-        }
-        $filter = $weg;
-        foreach ($verdeckt as $id => $_) {
-            $filter['aufstellung:' . $id] = true;
+            foreach ($offen as $schluessel => $_) {
+                $filter['aufgedeckt:' . $schluessel] = true;
+            }
         }
         return [
             'ereignisse' => $liste,
@@ -904,71 +908,170 @@ final class Api
     }
 
     /**
-     * Ist dieser Spieler laut letzter Meldung der Leitung Mannschaftsführung der genannten Mannschaft? Bei
-     * Gruppenspielen (ID „g…“ mit beiden Mannschafts-IDs) muss die Mannschaft außerdem in der Begegnung spielen.
+     * Mannschaften laut letzter Meldung der Leitung je Konkurrenz: "<konkurrenz>|<id>" → [spieler, fuehrer].
+     * @return array<string,array{spieler:list<string>,fuehrer:?string}>
      */
-    private function istMannschaftsfuehrung(string $turnierId, mixed $daten, string $spieler): bool
+    private function mannschaftenLaut(string $turnierId): array
     {
-        $d = $daten instanceof \stdClass ? get_object_vars($daten) : $daten;
-        $m = is_array($d) ? ($d['mannschaft'] ?? null) : null;
-        $k = is_array($d) ? ($d['konkurrenz'] ?? null) : null;
-        $spiel = is_array($d) ? ($d['spiel'] ?? null) : null;
-        if (!is_string($m) || !is_string($k) || !is_string($spiel) || $spieler === '' || !preg_match('/^m-[A-Za-z0-9-]{4,38}$/', $m)) {
-            return false;
-        }
-        if (str_starts_with($spiel, 'g') && !str_contains($spiel, $m)) {
-            return false;
-        }
         $zeilen = $this->db->alle(
-            "SELECT daten FROM ereignisse WHERE turnier_id = ? AND art = 'mannschaft.gemeldet' AND autor_rolle IN ('leitung', 'admin', 'veranstalter') AND daten LIKE ? ORDER BY seq DESC",
-            [$turnierId, '%' . $m . '%']
+            "SELECT daten FROM ereignisse WHERE turnier_id = ? AND art = 'mannschaft.gemeldet' AND autor_rolle IN ('leitung', 'admin', 'veranstalter') ORDER BY seq",
+            [$turnierId]
         );
+        $aus = [];
         foreach ($zeilen as $z) {
             $x = json_decode((string)$z['daten'], true);
-            if (is_array($x) && ($x['id'] ?? null) === $m && ($x['konkurrenz'] ?? null) === $k) {
-                return ($x['fuehrer'] ?? null) === $spieler;
+            if (!is_array($x) || !is_string($x['konkurrenz'] ?? null) || !is_string($x['id'] ?? null) || !is_array($x['spieler'] ?? null)) {
+                continue;
             }
+            $aus[$x['konkurrenz'] . '|' . $x['id']] = [
+                'spieler' => array_values(array_filter($x['spieler'], 'is_string')),
+                'fuehrer' => is_string($x['fuehrer'] ?? null) ? $x['fuehrer'] : null,
+            ];
         }
-        return false;
+        return $aus;
     }
 
     /**
-     * Aufstellungen, die Spieler, Helfer und Zuschauer noch nicht sehen: Bis für eine Begegnung zwei
-     * verschiedene Mannschaften aufgestellt haben, sieht eine Aufstellung nur ihr Verfasser (und die volle Sicht).
-     * WO E 5: Aufstellung „ohne Kenntnis der gegnerischen Aufstellung“. Kern der Zentrale: Zentrale.verdeckteAufstellungen.
-     * @return array<string,true> Ereignis-IDs
+     * Aufstellung von Helfern und Spielern prüfen (wie die Engine, zustand.ts aufstellen): Mannschaft und Gegner
+     * gemeldet, Spieler aus der Mannschaft, keine doppelten Positionen, nicht leer; Gruppenspiel-ID passt genau;
+     * Spielerkennung ohne Helferrecht nur als Mannschaftsführung; höchstens 5 Abgaben je Mannschaft und Begegnung.
+     * Gibt die Fehlermeldung zurück oder null.
+     */
+    private function aufstellungPruefen(string $turnierId, mixed $daten, bool $spieler, bool $helfer, string $bezug): ?string
+    {
+        $roh = json_encode($daten);
+        $d = json_decode((string)$roh, true);
+        if (!is_array($d) || strlen((string)$roh) > 2048 || array_diff(array_keys($d), ['konkurrenz', 'spiel', 'mannschaft', 'gegner', 'einzel', 'doppel']) !== []) {
+            return 'Aufstellung ungültig.';
+        }
+        $k = $d['konkurrenz'] ?? null;
+        $spiel = $d['spiel'] ?? null;
+        $m = $d['mannschaft'] ?? null;
+        $g = $d['gegner'] ?? null;
+        $muster = '/^m-[A-Za-z0-9-]{4,38}$/';
+        if (!is_string($k) || !is_string($spiel) || !preg_match(self::SPIEL_ID_MANNSCHAFT, $spiel) || !is_string($m) || !is_string($g) || $m === $g || !preg_match($muster, $m) || !preg_match($muster, $g)) {
+            return 'Aufstellung ungültig.';
+        }
+        if (preg_match('/^g\d+-(.+)$/', $spiel, $t) && $t[1] !== "$m-$g" && $t[1] !== "$g-$m") {
+            return 'Diese Mannschaften spielen nicht in dieser Begegnung.';
+        }
+        $teams = $this->mannschaftenCache[$turnierId] ??= $this->mannschaftenLaut($turnierId);
+        $team = $teams["$k|$m"] ?? null;
+        if ($team === null || !isset($teams["$k|$g"])) {
+            return 'Mannschaft nicht gemeldet.';
+        }
+        // Spielerkennung: nur die Führung der eigenen Mannschaft; mit Helferrecht amtlich nur für Begegnungen,
+        // in denen die eigene Mannschaft nicht spielt (wie die Engine)
+        $mitglied = in_array($bezug, $team['spieler'], true) || in_array($bezug, $teams["$k|$g"]['spieler'], true);
+        if ($spieler && (!$helfer || $mitglied) && $team['fuehrer'] !== $bezug) {
+            return 'Die Aufstellung gibt die Mannschaftsführung ab.';
+        }
+        $einzel = $d['einzel'] ?? [];
+        $doppel = $d['doppel'] ?? [];
+        if (!is_array($einzel) || !is_array($doppel) || count($einzel) > 8 || count($doppel) > 8) {
+            return 'Aufstellung ungültig.';
+        }
+        $alle = [];
+        foreach ($einzel as $x) {
+            if ($x !== null) {
+                $alle[] = $x;
+            }
+        }
+        $imDoppel = [];
+        foreach ($doppel as $p) {
+            if ($p === null) {
+                continue;
+            }
+            if (!is_array($p) || count($p) !== 2 || $p[0] === $p[1]) {
+                return 'Aufstellung ungültig.';
+            }
+            array_push($imDoppel, $p[0], $p[1]);
+        }
+        foreach ([...$alle, ...$imDoppel] as $x) {
+            if (!is_string($x) || !in_array($x, $team['spieler'], true)) {
+                return 'In der Aufstellung steht ein Spieler, der nicht zur Mannschaft gehört.';
+            }
+        }
+        if (count(array_unique($alle)) !== count($alle) || count(array_unique($imDoppel)) !== count($imDoppel) || ($alle === [] && $imDoppel === [])) {
+            return 'Aufstellung ungültig (leer oder doppelt besetzt).';
+        }
+        $bisher = $this->db->alle(
+            "SELECT daten FROM ereignisse WHERE turnier_id = ? AND art = 'mannschaft.aufgestellt' AND daten LIKE ?",
+            [$turnierId, '%' . $m . '%']
+        );
+        $n = 0;
+        $begegnungen = [];
+        foreach ($bisher as $z) {
+            $x = json_decode((string)$z['daten'], true);
+            if (is_array($x) && ($x['mannschaft'] ?? null) === $m && ($x['konkurrenz'] ?? null) === $k) {
+                $begegnungen[(string)($x['spiel'] ?? '')] = true;
+                if (($x['spiel'] ?? null) === $spiel) {
+                    $n++;
+                }
+            }
+        }
+        if (!isset($begegnungen[$spiel]) && count($begegnungen) >= 200) {
+            return 'Zu viele Aufstellungen für diese Mannschaft.';
+        }
+        return $n >= 5 ? 'Diese Aufstellung wurde schon zu oft geändert. Bitte die Turnierleitung fragen.' : null;
+    }
+
+    /**
+     * Aufstellungen, die Spieler, Helfer und Zuschauer noch nicht sehen (WO E 5: „ohne Kenntnis der gegnerischen
+     * Aufstellung“). Aufgedeckt ist eine Begegnung erst, wenn sich zwei Aufstellungen gegenseitig als Gegner nennen
+     * (A nennt B und B nennt A). Vorher sehen eine Aufstellung nur die volle Sicht und die Spieler der eigenen
+     * Mannschaft. Kern der Zentrale: Zentrale.verdeckteAufstellungen.
+     * @return array{0:array<string,true>,1:array<string,true>} [verdeckte Ereignis-IDs, aufgedeckte Begegnungen]
      */
     private function verdeckteAufstellungen(string $turnierId, ?string $bezug): array
     {
         $zeilen = $this->db->alle(
-            "SELECT event_id, daten, autor_bezug FROM ereignisse WHERE turnier_id = ? AND art = 'mannschaft.aufgestellt' ORDER BY seq",
+            "SELECT event_id, daten FROM ereignisse WHERE turnier_id = ? AND art = 'mannschaft.aufgestellt' ORDER BY seq",
             [$turnierId]
         );
-        $liste = array_map(static fn(array $z): array => ['id' => (string)$z['event_id'], 'daten' => json_decode((string)$z['daten'], true), 'bezug' => $z['autor_bezug'] === null ? null : (string)$z['autor_bezug']], $zeilen);
-        return self::verdeckteAus($liste, $bezug);
+        if ($zeilen === []) {
+            return [[], []];
+        }
+        $meine = [];
+        if ($bezug !== null) {
+            foreach ($this->mannschaftenLaut($turnierId) as $schluessel => $team) {
+                if (in_array($bezug, $team['spieler'], true)) {
+                    $meine[$schluessel] = true;
+                }
+            }
+        }
+        $liste = array_map(static fn(array $z): array => ['id' => (string)$z['event_id'], 'daten' => json_decode((string)$z['daten'], true)], $zeilen);
+        return self::verdeckteAus($liste, $meine);
     }
 
-    /** @param list<array{id:string,daten:mixed,bezug:?string}> $liste */
-    public static function verdeckteAus(array $liste, ?string $bezug): array
+    /**
+     * @param list<array{id:string,daten:mixed}> $liste
+     * @param array<string,true> $meine "<konkurrenz>|<mannschaft>" der eigenen Mannschaften
+     * @return array{0:array<string,true>,1:array<string,true>}
+     */
+    public static function verdeckteAus(array $liste, array $meine): array
     {
-        $teams = [];
+        $nennt = []; // "<konkurrenz>|<spiel>" → mannschaft → gegner → true
+        $teile = [];
         foreach ($liste as $e) {
             $d = is_array($e['daten']) ? $e['daten'] : [];
-            if (is_string($d['konkurrenz'] ?? null) && is_string($d['spiel'] ?? null) && is_string($d['mannschaft'] ?? null)) {
-                $teams[$d['konkurrenz'] . '|' . $d['spiel']][$d['mannschaft']] = true;
+            $ok = is_string($d['konkurrenz'] ?? null) && is_string($d['spiel'] ?? null) && is_string($d['mannschaft'] ?? null) && is_string($d['gegner'] ?? null);
+            $teile[] = $ok ? [$e['id'], $d['konkurrenz'] . '|' . $d['spiel'], $d['konkurrenz'], $d['mannschaft'], $d['gegner']] : [$e['id'], null, null, null, null];
+            if ($ok) {
+                $nennt[$d['konkurrenz'] . '|' . $d['spiel']][$d['mannschaft']][$d['gegner']] = true;
             }
         }
-        $weg = [];
-        foreach ($liste as $e) {
-            $d = is_array($e['daten']) ? $e['daten'] : [];
-            $schluessel = (string)($d['konkurrenz'] ?? '') . '|' . (string)($d['spiel'] ?? '');
-            $offen = count($teams[$schluessel] ?? []) >= 2;
-            $eigen = $bezug !== null && $e['bezug'] === $bezug;
-            if (!$offen && !$eigen) {
-                $weg[$e['id']] = true;
+        $verdeckt = [];
+        $offen = [];
+        foreach ($teile as [$id, $schluessel, $k, $m, $g]) {
+            $auf = $schluessel !== null && isset($nennt[$schluessel][$g][$m]);
+            if ($auf) {
+                $offen[$schluessel] = true;
+            } elseif ($schluessel === null || !isset($meine["$k|$m"])) {
+                $verdeckt[$id] = true;
             }
         }
-        return $weg;
+        return [$verdeckt, $offen];
     }
 
     /** Kurzer Fingerabdruck der Menge entfernter Spieler (shared/protokoll.ts AbholenAntwort.filter) */
@@ -1218,11 +1321,14 @@ final class Api
                         : 'Mit dieser Kennung dürfen nur Ergebnisse eingetragen werden.'];
                     continue;
                 }
-                // Aufstellung von einer Spielerkennung ohne Helferrecht: nur die Mannschaftsführung der genannten Mannschaft
-                if ($rolle === 'spieler' && !$helfer && is_array($e) && ($e['art'] ?? null) === 'mannschaft.aufgestellt'
-                    && !$this->istMannschaftsfuehrung((string)$t['id'], $e['daten'] ?? null, (string)$bezug)) {
-                    $abgelehnt[] = ['id' => $eid, 'fehler' => 'keine_berechtigung', 'meldung' => 'Die Aufstellung gibt die Mannschaftsführung ab.'];
-                    continue;
+                // Aufstellung von Helfern und Spielern: Inhalt wie die Engine prüfen (sonst ließe sich die verdeckte
+                // Aufstellung des Gegners mit einer ungültigen eigenen aufdecken)
+                if ($rolle !== 'leitung' && is_array($e) && ($e['art'] ?? null) === 'mannschaft.aufgestellt') {
+                    $f = $this->aufstellungPruefen((string)$t['id'], $e['daten'] ?? null, $rolle === 'spieler', (bool)$helfer, (string)$bezug);
+                    if ($f !== null) {
+                        $abgelehnt[] = ['id' => $eid, 'fehler' => 'ungueltig', 'meldung' => $f];
+                        continue;
+                    }
                 }
                 try {
                     $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug, $helfer, $aufgaben);

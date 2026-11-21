@@ -745,7 +745,8 @@ final class Anmeldung
             'angaben' => $angaben,
             'bank' => $bank,
             'ort' => is_string($r['ort'] ?? null) ? mb_substr(trim($r['ort']), 0, 120) : '',
-            'hinweisMail' => ($r['hinweisMail'] ?? true) !== false,
+            // Fehlt das Feld (ältere App), bleibt die bisherige Einstellung
+            'hinweisMail' => array_key_exists('hinweisMail', $r) ? $r['hinweisMail'] !== false : ((self::einst($t)['hinweisMail'] ?? true) !== false),
         ];
         // Freigabe zuletzt prüfen (erst die Eingaben, damit Fehler darin sofort auffallen)
         $frei = $this->api->anmeldungFreigabe((int)$t['konto_id']);

@@ -116,6 +116,8 @@ export function turnierVergessen(id: string) {
     'tt.turniere',
     gemerkteTurniere().filter((t) => t.id !== id),
   );
+  // Gerätedaten zum Turnier mit vergessen (Hinweis auf Anmeldungen, Mitteilungen)
+  for (const k of [`tt.anmgesehen.${id}`, `tt.anmhinweis.${id}`, `tt.mitteilung.${id}`]) schreiben(k, null);
 }
 
 /** Kleiner Zwischenspeicher für größere Daten (Spielerpool) */
