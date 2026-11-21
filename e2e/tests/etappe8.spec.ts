@@ -45,7 +45,7 @@ test('Rückgängig, Nachmelden, Zeitplan, Vorplanen und Ziehen auf Tische', asyn
   page.on('pageerror', (e) => fehler.push(e.message));
   await einzelgeraet(page, 'Planpokal');
   await angabenSetzen(page, { tische: '2' });
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, n] of [
     ['Anna', 'Alpha'],
     ['Ben', 'Beta'],
@@ -93,7 +93,7 @@ test('Rückgängig, Nachmelden, Zeitplan, Vorplanen und Ziehen auf Tische', asyn
   await nach.getByLabel('Wer?').selectOption({ label: 'Emil Epsilon' });
   await nach.getByTestId('nachmelden-knopf').click();
   await expect(page.getByText('Emil Epsilon ist nachgemeldet.')).toBeVisible();
-  await expect(page.getByText('Alle Spieler des Turniers sind schon gemeldet.')).toBeVisible();
+  await expect(page.getByText('Alle Teilnehmer des Turniers sind hier schon gemeldet.')).toBeVisible();
   await layoutPruefen(page, konk);
   await bild(page, '51-nachmelden');
   await page.getByRole('link', { name: 'Spiele', exact: true }).click();

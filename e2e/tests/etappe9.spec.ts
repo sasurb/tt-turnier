@@ -69,7 +69,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await expect(page.getByText('Kasse und Quittung gespeichert.')).toBeVisible();
 
   // Online-Anmeldung öffnen
-  await page.getByRole('link', { name: /^Spieler/ }).click();
+  await page.getByRole('link', { name: /^Teilnehmer/ }).click();
   await page.getByTestId('abschnitt-anmeldungen').locator('summary').first().click();
   await page.getByTestId('anmeldung-oeffnen').click();
   await expect(page.getByTestId('anmeldung-status')).toHaveText('Anmeldung geöffnet');

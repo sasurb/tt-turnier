@@ -92,10 +92,11 @@ export const HANDBUCH: HandbuchKapitel[] = [
         titel: 'Schritt für Schritt',
         text: [
           '1. Angemeldet „Neues Turnier“ wählen, Name und Datum eintragen.',
-          '2. Unter „Einstellungen“ festlegen, welche Angaben du führst (TTR, Klasse, Geschlecht, Jahrgang), wie viele Tische es gibt und was Spieler und Zuschauer sehen.',
-          '3. Unter „Spieler“ alle Teilnehmenden anlegen – aus dem Spielerpool, per CSV-Import, über die Online-Anmeldung oder von Hand.',
-          '4. Unter „Konkurrenzen“ je Konkurrenz Modus, Gewinnsätze und Wertung wählen und die Spieler melden.',
-          '5. Auslosen, Vorschau prüfen, starten.',
+          '2. Unter „Konkurrenzen“ ganz oben festlegen, welche Angaben du führst (TTR, Klasse, Geschlecht, Jahrgang) und wie viele Tische es gibt; darunter die Konkurrenzen mit Modus, Gewinnsätzen und Wertung anlegen.',
+          '3. Unter „Teilnehmer“ alle Teilnehmenden anlegen – aus dem Spielerpool, über die Online-Anmeldung oder von Hand. Mit „Gleich melden für“ landen sie direkt in den angehakten Konkurrenzen.',
+          '4. Darunter, unter „Teilnehmer je Konkurrenz“, für jede Konkurrenz festlegen, wer mitspielt – nicht jeder spielt überall mit. Im Doppel bildest du dort die Paare, bei Mannschaften die Teams.',
+          '5. Unter „Konkurrenzen“ auslosen, Vorschau prüfen, starten. Was Spieler und Zuschauer sehen, stellst du unter „Einstellungen“ ein.',
+          '6. Deinen Spielerpool für alle Turniere pflegst du im Reiter „Spielerpool“ (auch CSV-Import und -Export).',
         ],
       },
       {

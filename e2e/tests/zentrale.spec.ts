@@ -46,7 +46,7 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
     ['Anna', 'Alpha'],
     ['Ben', 'Beta'],
   ] as const) {
-    if (v === 'Anna') await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+    if (v === 'Anna') await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
     await page.getByLabel('Vorname').fill(v);
     await page.getByLabel('Nachname').fill(n);
     await page.getByLabel('Verein', { exact: true }).fill('TTC');

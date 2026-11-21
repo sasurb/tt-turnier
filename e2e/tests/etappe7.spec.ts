@@ -54,7 +54,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
 
   await angabenSetzen(page, { tische: '2' });
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, n] of [
     ['Anna', 'Alpha'],
     ['Ben', 'Beta'],
@@ -171,7 +171,7 @@ test('Einzelgerät: K.-o.-Baum, Urkunden und Endstand drucken, Live-Anzeige im z
   await page.getByLabel('Name des Turniers').fill('Vereinspokal');
   await page.getByLabel(/^Dein Name/).fill('Sascha');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const v of ['Ali', 'Bea', 'Cid', 'Dan']) {
     await page.getByLabel('Vorname').fill(v);
     await page.getByLabel('Nachname').fill(v + 'son');

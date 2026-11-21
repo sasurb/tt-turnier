@@ -46,7 +46,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
 
-  // Spieler-Rubrik: Spieler im Turnier und Online-Anmeldungen als aufklappbare Abschnitte, keine Angaben mehr dort
+  // Spieler-Rubrik: Alle Teilnehmer und Online-Anmeldungen als aufklappbare Abschnitte, keine Angaben mehr dort
   await expect(nav(page).getByRole('link', { name: 'Anmeldungen' })).toHaveCount(0);
   await expect(page.getByTestId('abschnitt-spieler')).toBeVisible();
   await expect(page.getByTestId('abschnitt-anmeldungen')).toBeVisible();
@@ -64,9 +64,9 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await bild(page, 'e11-konkurrenzen-angaben');
 
   // Spielerformular: nach dem Anlegen leer, mit Häkchen bleibt der Verein stehen, Vereine als Vorschlag
-  await nav(page).getByRole('link', { name: /^Spieler/ }).click();
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
-  await page.getByLabel('Gleich melden für').selectOption({ label: 'Herren' });
+  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
+  await page.getByRole('group', { name: /Gleich melden für/ }).getByRole('checkbox', { name: 'Herren' }).check();
   await page.getByLabel(/Weitere Spieler vom gleichen Verein/).check();
   const vorname = page.getByLabel('Vorname');
   const verein = page.getByLabel('Verein', { exact: true });
@@ -94,7 +94,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   const liste = await verein.getAttribute('list');
   const vorschlaege = await page.locator(`datalist#${liste} option`).evaluateAll((o) => o.map((x) => (x as HTMLOptionElement).value));
   expect(vorschlaege).toEqual(expect.arrayContaining(['TTC Nord', 'TSV Süd']));
-  await expect(page.getByRole('heading', { name: /Spieler im Turnier \(3\)/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Alle Teilnehmer \(3\)/ })).toBeVisible();
   await layoutPruefen(page, page.locator('main'));
   await bild(page, 'e11-spieler-rubrik');
 
@@ -132,7 +132,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await expect(p2.getByTestId('kasse-liste').locator('li', { hasText: 'Anna Alpha' }).getByTestId('checkin')).toHaveText('✓ Da');
   await ctx2.close();
 
-  // Alte Adresse …/anmeldung landet bei „Spieler“
+  // Alte Adressen …/anmeldung und …/spieler landen bei „Teilnehmer“
   await page.goto(`./#/t/${tid}/anmeldung`);
   await expect(page.getByTestId('abschnitt-anmeldungen')).toBeVisible();
 
@@ -160,7 +160,7 @@ test('Mannschaftsturnier: Spielsystem, Mannschaften melden, Aufstellung, Teilspi
   await page.getByLabel('Name des Turniers').fill('Mannschaftspokal');
   await page.getByLabel(/^Dein Name/).fill('Sascha');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, n, ve] of [
     ['Anna', 'Alpha', 'TTC Nord'],
     ['Ben', 'Beta', 'TTC Nord'],

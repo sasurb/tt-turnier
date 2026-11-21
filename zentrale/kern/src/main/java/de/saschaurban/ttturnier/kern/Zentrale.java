@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.13.0";
+    public static final String VERSION = "0.14.0";
     /** Platzhalter für Namen entfernter Spieler (wie PHP Api::ENTFERNT_NAME) */
     static final String ENTFERNT_NAME = "Entfernt";
     public static final int PROTOKOLL = 1;

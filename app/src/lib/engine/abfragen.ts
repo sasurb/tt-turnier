@@ -20,7 +20,7 @@ import {
 import { gruppenTabelle, type Tabelle } from './wertung';
 import { istRundenModus, rundenPlatzierungen } from './runden';
 import { mischen, zufallAus } from './zufall';
-import { alleOffenenAufgerufenen, erstePhase, spielerVon, teilnehmerVon, zurueckgezogen, type TurnierZustand } from './zustand';
+import { alleOffenenAufgerufenen, begonnen, erstePhase, spielerVon, teilnehmerVon, zurueckgezogen, type TurnierZustand } from './zustand';
 
 /** Abfragen für die Oberfläche (rechnen nur, ändern nichts). */
 
@@ -47,6 +47,20 @@ export function nameLang(z: TurnierZustand, id: string | null, k?: KonkurrenzZus
  * Daten je Teilnehmer für Setzung und Auslosung. Einzel: der Spieler. Doppel: TTR = Summe beider
  * (fehlt einer, kein TTR), Verein = beide Vereine (gleicher Verein → ein Name), Klasse nur bei Gleichheit.
  */
+/** Konkurrenzen, in die man Spieler direkt melden kann: Einzel, die noch nicht begonnen haben (Reihenfolge wie angelegt) */
+export function meldbareEinzel(z: TurnierZustand): string[] {
+  return z.konkurrenzReihe.filter((id) => z.konkurrenzen[id]!.einst.art === 'einzel' && !begonnen(z.konkurrenzen[id]!));
+}
+
+/** In welchen Konkurrenzen spielt ein Spieler mit (allein, im Paar oder in einer Mannschaft)? Zurückgezogene zählen nicht. */
+export function teilnahmen(z: TurnierZustand, spieler: string): string[] {
+  return z.konkurrenzReihe.filter((id) => {
+    const k = z.konkurrenzen[id]!;
+    const t = teilnehmerVon(k, spieler);
+    return !!t && !zurueckgezogen(k).includes(t);
+  });
+}
+
 export function teilnehmerDaten(z: TurnierZustand, k: KonkurrenzZustand): Record<string, TurnierSpieler> {
   if (k.einst.art === 'einzel') return z.spieler;
   const aus: Record<string, TurnierSpieler> = {};

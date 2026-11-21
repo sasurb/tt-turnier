@@ -60,14 +60,14 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   // Turnierseite: ohne Spieler öffnet „Spieler“
   await expect(page.getByRole('heading', { name: `Herbstpokal ${geraet}` })).toBeVisible();
   await expect(page.getByText('Verbunden')).toBeVisible();
-  await expect(page.getByRole('heading', { name: /Spieler im Turnier/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Alle Teilnehmer/ })).toBeVisible();
   const spieler = [
     ['Anna', 'Alpha', 'TTC Nord', '1650'],
     ['Ben', 'Beta', 'TSV Süd', '1500'],
     ['Cem', 'Gamma', 'TTC Nord', '1420'],
     ['Dora', 'Delta', 'SV Ost', '1300'],
   ];
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, n, ve, ttr] of spieler) {
     await page.getByLabel('Vorname').fill(v!);
     await page.getByLabel('Nachname').fill(n!);
@@ -76,7 +76,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${n} ✓`)).toBeVisible();
   }
-  await expect(page.getByRole('heading', { name: /Spieler im Turnier \(4\)/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Alle Teilnehmer \(4\)/ })).toBeVisible();
   await bild(page, '05-spieler');
 
   // Konkurrenz: Jeder gegen jeden, alle melden, auslosen, starten
@@ -327,7 +327,7 @@ test('Demo ohne Server: Turnier nur auf diesem Gerät, Sicherung herunterladen u
   await page.getByLabel(/^Dein Name/).fill('Sascha');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByRole('heading', { name: 'Hallenturnier offline' })).toBeVisible();
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   await page.getByLabel('Vorname').fill('Lotte');
   await page.getByLabel('Nachname').fill('Lokal');
   await page.getByRole('button', { name: 'Hinzufügen' }).click();
@@ -348,7 +348,7 @@ test('Demo ohne Server: Turnier nur auf diesem Gerät, Sicherung herunterladen u
   await bild(page, '14-wiederherstellen');
   await page.getByRole('button', { name: 'Wiederherstellen' }).click();
   await expect(page.getByText(/Turnier wiederhergestellt: 2 Einträge übernommen/)).toBeVisible();
-  await page.getByRole('link', { name: /^Spieler/ }).click();
+  await page.getByRole('link', { name: /^Teilnehmer/ }).click();
   await expect(page.getByText('Lotte Lokal')).toBeVisible();
   await page.getByRole('link', { name: 'Einstellungen' }).click();
   await page.locator('summary', { hasText: 'Protokoll' }).click();
@@ -362,7 +362,7 @@ test('Einzelgerät: Gruppen + K.-o. mit Ergebnissen der Leitung, Stände verdeck
   await page.getByLabel('Name des Turniers').fill('Vereinsmeisterschaft');
   await page.getByLabel(/^Dein Name/).fill('Sascha');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, ttr] of [
     ['Ali', '1800'],
     ['Bea', '1700'],
@@ -437,7 +437,7 @@ test('Einzelgerät: Konkurrenzen nach Leistungsklassen, klassenreine Gruppen', a
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   // Leistungsklasse als Spielerangabe einschalten
   await angabenSetzen(page, { angaben: ['Leistungsklasse'] });
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, kl] of [
     ['Ali', 'A'],
     ['Bea', 'A'],
@@ -520,7 +520,7 @@ test('Etappe 5: Doppel mit Trostrunde, Spielaufruf an Tische mit Schiedsrichter'
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   // 2 Tische
   await angabenSetzen(page, { tische: '2' });
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const v of ['Ali', 'Bea', 'Cid', 'Dan', 'Eva', 'Fin', 'Gil', 'Hal', 'Ida']) {
     await page.getByLabel('Vorname').fill(v);
     await page.getByLabel('Nachname').fill(v + 'son');
@@ -584,7 +584,7 @@ test('Etappe 6: Schweizer System mit Vorgabe, Kaiserturnier', async ({ page }) =
   await page.getByLabel('Name des Turniers').fill('Vereinsmeisterschaft');
   await page.getByLabel(/^Dein Name/).fill('Sascha');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
-  await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, ttr] of [
     ['Ali', '1800'],
     ['Bea', '1700'],

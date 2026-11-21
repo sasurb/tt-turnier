@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { ALLE_AUFGABEN, ART, HELFER_STANDARD, type Aufgabe, type Rolle, type TurnierEinstellungen as Einstellungen } from '@shared/protokoll';
   import { T } from '../texte';
   import { ersetze, linkZu } from '../router.svelte';
@@ -28,6 +28,8 @@
   import SpieleListe from './turnier/SpieleListe.svelte';
   import Tabellen from './turnier/Tabellen.svelte';
   import SpielerTab from './turnier/SpielerTab.svelte';
+  import TeilnehmerJeKonkurrenz from './turnier/TeilnehmerJeKonkurrenz.svelte';
+  import PoolVerwaltung from './PoolVerwaltung.svelte';
   import KonkurrenzenTab from './turnier/KonkurrenzenTab.svelte';
   import Zugaenge from './turnier/Zugaenge.svelte';
   import Mitmachen from './turnier/Mitmachen.svelte';
@@ -153,7 +155,7 @@
     lokal && zustand !== null && eintrag !== null && erinnerungFaellig(lokaleSicherung(id), zustand.anzahlEreignisse, ereignisse[0]?.zeit ?? eintrag.zuletzt, jetzt),
   );
 
-  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'spieler' | 'kasse' | 'konkurrenzen' | 'zugaenge' | 'drucken' | 'einstellungen';
+  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'teilnehmer' | 'kasse' | 'konkurrenzen' | 'zugaenge' | 'drucken' | 'pool' | 'einstellungen';
   /** „Tische“ erscheint, sobald eine Konkurrenz läuft */
   const mitTischen = $derived(!!zustand && Object.values(zustand.konkurrenzen).some((k) => k.gestartet.gruppen || k.gestartet.ko));
   const reiterListe = $derived<Reiter[]>(
@@ -162,11 +164,12 @@
           'spiele',
           ...(mitTischen ? ['tische' as const] : []),
           'tabellen',
-          'spieler',
+          'teilnehmer',
           'kasse',
           'konkurrenzen',
           ...(lokal ? [] : ['zugaenge' as const]),
           'drucken',
+          'pool',
           'einstellungen',
         ]
       : rolle === 'spieler'
@@ -175,6 +178,20 @@
           ? ['spiele', ...(mitTischen ? ['tische' as const] : []), 'tabellen', ...(darfAufgabe('kasse') ? ['kasse' as const] : []), 'drucken']
           : ['tabellen', 'spiele', ...(mitTischen ? ['tische' as const] : [])],
   );
+  /** Reiterleiste am Handy: aktiven Reiter in die Mitte rollen (Schatten an den Rändern zeigen „hier geht es weiter“) */
+  let reiterNav = $state<HTMLElement | null>(null);
+  $effect(() => {
+    void aktiv;
+    void reiterListe.length;
+    const n = reiterNav;
+    if (!n) return;
+    void tick().then(() => {
+      const a = n.querySelector<HTMLElement>('a.aktiv');
+      if (a && n.scrollWidth > n.clientWidth) n.scrollTo({ left: a.offsetLeft - (n.clientWidth - a.offsetWidth) / 2 });
+    });
+  });
+  /** Reiter „Spielerpool“: wer aus dem Pool spielt schon mit */
+  const poolImTurnier = $derived(new Set(zustand ? zustand.spielerReihe.map((x) => zustand!.spieler[x]!.pool).filter((x): x is string => !!x) : []));
   const aufrufIch = $derived(zustand && ich ? meinAufruf(zustand, ich) : null);
   function gegnerVon(sp: Spiel): string {
     const k = zustand!.konkurrenzen[sp.konkurrenz]!;
@@ -185,7 +202,7 @@
   const standardReiter = $derived<Reiter>(
     leitung
       ? !zustand?.spielerReihe.length
-        ? 'spieler'
+        ? 'teilnehmer'
         : !zustand.konkurrenzReihe.length
           ? 'konkurrenzen'
           : 'spiele'
@@ -201,8 +218,8 @@
   );
   /** QR-Code vom Spielzettel: #/t/<id>/spiel/<konkurrenz>/<spiel> öffnet das Spiel zum Eintragen */
   const spielLink = $derived(reiter === 'spiel' && weitere.length === 2 ? { k: weitere[0]!, s: weitere[1]! } : null);
-  /** Frühere Adresse …/anmeldung (bis 0.12 eigener Reiter): heute Teil von „Spieler“ */
-  const reiterNeu = $derived(reiter === 'anmeldung' ? 'spieler' : reiter);
+  /** Frühere Adressen …/anmeldung (bis 0.12) und …/spieler (bis 0.13): heute Reiter „Teilnehmer“ */
+  const reiterNeu = $derived(reiter === 'anmeldung' || reiter === 'spieler' ? 'teilnehmer' : reiter);
   const aktiv = $derived<Reiter>(spielLink ? (rolle === 'spieler' ? 'meine' : 'spiele') : reiterNeu && reiterListe.includes(reiterNeu as Reiter) ? (reiterNeu as Reiter) : standardReiter);
   let spielLinkGeoeffnet = '';
   $effect(() => {
@@ -457,11 +474,11 @@
       const z = zustand;
       const neu = neueAnmeldungen(id, a.anmeldungen, (x) => !!z?.spieler[x]).length;
       // Ton/Mitteilung nur, wenn während der Sitzung neue dazukommen (nicht beim Öffnen)
-      if (anmeldungBekannt >= 0 && neu > anmeldungBekannt && aktiv !== 'spieler') {
+      if (anmeldungBekannt >= 0 && neu > anmeldungBekannt && aktiv !== 'teilnehmer') {
         void benachrichtigen({ ...mitteilung, spieler: null, vibration: false }, name || T.app.titel, T.anm.neuHinweis(neu), `anmeldung-${id}`);
       }
       anmeldungBekannt = neu;
-      if (aktiv !== 'spieler') anmeldungNeu = neu;
+      if (aktiv !== 'teilnehmer') anmeldungNeu = neu;
     } catch {
       /* kein Netz – später erneut */
     }
@@ -658,10 +675,10 @@
       <button class="zweit klein" onclick={abgelehnteVerwerfen}>{T.abgelehnt.verwerfen}</button>
     </div>
   {/if}
-  {#if anmeldungNeu > 0 && aktiv !== 'spieler'}
+  {#if anmeldungNeu > 0 && aktiv !== 'teilnehmer'}
     <div class="meldung info reihe" role="status" data-testid="anmeldung-hinweis">
       <span class="wachsen">🔔 {T.anm.neuHinweis(anmeldungNeu)}</span>
-      <a class="knopf klein" href={linkZu(`t/${id}/spieler`)}>{T.anm.ansehen}</a>
+      <a class="knopf klein" href={linkZu(`t/${id}/teilnehmer`)}>{T.anm.ansehen}</a>
     </div>
   {/if}
   {#if aufrufHinweis && aktiv !== 'meine'}
@@ -701,10 +718,10 @@
     </details>
   {/if}
 
-  <nav class="reiter" aria-label="Bereiche">
+  <nav class="reiter" aria-label="Bereiche" bind:this={reiterNav}>
     {#each reiterListe as r (r)}
       <a href={linkZu(`t/${id}/${r}`)} class:aktiv={aktiv === r} aria-current={aktiv === r ? 'page' : undefined}
-        >{T.reiter[r]}{#if r === 'spieler' && anmeldungNeu > 0}<span class="zaehler" data-testid="reiter-neu" aria-label={T.anm.neuHinweis(anmeldungNeu)}>{anmeldungNeu}</span>{/if}</a
+        >{T.reiter[r]}{#if r === 'teilnehmer' && anmeldungNeu > 0}<span class="zaehler" data-testid="reiter-neu" aria-label={T.anm.neuHinweis(anmeldungNeu)}>{anmeldungNeu}</span>{/if}</a
       >
     {/each}
   </nav>
@@ -735,11 +752,16 @@
       {/if}
       <Tabellen z={zustand} {leitung} {eintragen} {oeffnen} />
       <p class="leise live-link"><a href={linkZu(`live/${id}`)} data-testid="live-link">{T.live.linkTabellen}</a></p>
-    {:else if aktiv === 'spieler'}
+    {:else if aktiv === 'teilnehmer'}
       <SpielerTab z={zustand} {eintragen} />
       {#if anmeldungMoeglich && schreibToken && leitung}
         <AnmeldungTab z={zustand} turnierId={id} token={schreibToken} {eintragen} neuGesehen={() => (anmeldungNeu = 0)} />
       {/if}
+      <TeilnehmerJeKonkurrenz z={zustand} turnierId={id} offen={weitere[0] ?? null} {eintragen} />
+    {:else if aktiv === 'pool'}
+      <h2>{T.pool.titel}</h2>
+      <p class="leise">{T.pool.textTurnier}</p>
+      <PoolVerwaltung imTurnier={poolImTurnier} />
     {:else if aktiv === 'kasse'}
       <KasseTab z={zustand} turnierId={id} {leitung} {eintragen} />
     {:else if aktiv === 'konkurrenzen'}
@@ -859,6 +881,19 @@
     background: var(--grund);
     border-bottom: 1px solid var(--linie);
     scrollbar-width: none;
+  }
+  /* Schatten am Rand, solange es in diese Richtung weitergeht (wandert mit dem Rollen, ohne Skript) */
+  .reiter {
+    background:
+      linear-gradient(to right, var(--grund) 30%, transparent) left / 40px 100% no-repeat local,
+      linear-gradient(to left, var(--grund) 30%, transparent) right / 40px 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.22), transparent) left / 16px 100% no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.22), transparent) right / 16px 100% no-repeat scroll,
+      var(--grund);
+  }
+  /* Ab Tablet-Breite alle Reiter sichtbar (umbrechen statt waagerecht rollen) */
+  @media (min-width: 700px) {
+    .reiter { flex-wrap: wrap; overflow-x: visible; background: var(--grund); }
   }
   .reiter a {
     flex: none;

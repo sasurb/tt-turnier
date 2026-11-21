@@ -452,7 +452,7 @@ public final class KernTest {
         z.setzePort(8080);
         String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
         A a = rufe(z, "GET", "info", null, null);
-        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.13.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
+        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.14.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
         a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Kassencup", "datum", "2027-02-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         String leit = a.t("token");

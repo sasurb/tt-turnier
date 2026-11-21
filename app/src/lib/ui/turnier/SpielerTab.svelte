@@ -7,6 +7,7 @@
   import { kurzId } from '../../engine/ids';
   import { spielerName, type Angabe, type SpielerDaten } from '../../engine/modell';
   import { begonnen, teilnehmerVon, type TurnierZustand } from '../../engine/zustand';
+  import { meldbareEinzel, teilnahmen } from '../../engine/abfragen';
   import { imPool, pool, poolLaden, poolSpeichern } from '../../pool.svelte';
   import { klassenLaden } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
@@ -18,7 +19,8 @@
   let bearbeite = $state<string | null>(null);
   let suche = $state('');
   let gewaehlt = $state<string[]>([]);
-  let meldenIn = $state('');
+  /** Einzel-Konkurrenzen, in die neue bzw. übernommene Spieler gleich gemeldet werden */
+  let meldenIn = $state<string[]>([]);
   let meldung = $state('');
 
   onMount(() => {
@@ -29,7 +31,8 @@
   const angabenText: Record<Angabe, string> = { ttr: T.tspieler.ttr, klasse: T.tspieler.klasse, geschlecht: T.tspieler.geschlecht, jahrgang: T.tspieler.jahrgang };
   /** Vereine aus Turnier und Pool als Vorschläge beim Anlegen */
   const vereine = $derived([...z.spielerReihe.map((id) => z.spieler[id]!.verein), ...pool.liste.map((p) => p.verein)]);
-  const offeneKonkurrenzen = $derived(z.konkurrenzReihe.filter((id) => !begonnen(z.konkurrenzen[id]!)));
+  /** Paare und Mannschaften entstehen erst in der Konkurrenz – hier nur Einzel, die noch nicht begonnen haben */
+  const offeneKonkurrenzen = $derived(meldbareEinzel(z));
   const imTurnier = $derived(new Set(z.spielerReihe.map((id) => z.spieler[id]!.pool).filter(Boolean)));
   const treffer = $derived(
     pool.liste.filter((p) => {
@@ -47,7 +50,7 @@
   }
 
   async function melden(id: string) {
-    if (meldenIn) await eintragen(ART.teilnehmerGemeldet, { konkurrenz: meldenIn, id });
+    for (const k of meldenIn) if (offeneKonkurrenzen.includes(k)) await eintragen(ART.teilnehmerGemeldet, { konkurrenz: k, id });
   }
 
   async function ausPoolUebernehmen() {
@@ -121,11 +124,12 @@
   {#if meldung}<div class="meldung ok" role="status">{meldung}</div>{/if}
 
   {#if modus && offeneKonkurrenzen.length}
-    <label for="melden-in">{T.tspieler.meldenIn}</label>
-    <select id="melden-in" bind:value={meldenIn}>
-      <option value="">–</option>
-      {#each offeneKonkurrenzen as id (id)}<option value={id}>{z.konkurrenzen[id]!.einst.name}</option>{/each}
-    </select>
+    <fieldset class="melden-in">
+      <legend>{T.tspieler.meldenIn}<Hilfe text={T.tspieler.meldenInHilfe} /></legend>
+      {#each offeneKonkurrenzen as id (id)}
+        <label class="haken"><input type="checkbox" value={id} bind:group={meldenIn} />{z.konkurrenzen[id]!.einst.name}</label>
+      {/each}
+    </fieldset>
   {/if}
 
   {#if modus === 'pool'}
@@ -172,6 +176,10 @@
                 <span class="leise">
                   {s.verein}{#each z.angaben as a (a)}{#if s[a] != null && s[a] !== ''} · {a === 'geschlecht' ? T.tspieler.geschlechter[String(s[a])] : s[a]}{/if}{/each}
                 </span>
+                {#if z.konkurrenzReihe.length}
+                  {@const t = teilnahmen(z, id)}
+                  <span class="leise teilnahmen" class:keine={!t.length} data-testid="teilnahmen">{t.length ? T.tspieler.spieltIn(t.map((k) => z.konkurrenzen[k]!.einst.name).join(', ')) : T.tspieler.spieltNirgends}</span>
+                {/if}
               </span>
               <button class="zweit klein" onclick={() => (bearbeite = id)}>{T.tspieler.bearbeiten}</button>
               {#if !spieltSchon(id)}
@@ -193,9 +201,14 @@
   .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
   .haken.aus { opacity: 0.55; }
   .pool { margin-top: 12px; }
+  .melden-in { border: 0; padding: 0; margin: 12px 0 0; }
+  .melden-in legend { font-weight: 700; display: flex; align-items: center; gap: 6px; padding: 0; }
+  .melden-in .haken { min-height: 44px; margin: 0; }
   .auswahl { list-style: none; padding: 0; margin: 8px 0; max-height: 22rem; overflow-y: auto; border: 1px solid var(--linie); border-radius: 10px; }
   .auswahl li { padding: 2px 12px; border-bottom: 1px solid var(--linie); }
   .spieler { margin-top: 12px; }
+  .teilnahmen { font-size: 0.9rem; }
+  .teilnahmen.keine { color: var(--orange); }
   .zeile { display: flex; align-items: center; gap: 8px; }
   .zeile .wachsen { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 </style>

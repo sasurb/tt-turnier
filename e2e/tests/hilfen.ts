@@ -12,5 +12,5 @@ export async function angabenSetzen(page: Page, f: { tische?: string; angaben?: 
   if (f.tische) await angaben.getByLabel('Anzahl Tische').fill(f.tische);
   await angaben.getByRole('button', { name: 'Speichern' }).click();
   await expect(angaben.getByText('Gespeichert.')).toBeVisible();
-  await page.getByRole('navigation', { name: 'Bereiche' }).getByRole('link', { name: /^Spieler/ }).click();
+  await page.getByRole('navigation', { name: 'Bereiche' }).getByRole('link', { name: /^Teilnehmer/ }).click();
 }
