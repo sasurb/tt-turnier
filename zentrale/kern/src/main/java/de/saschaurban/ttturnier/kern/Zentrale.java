@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.12.0";
+    public static final String VERSION = "0.13.0";
     /** Platzhalter für Namen entfernter Spieler (wie PHP Api::ENTFERNT_NAME) */
     static final String ENTFERNT_NAME = "Entfernt";
     public static final int PROTOKOLL = 1;
@@ -45,9 +45,9 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     private static final List<Long> TAKTE = Arrays.asList(0L, 15L, 30L, 60L, -1L);
     private static final int MAX_EMPFAENGER = 3;
     private static final String ART_ABGESCHLOSSEN = "turnier.abgeschlossen";
-    private static final List<String> ARTEN_SPIELER = Arrays.asList("spiel.ergebnis", "spiel.bestaetigt", "spiel.angefochten");
-    private static final List<String> ARTEN_HELFER = Arrays.asList("spiel.ergebnis", "spiel.aufgerufen", "spiel.aufruf_zurueck");
-    private static final List<String> ARTEN_SPIELER_HELFER = Arrays.asList("spiel.ergebnis", "spiel.bestaetigt", "spiel.angefochten", "spiel.aufgerufen", "spiel.aufruf_zurueck");
+    private static final List<String> ARTEN_SPIELER = Arrays.asList("spiel.ergebnis", "spiel.bestaetigt", "spiel.angefochten", "mannschaft.aufgestellt");
+    private static final List<String> ARTEN_HELFER = Arrays.asList("spiel.ergebnis", "spiel.aufgerufen", "spiel.aufruf_zurueck", "mannschaft.aufgestellt");
+    private static final List<String> ARTEN_SPIELER_HELFER = Arrays.asList("spiel.ergebnis", "spiel.bestaetigt", "spiel.angefochten", "spiel.aufgerufen", "spiel.aufruf_zurueck", "mannschaft.aufgestellt");
     private static final int MAX_CODES = 400;
     private static final int MAX_POOL = 3000;
     private static final int MAX_UEBERSICHT = 60000;
@@ -67,10 +67,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     static final List<String> HELFER_STANDARD = Arrays.asList("ergebnisse", "aufruf");
     private static final Map<String, List<String>> ARTEN_JE_AUFGABE = new HashMap<>();
     static {
-        ARTEN_JE_AUFGABE.put("ergebnisse", Arrays.asList("spiel.ergebnis"));
+        ARTEN_JE_AUFGABE.put("ergebnisse", Arrays.asList("spiel.ergebnis", "mannschaft.aufgestellt"));
         ARTEN_JE_AUFGABE.put("aufruf", Arrays.asList("spiel.aufgerufen", "spiel.aufruf_zurueck"));
         ARTEN_JE_AUFGABE.put("kasse", Arrays.asList("startgeld.gebucht", "startgeld.storniert", "teilnehmer.eingecheckt"));
-        ARTEN_JE_AUFGABE.put("oberschiri", Arrays.asList("spiel.ergebnis", "spiel.entschieden", "spiel.zurueckgesetzt"));
+        ARTEN_JE_AUFGABE.put("oberschiri", Arrays.asList("spiel.ergebnis", "spiel.entschieden", "spiel.zurueckgesetzt", "mannschaft.aufgestellt"));
     }
     static final List<String> NUR_VOLLE_SICHT = Arrays.asList("startgeld.gebucht", "startgeld.storniert", "teilnehmer.eingecheckt");
     private static final int MAX_KLASSEN = 40;
@@ -842,6 +842,20 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             long bis = ab;
             // Spieler und Zuschauer: Namen entfernter Spieler ersetzen (wie PHP, Etappe 10)
             Set<String> weg = ("spieler".equals(sicht) || "zuschauer".equals(sicht) || "kurz".equals(sicht)) ? entfernteSpieler(t.ereignisse) : Collections.emptySet();
+            // Mannschaften: noch nicht aufgedeckte Aufstellungen (wie PHP, ab 0.13)
+            Set<String> verdeckt = Collections.emptySet();
+            if (!"voll".equals(sicht)) {
+                String bezug = null;
+                if ("spieler".equals(sicht) || "helfer".equals(sicht)) {
+                    try {
+                        Map<String, Object> sz = sitzung(a);
+                        bezug = sz == null || sz.get("bezug") == null ? null : String.valueOf(sz.get("bezug"));
+                    } catch (ApiFehler f) {
+                        bezug = null;
+                    }
+                }
+                verdeckt = verdeckteAufstellungen(t.ereignisse, bezug);
+            }
             for (int i = start; i < t.ereignisse.size(); i++) {
                 Map<String, Object> e = t.ereignisse.get(i);
                 long seq = zahl(e.get("seq"), 0);
@@ -850,11 +864,14 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                 bis = seq;
                 // Zahlungen und Check-in nur in der vollen Sicht (wie PHP)
                 if (!"voll".equals(sicht) && NUR_VOLLE_SICHT.contains(e.get("art"))) continue;
+                if (verdeckt.contains(String.valueOf(e.get("id")))) continue;
                 Map<String, Object> m = ausgabe(e, true);
                 aus.add("voll".equals(sicht) ? m : gefiltert(m, sicht, weg));
             }
             Map<String, Object> antwort = Json.obj("ereignisse", aus, "hoechsteSeq", t.hoechsteSeq(), "mehr", mehr, "sicht", sicht, "bis", bis);
-            if (!weg.isEmpty()) antwort.put("filter", filterKennung(weg));
+            Set<String> filter = new TreeSet<>(weg);
+            for (String id : verdeckt) filter.add("aufstellung:" + id);
+            if (!filter.isEmpty()) antwort.put("filter", filterKennung(filter));
             return antwort;
         }
     }
@@ -900,6 +917,48 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         String n = nachname == null ? "" : nachname.trim();
         if (n.isEmpty()) return "";
         return n.substring(0, n.offsetByCodePoints(0, 1)).toUpperCase(Locale.GERMAN) + ".";
+    }
+
+    /** Mannschaftsführung laut letzter Meldung der Leitung (wie PHP Api::istMannschaftsfuehrung) */
+    static boolean istMannschaftsfuehrung(List<Map<String, Object>> liste, Object daten, String spieler) {
+        Map<String, Object> d = Json.alsObjekt(daten);
+        if (d == null || spieler.isEmpty()) return false;
+        String m = Json.alsText(d.get("mannschaft"));
+        String k = Json.alsText(d.get("konkurrenz"));
+        String spiel = Json.alsText(d.get("spiel"));
+        if (m == null || k == null || spiel == null || !m.matches("^m-[A-Za-z0-9-]{4,38}$")) return false;
+        if (spiel.startsWith("g") && !spiel.contains(m)) return false;
+        for (int i = liste.size() - 1; i >= 0; i--) {
+            Map<String, Object> e = liste.get(i);
+            if (!"mannschaft.gemeldet".equals(e.get("art")) || !leitungAutor(e)) continue;
+            Map<String, Object> x = Json.alsObjekt(e.get("daten"));
+            if (x != null && m.equals(x.get("id")) && k.equals(x.get("konkurrenz"))) return spieler.equals(x.get("fuehrer"));
+        }
+        return false;
+    }
+
+    /** Aufstellungen, die noch verdeckt sind: bis zwei Mannschaften derselben Begegnung abgegeben haben (wie PHP) */
+    static Set<String> verdeckteAufstellungen(List<Map<String, Object>> liste, String bezug) {
+        Map<String, Set<String>> teams = new HashMap<>();
+        List<Map<String, Object>> auf = new ArrayList<>();
+        for (Map<String, Object> e : liste) {
+            if (!"mannschaft.aufgestellt".equals(e.get("art"))) continue;
+            auf.add(e);
+            Map<String, Object> d = Json.alsObjekt(e.get("daten"));
+            if (d == null || Json.alsText(d.get("konkurrenz")) == null || Json.alsText(d.get("spiel")) == null || Json.alsText(d.get("mannschaft")) == null) continue;
+            teams.computeIfAbsent(d.get("konkurrenz") + "|" + d.get("spiel"), x -> new HashSet<>()).add((String) d.get("mannschaft"));
+        }
+        Set<String> weg = new TreeSet<>();
+        for (Map<String, Object> e : auf) {
+            Map<String, Object> d = Json.alsObjekt(e.get("daten"));
+            String schluessel = d == null ? "|" : d.get("konkurrenz") + "|" + d.get("spiel");
+            boolean offen = teams.getOrDefault(schluessel, Collections.emptySet()).size() >= 2;
+            Map<String, Object> au = Json.alsObjekt(e.get("autor"));
+            Object von = au == null ? null : au.get("spieler");
+            boolean eigen = bezug != null && bezug.equals(von);
+            if (!offen && !eigen) weg.add(String.valueOf(e.get("id")));
+        }
+        return weg;
     }
 
     /** Fingerabdruck der Menge entfernter Spieler (wie PHP Api::filterKennung) */
@@ -1082,6 +1141,17 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                 abgelehnt.add(Json.obj("id", eid, "fehler", "keine_berechtigung", "meldung",
                     "helfer".equals(rolle) ? "Diese Aufgabe hat deine Helferkennung nicht." : "Mit dieser Kennung dürfen nur Ergebnisse eingetragen werden."));
                 continue;
+            }
+            // Aufstellung einer Spielerkennung ohne Helferrecht: nur die Mannschaftsführung (wie PHP)
+            if ("spieler".equals(rolle) && !wahr(s.get("helfer")) && "mannschaft.aufgestellt".equals(roh.get("art"))) {
+                boolean ok;
+                synchronized (this) {
+                    ok = istMannschaftsfuehrung(t.ereignisse, roh.get("daten"), s.get("bezug") == null ? "" : String.valueOf(s.get("bezug")));
+                }
+                if (!ok) {
+                    abgelehnt.add(Json.obj("id", eid, "fehler", "keine_berechtigung", "meldung", "Die Aufstellung gibt die Mannschaftsführung ab."));
+                    continue;
+                }
             }
             try {
                 geprueft.add(ereignisPruefen(o));

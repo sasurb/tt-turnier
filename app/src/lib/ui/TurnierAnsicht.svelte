@@ -32,6 +32,7 @@
   import Zugaenge from './turnier/Zugaenge.svelte';
   import Mitmachen from './turnier/Mitmachen.svelte';
   import ErgebnisDialog from './turnier/ErgebnisDialog.svelte';
+  import BegegnungDialog from './turnier/BegegnungDialog.svelte';
   import QrCode from './turnier/QrCode.svelte';
   import Tische from './turnier/Tische.svelte';
   import DruckExport from './turnier/DruckExport.svelte';
@@ -822,7 +823,11 @@
     {/if}
 
     {#if offenesSpiel}
-      <ErgebnisDialog z={zustand} k={offenesSpiel.k} spiel={offenesSpiel.s} {rolle} {ich} helfer={rolle === 'spieler' && !!eintrag?.helfer} {aufgaben} {eintragen} schliessen={() => (offen = null)} />
+      {#if offenesSpiel.k.einst.art === 'mannschaft'}
+        <BegegnungDialog z={zustand} k={offenesSpiel.k} spiel={offenesSpiel.s} turnierId={id} {rolle} {ich} helfer={rolle === 'spieler' && !!eintrag?.helfer} {aufgaben} {eintragen} schliessen={() => (offen = null)} />
+      {:else}
+        <ErgebnisDialog z={zustand} k={offenesSpiel.k} spiel={offenesSpiel.s} {rolle} {ich} helfer={rolle === 'spieler' && !!eintrag?.helfer} {aufgaben} {eintragen} schliessen={() => (offen = null)} />
+      {/if}
     {/if}
   {/if}
   {#if aktion || (verlaufFehler && aktiv !== 'einstellungen')}

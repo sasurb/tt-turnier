@@ -51,10 +51,10 @@ export const ALLE_AUFGABEN: readonly Aufgabe[] = ['ergebnisse', 'aufruf', 'kasse
 export const HELFER_STANDARD: readonly Aufgabe[] = ['ergebnisse', 'aufruf'];
 /** Ereignis-Arten je Aufgabe (Server-Whitelist und Prüfung in der Engine) */
 export const ARTEN_JE_AUFGABE: Record<Aufgabe, readonly string[]> = {
-  ergebnisse: ['spiel.ergebnis'],
+  ergebnisse: ['spiel.ergebnis', 'mannschaft.aufgestellt'],
   aufruf: ['spiel.aufgerufen', 'spiel.aufruf_zurueck'],
   kasse: ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'],
-  oberschiri: ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt'],
+  oberschiri: ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt', 'mannschaft.aufgestellt'],
 };
 /**
  * Diese Arten liefern die Server nur in der vollen Sicht (Leitung, Helfer): Zahlungen und Anwesenheit
@@ -435,8 +435,8 @@ export const MAX_CODES_JE_TURNIER = 400;
  * Eine Spielerkennung mit Helferrecht darf beides. Ab 0.11 richtet sich eine Helferkennung nach ihren
  * Aufgaben (ARTEN_JE_AUFGABE); ARTEN_HELFER entspricht HELFER_STANDARD.
  */
-export const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'] as const;
-export const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf_zurueck'] as const;
+export const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten', 'mannschaft.aufgestellt'] as const;
+export const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf_zurueck', 'mannschaft.aufgestellt'] as const;
 
 /* ---------- Einstellungen des Kontos (ab 0.6) ---------- */
 /** GET konto.einstellungen / POST konto.einstellungen – eigenes Konto */
@@ -571,6 +571,16 @@ export const ART = {
   teilnehmerGemeldet: 'teilnehmer.gemeldet',
   /** Meldung eines Paares zu einer Doppel-/Mixed-Konkurrenz (Daten: { konkurrenz, id, spieler: [a, b] }) */
   paarGemeldet: 'paar.gemeldet',
+  /** Mannschaft melden oder ändern (nur Leitung): { konkurrenz, id: 'm-…', name, verein, spieler: [IDs], fuehrer } */
+  mannschaftGemeldet: 'mannschaft.gemeldet',
+  /**
+   * Aufstellung einer Mannschaft für eine Begegnung: { konkurrenz, spiel, mannschaft, einzel: [ID|null], doppel: [[ID, ID]|null] }.
+   * Leitung, Helfer (Ergebnisse) und die Mannschaftsführung. Bis beide abgegeben haben, liefern die Server sie nur
+   * Leitung und Verfasser (Api::gefiltert).
+   */
+  mannschaftAufgestellt: 'mannschaft.aufgestellt',
+  /** Losentscheid bei völligem Gleichstand einer K.-o.-Begegnung (nur Leitung): { konkurrenz, spiel, sieger } */
+  mannschaftLos: 'mannschaft.los',
   /** Vor dem Start: Meldung streichen. Nach dem Start: Rückzug. */
   teilnehmerAbgemeldet: 'teilnehmer.abgemeldet',
   /** Manuelle Setzliste */

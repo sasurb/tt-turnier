@@ -1,5 +1,6 @@
 import { anzahlGruppen, gruppenGroessen, naechsteZweierpotenz } from './auslosung';
 import { erwarteteSaetze } from './ergebnis';
+import { bisSiege, systemVon } from './mannschaft';
 import { fruehestensUm, tische as tischListe } from './abfragen';
 import { festeSaetzeVon, mitKo, uhrzeitMs, type BestOf, type KonkurrenzZustand, type Spiel } from './modell';
 import { rundenplan } from './rundenplan';
@@ -100,7 +101,14 @@ export function gelernteSatzMinuten(z: TurnierZustand): number | null {
 }
 
 export function spielDauerMin(k: KonkurrenzZustand, satzMinuten: number): number {
-  return EINSPIELEN_MIN + erwarteteSaetze(k.einst.bestOf as BestOf, festeSaetzeVon(k.einst)) * satzMinuten;
+  const satz = erwarteteSaetze(k.einst.bestOf as BestOf, festeSaetzeVon(k.einst)) * satzMinuten;
+  if (k.einst.art === 'mannschaft') {
+    // Begegnung an einem Tisch: im Mittel zwischen „entschieden“ und „alle Spiele“
+    const sys = systemVon(k.einst);
+    const teile = k.einst.mannschaft?.durchspielen ? sys.folge.length : Math.round((bisSiege(sys) + sys.folge.length) / 2);
+    return EINSPIELEN_MIN + teile * satz;
+  }
+  return EINSPIELEN_MIN + satz;
 }
 
 /** Spiele je K.-o.-Runde bei q Teilnehmern (Freilose in Runde 1 abgezogen) */

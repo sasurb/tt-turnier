@@ -49,7 +49,7 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
     if (v === 'Anna') await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
     await page.getByLabel('Vorname').fill(v);
     await page.getByLabel('Nachname').fill(n);
-    await page.getByLabel('Verein').fill('TTC');
+    await page.getByLabel('Verein', { exact: true }).fill('TTC');
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${n} ✓`)).toBeVisible();
   }

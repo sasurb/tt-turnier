@@ -11,10 +11,11 @@ import { begonnen, teilnehmerVon, type TurnierZustand } from './zustand';
 /** Konkurrenzen, wie die Anmeldeseite sie anbietet (aus dem aktuellen Turnier) */
 export function anmeldeKonkurrenzen(z: TurnierZustand, auswahl: string[]): AnmeldungKonkurrenz[] {
   return z.konkurrenzReihe
-    .filter((id) => auswahl.includes(id))
+    // Mannschaften meldet die Leitung von Hand (keine Online-Anmeldung)
+    .filter((id) => auswahl.includes(id) && z.konkurrenzen[id]!.einst.art !== 'mannschaft')
     .map((id) => {
       const k = z.konkurrenzen[id]!;
-      return { id, name: k.einst.name, art: k.einst.art, max: k.einst.maxTeilnehmer, startgeld: k.einst.startgeld };
+      return { id, name: k.einst.name, art: k.einst.art as AnmeldungKonkurrenz['art'], max: k.einst.maxTeilnehmer, startgeld: k.einst.startgeld };
     });
 }
 

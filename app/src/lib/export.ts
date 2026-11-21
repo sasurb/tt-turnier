@@ -33,7 +33,7 @@ export function teilnehmerCsv(z: TurnierZustand): string {
     const s = z.spieler[id]!;
     const konk = z.konkurrenzReihe.filter((kid) => {
       const k = z.konkurrenzen[kid]!;
-      return k.meldungen.some((m) => m === id || k.paare[m]?.spieler.includes(id));
+      return k.meldungen.some((m) => m === id || k.paare[m]?.spieler.includes(id) || k.mannschaften?.[m]?.spieler.includes(id));
     });
     return [
       s.vorname,

@@ -1,7 +1,7 @@
 # Erweiterungen: Mannschaftsturniere und click-TT
 
-Stand 16.11.2026 (Version 0.12). Mannschaftsturniere folgen in Etappe 11, click-TT bleibt zurückgestellt.
-Beides lässt sich ohne Umbau ergänzen. Dieses Dokument beschreibt, wo es andockt.
+Stand 21.11.2026 (Version 0.13). Mannschaftsturniere sind seit Etappe 11 umgesetzt (Abschnitt unten beschreibt den
+umgesetzten Stand), click-TT bleibt zurückgestellt und lässt sich ohne Umbau ergänzen.
 
 ## Grundsätze, die beides möglich machen
 
@@ -16,7 +16,20 @@ Beides lässt sich ohne Umbau ergänzen. Dieses Dokument beschreibt, wo es andoc
   Whitelists (`ARTEN_SPIELER`, `ARTEN_JE_AUFGABE`) und in die Datenschutz-Filter (`Api::gefiltert`,
   `Zentrale.gefiltert`).
 
-## Mannschaftsturniere (Etappe 11)
+## Mannschaftsturniere (umgesetzt in Etappe 11, 0.13)
+
+Umsetzung: `app/src/lib/engine/mannschaft.ts` (Spielsysteme, Teilspiele, Auswertung), `zustand.ts` (Ereignisse
+`mannschaft.gemeldet`, `mannschaft.aufgestellt`, `mannschaft.los`, Teilspiel-Ergebnisse mit Spiel-ID `<Begegnung>~<n>`),
+`wertung.ts` (Mannschaftstabelle), Oberfläche `BegegnungDialog.svelte`, `MannschaftenMeldung.svelte`, Spielbericht in
+`DruckAnsicht.svelte`. Abweichungen vom Entwurf: Die Aufstellung nennt die Mannschaft (`mannschaft`) statt der Seite;
+Aufstellungen speichert die Engine je Mannschafts-ID. Die Mannschaftsführung ist das Feld `fuehrer` in
+`mannschaft.gemeldet` (keine eigene Kennung). Verdeckte Aufstellungen filtern die Server (`Api::verdeckteAufstellungen`,
+`Zentrale.verdeckteAufstellungen`); Spielerkennungen ohne Helferrecht dürfen nur für die eigene Mannschaft aufstellen
+(`istMannschaftsfuehrung`). Spielfolgen nach DTTB-WO E 6 (Stand 01.06.2024): Sechser-Paarkreuz, Bundessystem,
+Werner-Scheffler, modifiziertes Swaythling, Corbillon; dazu Swaythling-Cup (9 Einzel), Olympisches System (ITTF) und
+eigene Folgen. Braunschweiger System fehlt (Varianten je nach Mannschaftsstärke).
+
+### Entwurf (Etappe 10)
 
 ### Datenmodell
 

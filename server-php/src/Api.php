@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.12.0';
+    public const VERSION = '0.13.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_JE_TURNIER = 50000;
@@ -44,17 +44,17 @@ final class Api
     private const SICHERUNG_MAX_EMPFAENGER = 3;
     private const ART_ABGESCHLOSSEN = 'turnier.abgeschlossen';
     /** shared/protokoll.ts ARTEN_SPIELER / ARTEN_HELFER */
-    private const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten'];
-    private const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf_zurueck'];
+    private const ARTEN_SPIELER = ['spiel.ergebnis', 'spiel.bestaetigt', 'spiel.angefochten', 'mannschaft.aufgestellt'];
+    private const ARTEN_HELFER = ['spiel.ergebnis', 'spiel.aufgerufen', 'spiel.aufruf_zurueck', 'mannschaft.aufgestellt'];
     private const MAX_CODES = 400;
     /** shared/protokoll.ts ALLE_AUFGABEN, HELFER_STANDARD, ARTEN_JE_AUFGABE, NUR_VOLLE_SICHT */
     private const AUFGABEN = ['ergebnisse', 'aufruf', 'kasse', 'oberschiri'];
     private const HELFER_STANDARD = ['ergebnisse', 'aufruf'];
     private const ARTEN_JE_AUFGABE = [
-        'ergebnisse' => ['spiel.ergebnis'],
+        'ergebnisse' => ['spiel.ergebnis', 'mannschaft.aufgestellt'],
         'aufruf' => ['spiel.aufgerufen', 'spiel.aufruf_zurueck'],
         'kasse' => ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'],
-        'oberschiri' => ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt'],
+        'oberschiri' => ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt', 'mannschaft.aufgestellt'],
     ];
     private const NUR_VOLLE_SICHT = ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'];
     private const MAX_POOL = 3000;
@@ -873,11 +873,26 @@ final class Api
         // Spieler und Zuschauer: Namen entfernter Spieler werden ersetzt (Etappe 10). Ändert sich die Menge,
         // ändert sich „filter“ – die Geräte holen dann alles neu ab.
         $weg = in_array($sicht, ['spieler', 'zuschauer', 'kurz'], true) ? $this->entfernteSpieler((string)$t['id']) : [];
+        // Mannschaften: noch nicht aufgedeckte Aufstellungen (ab 0.13); gehen mit in die Filter-Kennung ein
+        $verdeckt = [];
         if ($sicht !== 'voll') {
+            $bezug = null;
+            if ($sicht === 'spieler' || $sicht === 'helfer') {
+                try {
+                    $bezug = ($this->sitzung($a) ?? [])['bezug'] ?? null;
+                } catch (ApiFehler) {
+                    $bezug = null;
+                }
+            }
+            $verdeckt = $this->verdeckteAufstellungen((string)$t['id'], $bezug === null ? null : (string)$bezug);
             $liste = array_values(array_map(
                 static fn(array $e): array => self::gefiltert($e, $sicht, $weg),
-                array_filter($liste, static fn(array $e): bool => !in_array($e['art'], self::NUR_VOLLE_SICHT, true))
+                array_filter($liste, static fn(array $e): bool => !in_array($e['art'], self::NUR_VOLLE_SICHT, true) && !isset($verdeckt[$e['id']]))
             ));
+        }
+        $filter = $weg;
+        foreach ($verdeckt as $id => $_) {
+            $filter['aufstellung:' . $id] = true;
         }
         return [
             'ereignisse' => $liste,
@@ -885,7 +900,75 @@ final class Api
             'mehr' => $mehr,
             'sicht' => $sicht,
             'bis' => $bis,
-        ] + ($weg === [] ? [] : ['filter' => self::filterKennung($weg)]);
+        ] + ($filter === [] ? [] : ['filter' => self::filterKennung($filter)]);
+    }
+
+    /**
+     * Ist dieser Spieler laut letzter Meldung der Leitung Mannschaftsführung der genannten Mannschaft? Bei
+     * Gruppenspielen (ID „g…“ mit beiden Mannschafts-IDs) muss die Mannschaft außerdem in der Begegnung spielen.
+     */
+    private function istMannschaftsfuehrung(string $turnierId, mixed $daten, string $spieler): bool
+    {
+        $d = $daten instanceof \stdClass ? get_object_vars($daten) : $daten;
+        $m = is_array($d) ? ($d['mannschaft'] ?? null) : null;
+        $k = is_array($d) ? ($d['konkurrenz'] ?? null) : null;
+        $spiel = is_array($d) ? ($d['spiel'] ?? null) : null;
+        if (!is_string($m) || !is_string($k) || !is_string($spiel) || $spieler === '' || !preg_match('/^m-[A-Za-z0-9-]{4,38}$/', $m)) {
+            return false;
+        }
+        if (str_starts_with($spiel, 'g') && !str_contains($spiel, $m)) {
+            return false;
+        }
+        $zeilen = $this->db->alle(
+            "SELECT daten FROM ereignisse WHERE turnier_id = ? AND art = 'mannschaft.gemeldet' AND autor_rolle IN ('leitung', 'admin', 'veranstalter') AND daten LIKE ? ORDER BY seq DESC",
+            [$turnierId, '%' . $m . '%']
+        );
+        foreach ($zeilen as $z) {
+            $x = json_decode((string)$z['daten'], true);
+            if (is_array($x) && ($x['id'] ?? null) === $m && ($x['konkurrenz'] ?? null) === $k) {
+                return ($x['fuehrer'] ?? null) === $spieler;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Aufstellungen, die Spieler, Helfer und Zuschauer noch nicht sehen: Bis für eine Begegnung zwei
+     * verschiedene Mannschaften aufgestellt haben, sieht eine Aufstellung nur ihr Verfasser (und die volle Sicht).
+     * WO E 5: Aufstellung „ohne Kenntnis der gegnerischen Aufstellung“. Kern der Zentrale: Zentrale.verdeckteAufstellungen.
+     * @return array<string,true> Ereignis-IDs
+     */
+    private function verdeckteAufstellungen(string $turnierId, ?string $bezug): array
+    {
+        $zeilen = $this->db->alle(
+            "SELECT event_id, daten, autor_bezug FROM ereignisse WHERE turnier_id = ? AND art = 'mannschaft.aufgestellt' ORDER BY seq",
+            [$turnierId]
+        );
+        $liste = array_map(static fn(array $z): array => ['id' => (string)$z['event_id'], 'daten' => json_decode((string)$z['daten'], true), 'bezug' => $z['autor_bezug'] === null ? null : (string)$z['autor_bezug']], $zeilen);
+        return self::verdeckteAus($liste, $bezug);
+    }
+
+    /** @param list<array{id:string,daten:mixed,bezug:?string}> $liste */
+    public static function verdeckteAus(array $liste, ?string $bezug): array
+    {
+        $teams = [];
+        foreach ($liste as $e) {
+            $d = is_array($e['daten']) ? $e['daten'] : [];
+            if (is_string($d['konkurrenz'] ?? null) && is_string($d['spiel'] ?? null) && is_string($d['mannschaft'] ?? null)) {
+                $teams[$d['konkurrenz'] . '|' . $d['spiel']][$d['mannschaft']] = true;
+            }
+        }
+        $weg = [];
+        foreach ($liste as $e) {
+            $d = is_array($e['daten']) ? $e['daten'] : [];
+            $schluessel = (string)($d['konkurrenz'] ?? '') . '|' . (string)($d['spiel'] ?? '');
+            $offen = count($teams[$schluessel] ?? []) >= 2;
+            $eigen = $bezug !== null && $e['bezug'] === $bezug;
+            if (!$offen && !$eigen) {
+                $weg[$e['id']] = true;
+            }
+        }
+        return $weg;
     }
 
     /** Kurzer Fingerabdruck der Menge entfernter Spieler (shared/protokoll.ts AbholenAntwort.filter) */
@@ -1133,6 +1216,12 @@ final class Api
                     $abgelehnt[] = ['id' => $eid, 'fehler' => 'keine_berechtigung', 'meldung' => $rolle === 'helfer'
                         ? 'Diese Aufgabe hat deine Helferkennung nicht.'
                         : 'Mit dieser Kennung dürfen nur Ergebnisse eingetragen werden.'];
+                    continue;
+                }
+                // Aufstellung von einer Spielerkennung ohne Helferrecht: nur die Mannschaftsführung der genannten Mannschaft
+                if ($rolle === 'spieler' && !$helfer && is_array($e) && ($e['art'] ?? null) === 'mannschaft.aufgestellt'
+                    && !$this->istMannschaftsfuehrung((string)$t['id'], $e['daten'] ?? null, (string)$bezug)) {
+                    $abgelehnt[] = ['id' => $eid, 'fehler' => 'keine_berechtigung', 'meldung' => 'Die Aufstellung gibt die Mannschaftsführung ab.'];
                     continue;
                 }
                 try {

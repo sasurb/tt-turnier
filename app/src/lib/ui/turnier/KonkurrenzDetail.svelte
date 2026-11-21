@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MannschaftenMeldung from './MannschaftenMeldung.svelte';
+  import { systemVon } from '../../engine/mannschaft';
   import { ART, type PoolSpieler } from '@shared/protokoll';
   import { T } from '../../texte';
   import { auslosungErstellen, endrundeErstellen, gruppenKlassen, gruppenZahlVorschlag, klassenDerMeldungen, name, nameLang, qualifikanten, teilnehmerDaten, zulassungsHinweise } from '../../engine/abfragen';
@@ -43,7 +45,8 @@
   const vorschlagGruppen = $derived(gruppenZahlVorschlag(k));
   const gZahl = $derived(gruppenZahl ?? vorschlagGruppen);
   const reihe = $derived(setzreihe(k.meldungen, teilnehmerDaten(z, k), k.einst, k.setzliste));
-  const doppel = $derived(k.einst.art !== 'einzel');
+  const doppel = $derived(k.einst.art === 'doppel' || k.einst.art === 'mixed');
+  const mannschaft = $derived(k.einst.art === 'mannschaft');
   /** Spieler, die in dieser Konkurrenz noch in keinem Paar stehen */
   const freieSpieler = $derived(z.spielerReihe.filter((id) => !teilnehmerVon(k, id)));
   let paar1 = $state('');
@@ -160,7 +163,7 @@
   const rundenModus = $derived(istRundenModus(k.einst.modus));
   /** Nachmelden geht in Gruppen (bis zur Endrunde), im K.-o. auf Freilose, in Runden-Systemen immer */
   const nachmeldenArt = $derived<'gruppe' | 'ko' | 'runde' | null>(
-    !gestartet || k.status === 'beendet' ? null : rundenModus ? 'runde' : k.gestartet.ko ? (phase1 === 'ko' ? 'ko' : null) : 'gruppe',
+    !gestartet || k.status === 'beendet' || mannschaft ? null : rundenModus ? 'runde' : k.gestartet.ko ? (phase1 === 'ko' ? 'ko' : null) : 'gruppe',
   );
   const koFrei = $derived(nachmeldenArt === 'ko' ? nachmeldePlaetzeKo(k) : []);
   let nachWer = $state('');
@@ -251,7 +254,7 @@
 
 <details class="karte konk" open={k.status !== 'beendet'} data-testid="konkurrenz">
   <summary>
-    <span>{k.einst.name} <span class="leise">· {doppel ? T.konk.arten[k.einst.art] + ' · ' : ''}{T.konk.modi[k.einst.modus]} · {doppel ? T.konk.paare(n) : T.konk.teilnehmer(n)}</span></span>
+    <span>{k.einst.name} <span class="leise">· {doppel || mannschaft ? T.konk.arten[k.einst.art] + ' · ' : ''}{T.konk.modi[k.einst.modus]} · {mannschaft ? T.mannschaft.anzahl(n) : doppel ? T.konk.paare(n) : T.konk.teilnehmer(n)}</span></span>
     <span class="marke">{T.konk.status[istRundenModus(k.einst.modus) && k.status === 'gruppen' ? 'runden' : k.status]}</span>
   </summary>
 
@@ -269,6 +272,9 @@
     <h3>{T.konk.meldungen} <span class="leise">({n})</span></h3>
     {#if z.spielerReihe.length === 0}
       <p class="leise">{T.konk.keineSpieler}</p>
+    {:else if mannschaft}
+      <p class="leise">{systemVon(k.einst).name}</p>
+      <MannschaftenMeldung {z} {k} {eintragen} />
     {:else if doppel}
       <p class="leise">{T.konk.paarHinweis}</p>
       {#if k.meldungen.length}
@@ -372,6 +378,12 @@
       {/if}
     {/if}
 
+    {#if mannschaft}
+      <details class="aendern">
+        <summary>{T.mannschaft.bearbeitenTitel} ({T.mannschaft.anzahl(n)})</summary>
+        <MannschaftenMeldung {z} {k} {eintragen} />
+      </details>
+    {/if}
     {#if nachmeldenArt}
       <h3>{T.konk.nachmelden}<Hilfe text={T.konk.nachmeldenHilfe} /></h3>
       {#if freieSpieler.length === 0 || (doppel && freieSpieler.length < 2)}

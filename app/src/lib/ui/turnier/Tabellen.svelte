@@ -58,16 +58,22 @@
     {/if}
     {#each zeige.tabellen && !istRundenModus(k.einst.modus) ? k.gruppen : [] as g (g.nr)}
       {@const t = tabelle(k, g.nr)}
-      <h3>{k.gruppen.length > 1 ? T.konk.gruppe(gruppenName(g.nr)) : T.konk.modi.jgj}{#if klassen[g.nr]}<span class="marke klasse">{klassen[g.nr]}</span>{/if}<Hilfe text={T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
+      {@const ms = k.einst.art === 'mannschaft'}
+      <h3>{k.gruppen.length > 1 ? T.konk.gruppe(gruppenName(g.nr)) : T.konk.modi.jgj}{#if klassen[g.nr]}<span class="marke klasse">{klassen[g.nr]}</span>{/if}<Hilfe text={ms ? T.mannschaft.systemHilfe : T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
       <div class="rollen">
         <table data-testid="tabelle-{gruppenName(g.nr)}">
           <thead>
             <tr>
               <th class="z">{T.tab.platz}</th>
               <th>{T.tab.spieler}</th>
-              <th class="z">{T.tab.sp}</th>
-              <th class="z">{T.tab.sn}</th>
-              {#if k.einst.wertung === 'ittf'}<th class="z">{T.tab.punkte}</th>{/if}
+              <th class="z">{ms ? T.mannschaft.tabelleKopf.begegnungen : T.tab.sp}</th>
+              {#if ms}
+                <th class="z">{T.mannschaft.tabelleKopf.punkte}</th>
+                <th class="z">{T.mannschaft.tabelleKopf.spiele}</th>
+              {:else}
+                <th class="z">{T.tab.sn}</th>
+              {/if}
+              {#if k.einst.wertung === 'ittf' && !ms}<th class="z">{T.tab.punkte}</th>{/if}
               <th class="z">{T.tab.saetze}</th>
               {#if k.einst.eingabe === 'punkte'}<th class="z breit-nur">{T.tab.baelle}</th>{/if}
             </tr>
@@ -78,12 +84,17 @@
                 <td class="z">{r.platz}{r.losNoetig && t.fertig ? '*' : ''}</td>
                 <td>
                   <span class="name">{name(z, r.id, k)}</span>
-                  {#if z.spieler[r.id]?.verein}<span class="leise verein">{z.spieler[r.id]!.verein}</span>{/if}
+                  {#if z.spieler[r.id]?.verein}<span class="leise verein">{z.spieler[r.id]!.verein}</span>{:else if k.mannschaften[r.id]?.verein}<span class="leise verein">{k.mannschaften[r.id]!.verein}</span>{/if}
                   {#if r.zurueckgezogen}<span class="marke">{T.tab.zurueckgezogen}</span>{/if}
                 </td>
                 <td class="z">{r.spiele}</td>
-                <td class="z">{r.siege}:{r.niederlagen}</td>
-                {#if k.einst.wertung === 'ittf'}<td class="z">{r.punkte}</td>{/if}
+                {#if ms}
+                  <td class="z" data-testid="punkte">{r.punkte}:{r.minuspunkte ?? 0}</td>
+                  <td class="z">{r.spieleG ?? 0}:{r.spieleV ?? 0}</td>
+                {:else}
+                  <td class="z">{r.siege}:{r.niederlagen}</td>
+                {/if}
+                {#if k.einst.wertung === 'ittf' && !ms}<td class="z">{r.punkte}</td>{/if}
                 <td class="z">{r.saetzeG}:{r.saetzeV}</td>
                 {#if k.einst.eingabe === 'punkte'}<td class="z breit-nur">{r.baelleG}:{r.baelleV}</td>{/if}
               </tr>
@@ -98,7 +109,7 @@
         </div>
       {/if}
     {/each}
-    {#if k.gruppen.length && zeige.tabellen && !istRundenModus(k.einst.modus)}<WertungInfo aktiv={k.einst.wertung} />{/if}
+    {#if k.gruppen.length && zeige.tabellen && !istRundenModus(k.einst.modus) && k.einst.art !== 'mannschaft'}<WertungInfo aktiv={k.einst.wertung} />{/if}
 
     {#if k.einst.modus === 'gruppen_ko' && !k.gestartet.ko}
       <p class="meldung info">{T.tab.endrundeWartet}</p>

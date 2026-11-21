@@ -4,6 +4,7 @@
   import { ergebnisText } from '../../engine/ergebnis';
   import type { KonkurrenzZustand, Spiel } from '../../engine/modell';
   import { seiteVon, type TurnierZustand } from '../../engine/zustand';
+  import { teileVon, zwischenstand } from '../../engine/mannschaft';
 
   let {
     z,
@@ -43,6 +44,8 @@
       ? [spiel.plan.tisch ? T.spiele.tisch(spiel.plan.tisch) : '', spiel.plan.zeit ? T.spiele.ab(spiel.plan.zeit) : ''].filter(Boolean).join(' · ')
       : '',
   );
+  /** Mannschaften: Zwischenstand der laufenden Begegnung */
+  const zwischen = $derived(k.einst.art === 'mannschaft' && !spiel.ergebnis && (spiel.status === 'offen') ? zwischenstand(teileVon(k, spiel)) : null);
   const unentschieden = $derived(spiel.status === 'gespielt' && !!spiel.ergebnis && spiel.ergebnis.gewinner === null);
   const bitteBestaetigen = $derived(!!seiteIch && spiel.stand === 'eingetragen' && !!spiel.eintrag && !spiel.eintrag.amtlich && spiel.eintrag.seite !== seiteIch);
 </script>
@@ -60,6 +63,8 @@
   <span class="erg">
     {#if spiel.ergebnis}
       <strong>{ergebnisText(spiel.ergebnis)}</strong>
+    {:else if zwischen && zwischen.gespielt > 0}
+      <strong data-testid="zwischenstand">{T.spiele.zwischenstand(zwischen.siegeA, zwischen.siegeB)}</strong>
     {:else}
       <span class="leise">{amTisch ? T.tische.laeuft : statusText}</span>
       {#if zeit && !amTisch}<span class="zeit" data-testid="geschaetzt">{T.spiele.ca(zeit)}</span>{/if}

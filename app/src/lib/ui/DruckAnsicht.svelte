@@ -19,6 +19,7 @@
   import { seiteDrucken } from '../nativ';
   import { druckEinstellungen, setzeDruckEinstellungen, type DruckEinstellungen, DRUCK_ARTEN, type DruckArt } from '../druck';
   import QrCode from './turnier/QrCode.svelte';
+  import { aufstellungenKomplett, positionsName, systemVon, teileVon, zwischenstand } from '../engine/mannschaft';
   import Hilfe from './Hilfe.svelte';
   import { euro } from '../engine/modell';
   import { enthalteneUst, kassenListe, kassenSumme, postenVon, quittungsNr } from '../engine/kasse';
@@ -31,6 +32,8 @@
   let { id, art = '', param = null }: { id: string; art?: string; param?: string | null } = $props();
   /** Kassenliste und Quittungen (nur Leitung und Helfer – volle Sicht) */
   const kassenArt = $derived<'kasse' | 'quittungen' | null>(art === 'kasse' || art === 'quittungen' ? art : null);
+  /** Spielberichtsbogen für Mannschafts-Begegnungen (param „<konkurrenz>~<spiel>“ = nur diese Begegnung) */
+  const berichtArt = $derived(art === 'spielbericht');
 
   const lokal = $derived(id.startsWith('l'));
   let sitzung: TurnierSitzung | null = null;
@@ -230,7 +233,23 @@
   function zeitpunkt(iso: string) {
     return new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
   }
-  const titel = $derived(z ? `${kassenArt ? T.druck.kasseArten[kassenArt] : T.druck.arten[aktiv]} – ${z.name}` : T.druck.titel);
+  const titel = $derived(z ? `${berichtArt ? T.druck.spielberichte : kassenArt ? T.druck.kasseArten[kassenArt] : T.druck.arten[aktiv]} – ${z.name}` : T.druck.titel);
+  const mitMannschaften = $derived(!!z && z.konkurrenzReihe.some((k) => z!.konkurrenzen[k]!.einst.art === 'mannschaft'));
+  const berichte = $derived.by(() => {
+    if (!z || !berichtArt) return [] as { k: KonkurrenzZustand; s: Spiel }[];
+    const [kid, sid] = param ? decodeURIComponent(param).split('~') : [null, null];
+    const aus: { k: KonkurrenzZustand; s: Spiel }[] = [];
+    for (const id of z.konkurrenzReihe) {
+      const k = z.konkurrenzen[id]!;
+      if (k.einst.art !== 'mannschaft' || (kid && kid !== id)) continue;
+      for (const spid of k.reihenfolge) {
+        const s = k.spiele[spid]!;
+        if (sid && sid !== spid) continue;
+        if (s.a && s.b && (s.status === 'offen' || s.status === 'gespielt')) aus.push({ k, s });
+      }
+    }
+    return aus;
+  });
   $effect(() => {
     document.title = titel;
     return () => (document.title = T.app.titel);
@@ -247,22 +266,23 @@
 {:else}
   <div class="werkzeug" data-testid="druck-werkzeug">
     <div class="reihe">
-      <a class="knopf zweit" href={linkZu(`t/${id}/${kassenArt ? 'kasse' : 'drucken'}`)}>← {T.app.zurueck}</a>
+      <a class="knopf zweit" href={linkZu(`t/${id}/${kassenArt ? 'kasse' : berichtArt && param ? 'spiele' : 'drucken'}`)}>← {T.app.zurueck}</a>
       <strong class="wachsen">{z.name}</strong>
       <button onclick={() => seiteDrucken(titel)} data-testid="drucken">{T.druck.drucken}</button>
     </div>
     <div class="optionen">
       <div>
         <label for="da">{T.druck.was}</label>
-        <select id="da" value={kassenArt ?? aktiv} onchange={(ev) => artWaehlen(ev.currentTarget.value)} data-testid="druck-art">
+        <select id="da" value={berichtArt ? 'spielbericht' : (kassenArt ?? aktiv)} onchange={(ev) => artWaehlen(ev.currentTarget.value)} data-testid="druck-art">
           {#each DRUCK_ARTEN as a (a)}<option value={a}>{T.druck.arten[a]}</option>{/each}
+          {#if mitMannschaften}<option value="spielbericht">{T.druck.spielberichte}</option>{/if}
           {#if allesSichtbar && z.buchungen.length + z.konkurrenzReihe.filter((k) => z!.konkurrenzen[k]!.einst.startgeld).length > 0}
             <option value="kasse">{T.druck.kasseArten.kasse}</option>
             <option value="quittungen">{T.druck.kasseArten.quittungen}</option>
           {/if}
         </select>
       </div>
-      {#if kassenArt}
+      {#if kassenArt || berichtArt}
         <!-- keine weiteren Optionen -->
       {:else if aktiv !== 'aushang'}
         <div>
@@ -273,7 +293,7 @@
           </select>
         </div>
       {/if}
-      {#if kassenArt}
+      {#if kassenArt || berichtArt}
         <!-- Kassenliste und Quittungen: keine weiteren Optionen -->
       {:else if aktiv === 'spielzettel'}
         <div>
@@ -317,8 +337,67 @@
     <p class="leise tipp">{kassenArt ? T.druck.kasseTipp[kassenArt] : T.druck.tipp[aktiv]}</p>
   </div>
 
-  <div class="dokument" data-art={kassenArt ?? aktiv} data-testid="druck-dokument">
-    {#if kassenArt === 'kasse' && summe}
+  <div class="dokument" data-art={berichtArt ? 'spielbericht' : (kassenArt ?? aktiv)} data-testid="druck-dokument">
+    {#if berichtArt}
+      {#if !berichte.length}<p class="leise">{T.druck.keineBegegnungen}</p>{/if}
+      {#each berichte as { k, s } (`${k.id}/${s.id}`)}
+        {@const sys = systemVon(k.einst)}
+        {@const teile = teileVon(k, s)}
+        {@const st = zwischenstand(teile)}
+        {@const offen = allesSichtbar || aufstellungenKomplett(k, s)}
+        <section class="seite bericht" data-testid="spielbericht">
+          <h1>{T.druck.spielbericht}</h1>
+          <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {k.einst.name} · {rundeVon(k, s)}{s.tisch ? ` · ${T.spiele.tisch(s.tisch)}` : ''} · {sys.name}</p>
+          <div class="teams">
+            {#each ['a', 'b'] as const as seite (seite)}
+              {@const tid = seite === 'a' ? s.a : s.b}
+              {@const auf = tid ? k.begegnungen[s.id]?.aufstellung[tid] : undefined}
+              <div>
+                <h2>{seite === 'a' ? T.druck.heim : T.druck.gast}: {name(z, tid, k)}</h2>
+                <table class="aufst">
+                  <tbody>
+                    {#each Array.from({ length: sys.einzel }, (_, i) => i) as i (i)}
+                      <tr><td class="pos">{positionsName(sys, 'einzel', seite, i + 1)}</td><td>{offen && auf?.einzel[i] ? nameLang(z, auf.einzel[i]!) : ''}</td></tr>
+                    {/each}
+                    {#each Array.from({ length: sys.doppel }, (_, i) => i) as i (i)}
+                      <tr><td class="pos">D{i + 1}</td><td>{offen && auf?.doppel[i] ? auf.doppel[i]!.map((x) => nameLang(z!, x)).join(' / ') : ''}</td></tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {/each}
+          </div>
+          <table class="teiltab">
+            <thead>
+              <tr>
+                <th>#</th><th>{T.druck.paarung}</th><th>{T.druck.heim}</th><th>{T.druck.gast}</th>
+                {#each Array.from({ length: k.einst.bestOf }, (_, i) => i) as i (i)}<th class="z">{i + 1}</th>{/each}
+                <th class="z">{T.druck.saetze}</th><th class="z">{T.druck.spieleSpalte}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each teile as t (t.id)}
+                <tr>
+                  <td>{t.nr}</td>
+                  <td>{positionsName(sys, t.art, 'a', t.posA)}–{positionsName(sys, t.art, 'b', t.posB)}</td>
+                  <td>{offen ? t.a.map((x) => nameLang(z!, x)).join(' / ') : ''}</td>
+                  <td>{offen ? t.b.map((x) => nameLang(z!, x)).join(' / ') : ''}</td>
+                  {#each Array.from({ length: k.einst.bestOf }, (_, i) => i) as i (i)}<td class="z">{t.ergebnis?.saetze?.[i] ? `${t.ergebnis.saetze[i]![0]}:${t.ergebnis.saetze[i]![1]}` : ''}</td>{/each}
+                  <td class="z">{t.ergebnis ? `${t.ergebnis.satzA}:${t.ergebnis.satzB}` : t.status === 'entfallen' ? '–' : ''}</td>
+                  <td class="z">{t.gewinner === 'a' ? '1:0' : t.gewinner === 'b' ? '0:1' : ''}</td>
+                </tr>
+              {/each}
+              <tr class="summe"><td colspan={4 + k.einst.bestOf}>{T.druck.endstand}</td><td class="z">{st.satzA}:{st.satzB}</td><td class="z"><strong>{st.siegeA}:{st.siegeB}</strong></td></tr>
+            </tbody>
+          </table>
+          <div class="unterschriften">
+            <div>{T.druck.unterschriftHeim}</div>
+            <div>{T.druck.unterschriftGast}</div>
+            <div>{T.druck.unterschriftLeitung}</div>
+          </div>
+        </section>
+      {/each}
+    {:else if kassenArt === 'kasse' && summe}
       <section class="seite">
         <h1>{T.druck.kasseArten.kasse}</h1>
         <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {T.druck.standAm(new Date().toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}</p>
@@ -679,6 +758,18 @@
   .spielfolge li span { color: #555; }
 
   .seite.quer { break-after: page; }
+  .bericht { break-after: page; }
+  .bericht:last-child { break-after: auto; }
+  .bericht .teams { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .bericht h2 { font-size: 1.05rem; margin: 8px 0 4px; }
+  .bericht table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .bericht td, .bericht th { border: 1px solid #999; padding: 4px 6px; text-align: left; }
+  .bericht .z { text-align: center; }
+  .bericht .pos { width: 3rem; font-weight: 700; }
+  .bericht .teiltab { margin-top: 12px; }
+  .bericht .summe td { font-weight: 700; }
+  .unterschriften { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
+  .unterschriften div { border-top: 1px solid #333; padding-top: 4px; font-size: 0.85rem; }
   .seite.quer:last-child { break-after: auto; }
   .baum { display: flex; gap: 3mm; height: 170mm; }
   .runde { flex: 1 1 0; display: flex; flex-direction: column; min-width: 0; max-width: 75mm; }

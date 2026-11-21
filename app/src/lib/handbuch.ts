@@ -238,6 +238,35 @@ export const HANDBUCH: HandbuchKapitel[] = [
     ],
   },
   {
+    id: 'mannschaft',
+    titel: 'Mannschaftsturniere',
+    fuer: ['leitung', 'helfer', 'spieler'],
+    einleitung: 'Mannschaften aus den Spielern des Turniers, Begegnungen mit Einzeln und Doppeln nach einem Spielsystem der Wettspielordnung.',
+    abschnitte: [
+      {
+        titel: 'Anlegen',
+        text: [
+          '1. Unter „Konkurrenzen“ eine neue Konkurrenz mit „Mannschaft“ anlegen und das Spielsystem wählen: Bundessystem, Werner-Scheffler-System, Sechser-Paarkreuz-System, Corbillon-Cup, Olympisches System, Swaythling-Cup oder eine eigene Spielfolge. Möglich sind Gruppen + K.-o., Jeder gegen jeden und K.-o.',
+          '2. Bei der Konkurrenz „Mannschaft melden“: Name, Verein, Spieler (mehr als nötig ist erlaubt) und die Mannschaftsführung wählen.',
+          '3. Auslosen und starten wie bei Einzeln. Jede Begegnung belegt einen Tisch.',
+        ],
+      },
+      {
+        titel: 'Aufstellung und Ergebnisse',
+        text: [
+          'Ein Tipp auf die Begegnung öffnet die Aufstellungen und die Spiele. Die Mannschaftsführung gibt mit ihrer Spielerkennung die Aufstellung ab – die des Gegners sieht sie erst, wenn beide abgegeben haben. Leere Positionen gehen kampflos an den Gegner.',
+          'Spieler tragen ihre eigenen Spiele ein, die Mannschaftsführung alle Spiele ihrer Begegnung; der Gegner bestätigt wie gewohnt. Leitung und Helfer tragen amtlich ein.',
+          'Ist die Begegnung entschieden, entfallen die übrigen Spiele (außer bei „Alle Spiele austragen“). Sieg 2:0, Unentschieden 1:1 Punkte. Tabelle nach Punkten, Spiel-, Satz- und Balldifferenz, dann direkter Vergleich. Im K.-o. entscheiden bei Gleichstand Sätze, dann Bälle, dann das Los der Turnierleitung.',
+          'Unter „Drucken“ gibt es den Spielbericht je Begegnung mit Aufstellungen, Satzergebnissen und Unterschriftenfeldern.',
+        ],
+      },
+      {
+        titel: 'Startgeld',
+        text: ['Das Startgeld einer Mannschafts-Konkurrenz gilt je Spieler der Mannschaft. Mannschaften meldet die Turnierleitung von Hand – über die Online-Anmeldung werden sie nicht angeboten.'],
+      },
+    ],
+  },
+  {
     id: 'anmeldung',
     titel: 'Online-Anmeldung',
     fuer: ['leitung', 'spieler'],

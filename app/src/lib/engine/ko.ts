@@ -1,5 +1,5 @@
 import { kampflosErgebnis } from './wertung';
-import { BAUM_PRAEFIX, type Baum, type KonkurrenzZustand, type Quelle, type Seite, type Spiel } from './modell';
+import { BAUM_PRAEFIX, type Baum, type Ergebnis, type KonkurrenzZustand, type Quelle, type Seite, type Spiel } from './modell';
 
 /**
  * K.-o.-Teil einer Konkurrenz als Netz von Spielen: Jedes Spiel kennt die Herkunft seiner beiden
@@ -170,7 +170,11 @@ function ausgang(s: Spiel, wer: 'sieger' | 'verlierer'): Ausgang {
  * und Rückzüge auflösen. Ändert sich die Besetzung eines Spiels, das schon ein Ergebnis hat, wird es
  * verworfen (kommt nur vor, wenn die Leitung frühere Ergebnisse ändert; die Engine verhindert das sonst).
  */
-export function koAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>): void {
+/**
+ * @param opt.vorher Mannschaften: Ergebnis der Begegnung aus den Teilspielen übernehmen, sobald die Gegner feststehen
+ * @param opt.kampflos Kampflos-Ergebnis bei Rückzug (Mannschaften: alle nötigen Teilspiele)
+ */
+export function koAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>, opt?: { vorher?: (s: Spiel) => void; kampflos?: (v: Seite) => Ergebnis }): void {
   const plaetze = k.auslosungKo?.plaetze;
   if (!plaetze) return;
 
@@ -214,7 +218,7 @@ export function koAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>): voi
         if (za || zb) {
           const v: Seite = za ? 'a' : 'b';
           s.kampflosDurchRueckzug = v;
-          s.ergebnis = kampflosErgebnis(v, k.einst);
+          s.ergebnis = opt?.kampflos ? opt.kampflos(v) : kampflosErgebnis(v, k.einst);
           s.gewinner = za && zb ? null : v === 'a' ? 'b' : 'a';
           s.status = za && zb ? 'freilos' : 'gespielt';
           if (za && zb) {
@@ -256,6 +260,7 @@ export function koAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>): voi
       s.stand = null;
       s.angefochtenVon = null;
     }
+    opt?.vorher?.(s);
     bewerten(s);
   }
 }
@@ -265,7 +270,8 @@ export function abhaengigeMitErgebnis(k: KonkurrenzZustand, s: Spiel): Spiel[] {
   const l: Spiel[] = [];
   for (const w of [s.weiter, s.verliererWeiter]) {
     const f = w ? k.spiele[w.spiel] : undefined;
-    if (f && f.eintrag) l.push(f);
+    // Mannschaften: schon ein einzelnes gespieltes Teilspiel zählt
+    if (f && (f.eintrag || Object.keys(k.begegnungen?.[f.id]?.teile ?? {}).length > 0)) l.push(f);
   }
   return l;
 }

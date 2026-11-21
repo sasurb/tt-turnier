@@ -6,10 +6,26 @@ import { rundenplan } from './rundenplan';
 import { ersteRundeAnlegen, istRundenModus, letzteRunde, rundeFertig, rundenAktualisieren } from './runden';
 import { kampflosErgebnis } from './wertung';
 import {
+  aufstellungenKomplett,
+  begegnungAuswerten,
+  begegnungDaten,
+  begegnungUebernehmen,
+  istMannschaft,
+  kampflosBegegnung,
+  mannschaftEinstLesen,
+  standardMannschaft,
+  systemVon,
+  teilAus,
+  teileVon,
+  type Aufstellung,
+  type TeilZustand,
+} from './mannschaft';
+import {
   ALLE_ANGABEN,
   ALLES_OEFFENTLICH,
   FEST_NACH_START,
   MODI,
+  MODI_MANNSCHAFT,
   STANDARD_ANGABEN,
   UHRZEIT_MUSTER,
   festeSaetzeVon,
@@ -17,6 +33,7 @@ import {
   standardEinstellungen,
   type Angabe,
   type Veroeffentlichung,
+  type Ergebnis,
   type ErgebnisEingabe,
   type ErgebnisEintrag,
   type KonkurrenzEinstellungen,
@@ -213,7 +230,8 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
   if (x.vorgabe === null) e.vorgabe = null;
   else if (zahl(x.vorgabe, 10, 500)) e.vorgabe = x.vorgabe as number;
   if (zahl(x.vorgabeMax, 1, 10)) e.vorgabeMax = x.vorgabeMax as number;
-  if (x.art === 'einzel' || x.art === 'doppel' || x.art === 'mixed') e.art = x.art;
+  if (x.art === 'einzel' || x.art === 'doppel' || x.art === 'mixed' || x.art === 'mannschaft') e.art = x.art;
+  if (x.mannschaft !== undefined) e.mannschaft = mannschaftEinstLesen(x.mannschaft, e.mannschaft);
   if (typeof x.trostrunde === 'boolean') e.trostrunde = x.trostrunde;
   if (typeof x.finaleWiederholung === 'boolean') e.finaleWiederholung = x.finaleWiederholung;
   if (x.bestOf === 1 || x.bestOf === 3 || x.bestOf === 5 || x.bestOf === 7) e.bestOf = x.bestOf;
@@ -260,6 +278,11 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
         .slice(0, 20);
     if (Array.isArray(z.geschlecht)) e.zulassung.geschlecht = z.geschlecht.filter((g): g is 'm' | 'w' | 'd' => g === 'm' || g === 'w' || g === 'd');
   }
+  // Mannschaften: Spielsystem immer vorhanden, nur Gruppen/Jeder gegen jeden/K.-o.
+  if (e.art === 'mannschaft') {
+    e.mannschaft ??= standardMannschaft();
+    if (!MODI_MANNSCHAFT.includes(e.modus)) e.modus = 'gruppen_ko';
+  } else e.mannschaft = null;
   return e;
 }
 
@@ -269,6 +292,8 @@ function neueKonkurrenz(id: string, einst: KonkurrenzEinstellungen): KonkurrenzZ
     einst,
     meldungen: [],
     paare: leer(),
+    mannschaften: leer(),
+    begegnungen: leer(),
     setzliste: null,
     auslosungGruppen: null,
     auslosungKo: null,
@@ -295,7 +320,9 @@ export function erstePhase(k: KonkurrenzZustand): 'gruppen' | 'ko' {
 export function spielerVon(k: KonkurrenzZustand, teilnehmer: string | null): string[] {
   if (!teilnehmer) return [];
   const p = k.paare[teilnehmer];
-  return p ? [...p.spieler] : [teilnehmer];
+  if (p) return [...p.spieler];
+  const m = k.mannschaften?.[teilnehmer];
+  return m ? [...m.spieler] : [teilnehmer];
 }
 
 /** Auf welcher Seite eines Spiels steht dieser Spieler (auch als Teil eines Paares)? */
@@ -309,7 +336,11 @@ export function seiteVon(k: KonkurrenzZustand, s: Spiel, spieler: string | null 
 /** Teilnehmer-ID, mit der ein Spieler in dieser Konkurrenz gemeldet ist (null = nicht gemeldet) */
 export function teilnehmerVon(k: KonkurrenzZustand, spieler: string): string | null {
   if (k.meldungen.includes(spieler)) return spieler;
-  return Object.values(k.paare).find((p) => p.spieler.includes(spieler) && k.meldungen.includes(p.id))?.id ?? null;
+  return (
+    Object.values(k.paare).find((p) => p.spieler.includes(spieler) && k.meldungen.includes(p.id))?.id ??
+    Object.values(k.mannschaften ?? {}).find((m) => m.spieler.includes(spieler) && k.meldungen.includes(m.id))?.id ??
+    null
+  );
 }
 
 /** Teilnehmer, die zurückgezogen haben (ausdrücklich oder – WO D 7.9 – durch kampflos/Aufgabe in der Gruppe), in Reihenfolge */
@@ -351,7 +382,7 @@ function gruppenAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>) {
       } else {
         const v: Seite = za ? 'a' : 'b';
         s.kampflosDurchRueckzug = v;
-        s.ergebnis = kampflosErgebnis(v, k.einst);
+        s.ergebnis = kampflosFuer(k, v);
         s.status = 'gespielt';
       }
     } else {
@@ -362,15 +393,23 @@ function gruppenAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>) {
   }
 }
 
+/** Kampflos-Ergebnis (Rückzug): Einzel/Doppel nach WO D 7.10, Mannschaft alle nötigen Teilspiele */
+export function kampflosFuer(k: KonkurrenzZustand, verlierer: Seite): Ergebnis {
+  return istMannschaft(k) ? kampflosBegegnung(verlierer, k.einst) : kampflosErgebnis(verlierer, k.einst);
+}
+
 function statusAktualisieren(k: KonkurrenzZustand) {
   const zurueck = new Set(zurueckgezogen(k));
+  // Mannschaften: Ergebnis jeder Begegnung aus den Teilspielen (Gruppen sofort, K.-o. nach dem Setzen der Gegner)
+  if (istMannschaft(k)) for (const id of k.reihenfolge) if (k.spiele[id]!.phase === 'gruppen') begegnungUebernehmen(k, k.spiele[id]!);
   if (k.gestartet.gruppen && istRundenModus(k.einst.modus)) {
     rundenAktualisieren(k, zurueck);
     k.status = rundeFertig(k, letzteRunde(k)) ? 'beendet' : 'gruppen';
     return;
   }
   if (k.gestartet.gruppen) gruppenAktualisieren(k, zurueck);
-  if (k.gestartet.ko) koAktualisieren(k, zurueck);
+  if (k.gestartet.ko)
+    koAktualisieren(k, zurueck, istMannschaft(k) ? { vorher: (s) => begegnungUebernehmen(k, s), kampflos: (v) => kampflosFuer(k, v) } : undefined);
   if (!begonnen(k)) k.status = 'meldung';
   else if (k.gestartet.ko) {
     const offen = Object.values(k.spiele).some(
@@ -769,6 +808,12 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       for (const k of Object.values(z.konkurrenzen)) {
         const paare = Object.values(k.paare).filter((p) => p.spieler.includes(id)).map((p) => p.id);
         for (const pid of paare) delete k.paare[pid];
+        for (const m of Object.values(k.mannschaften)) {
+          m.spieler = m.spieler.filter((x) => x !== id);
+          if (m.fuehrer === id) m.fuehrer = null;
+          if (!m.spieler.length) paare.push(m.id);
+        }
+        for (const mid of paare) delete k.mannschaften[mid];
         k.meldungen = k.meldungen.filter((x) => x !== id && !paare.includes(x));
         if (k.setzliste) k.setzliste = k.setzliste.filter((x) => x !== id && !paare.includes(x));
       }
@@ -834,7 +879,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       const id = typeof d.id === 'string' ? d.id : '';
       if (!k) break;
       if (k.einst.art !== 'einzel') {
-        warnen('Im Doppel werden Paare gemeldet.');
+        warnen(k.einst.art === 'mannschaft' ? 'Hier werden Mannschaften gemeldet.' : 'Im Doppel werden Paare gemeldet.');
         break;
       }
       if (!z.spieler[id]) {
@@ -857,8 +902,8 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (!k) break;
       const id = typeof d.id === 'string' && /^p-[A-Za-z0-9-]{4,38}$/.test(d.id) ? d.id : undefined;
       const sp = Array.isArray(d.spieler) ? d.spieler.filter((x): x is string => typeof x === 'string') : [];
-      if (k.einst.art === 'einzel') {
-        warnen('Diese Konkurrenz ist ein Einzel.');
+      if (k.einst.art === 'einzel' || k.einst.art === 'mannschaft') {
+        warnen(k.einst.art === 'einzel' ? 'Diese Konkurrenz ist ein Einzel.' : 'In dieser Konkurrenz werden Mannschaften gemeldet.');
         break;
       }
       if (!id || k.paare[id] || sp.length !== 2 || sp[0] === sp[1] || !z.spieler[sp[0]!] || !z.spieler[sp[1]!]) {
@@ -887,6 +932,36 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       k.meldungen.push(id);
       break;
     }
+    case ART.mannschaftGemeldet: {
+      if (!nurLeitung()) break;
+      const k = konkurrenz();
+      if (!k) break;
+      const f = mannschaftMelden(z, k, d);
+      if (f) warnen(f);
+      statusAktualisieren(k);
+      break;
+    }
+    case ART.mannschaftAufgestellt: {
+      const k = konkurrenz();
+      if (!k) break;
+      const f = aufstellen(z, k, e, d, leitung, aufgaben);
+      if (f) warnen(f);
+      statusAktualisieren(k);
+      break;
+    }
+    case ART.mannschaftLos: {
+      if (!nurLeitung()) break;
+      const k = konkurrenz();
+      if (!k) break;
+      const s = typeof d.spiel === 'string' ? k.spiele[d.spiel] : undefined;
+      if (!istMannschaft(k) || !s || s.phase !== 'ko' || (d.sieger !== s.a && d.sieger !== s.b) || !begegnungAuswerten(k, s).losNoetig) {
+        warnen('Losentscheid nicht möglich.');
+        break;
+      }
+      begegnungDaten(k, s.id).los = d.sieger as string;
+      statusAktualisieren(k);
+      break;
+    }
     case ART.teilnehmerAbgemeldet: {
       if (!nurLeitung()) break;
       const k = konkurrenz();
@@ -896,6 +971,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         k.meldungen = k.meldungen.filter((x) => x !== id);
         if (k.setzliste) k.setzliste = k.setzliste.filter((x) => x !== id);
         delete k.paare[id];
+        delete k.mannschaften[id];
         break;
       }
       if (!k.rueckzuege.some((r) => r.teilnehmer === id)) {
@@ -1158,12 +1234,24 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
     case ART.spielZurueckgesetzt: {
       const k = konkurrenz();
       if (!k) break;
+      const teil = typeof d.spiel === 'string' && istMannschaft(k) ? teilAus(d.spiel) : null;
+      if (teil) {
+        const b = k.spiele[teil.spiel];
+        const f = b ? teilEreignis(z, k, b, teil.nr, e, d, leitung, aufgaben) : 'Begegnung nicht gefunden.';
+        if (f) warnen(f);
+        statusAktualisieren(k);
+        break;
+      }
       const s = typeof d.spiel === 'string' ? k.spiele[d.spiel] : undefined;
       if (!s) {
         warnen('Spiel nicht gefunden.');
         break;
       }
-      const f = spielEreignis(z, k, s, e, d, leitung, aufgaben);
+      if (istMannschaft(k) && e.art !== ART.spielZurueckgesetzt) {
+        warnen('Bei Mannschaften werden die einzelnen Spiele der Begegnung eingetragen.');
+        break;
+      }
+      const f = istMannschaft(k) ? begegnungZuruecksetzen(k, s, leitung || aufgaben.includes('oberschiri')) : spielEreignis(z, k, s, e, d, leitung, aufgaben);
       if (f) warnen(f);
       statusAktualisieren(k);
       break;
@@ -1217,6 +1305,176 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       break;
   }
   return z;
+}
+
+/* ---------------- Mannschaften ---------------- */
+
+const MANNSCHAFT_ID = /^m-[A-Za-z0-9-]{4,38}$/;
+const MAX_MANNSCHAFT = 20;
+
+/** Mannschaft melden oder ändern (gleiche ID): Name, Verein, Spieler, Mannschaftsführung */
+function mannschaftMelden(z: TurnierZustand, k: KonkurrenzZustand, d: Record<string, unknown>): Pruefung {
+  if (!istMannschaft(k)) return 'Diese Konkurrenz ist keine Mannschafts-Konkurrenz.';
+  const id = typeof d.id === 'string' && MANNSCHAFT_ID.test(d.id) ? d.id : null;
+  const name = text(d.name, 60);
+  const sp = Array.isArray(d.spieler) ? [...new Set(d.spieler.filter((x): x is string => typeof x === 'string'))] : [];
+  if (!id || !name) return 'Mannschaft braucht einen Namen.';
+  if (!sp.length || sp.length > MAX_MANNSCHAFT || sp.some((x) => !z.spieler[x])) return `Eine Mannschaft hat 1 bis ${MAX_MANNSCHAFT} Spieler aus dem Turnier.`;
+  const belegt = sp.find((x) => Object.values(k.mannschaften).some((m) => m.id !== id && m.spieler.includes(x)));
+  if (belegt) return `${z.spieler[belegt]!.vorname} ${z.spieler[belegt]!.nachname} spielt in „${k.einst.name}“ schon in einer anderen Mannschaft.`;
+  const fuehrer = typeof d.fuehrer === 'string' && sp.includes(d.fuehrer) ? d.fuehrer : null;
+  const verein = text(d.verein, 80) ?? '';
+  const alt = k.mannschaften[id];
+  if (alt) {
+    // Spieler, die schon aufgestellt sind und gespielt haben, bleiben in der Mannschaft
+    for (const [spiel, b] of Object.entries(k.begegnungen)) {
+      const auf = b.aufstellung[id];
+      const s = k.spiele[spiel];
+      if (!auf || !s || !Object.keys(b.teile).length) continue;
+      const weg = [...auf.einzel, ...auf.doppel.flat()].find((x) => x && !sp.includes(x));
+      if (weg) return `${z.spieler[weg]?.vorname ?? ''} ${z.spieler[weg]?.nachname ?? ''} hat für die Mannschaft schon gespielt und bleibt gemeldet.`.trim();
+    }
+    Object.assign(alt, { name, verein, spieler: sp, fuehrer });
+    return null;
+  }
+  k.mannschaften[id] = { id, name, verein, spieler: sp, fuehrer };
+  if (begonnen(k)) {
+    const f = nachmelden(k, id, d);
+    if (f) {
+      delete k.mannschaften[id];
+      return f;
+    }
+    return null;
+  }
+  k.meldungen.push(id);
+  return null;
+}
+
+/** Aufstellung abgeben: Leitung, Helfer (Ergebnisse/Oberschiedsrichter) oder die Mannschaftsführung der eigenen Mannschaft */
+function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis, d: Record<string, unknown>, leitung: boolean, aufgaben: readonly Aufgabe[]): Pruefung {
+  if (!istMannschaft(k)) return 'Diese Konkurrenz ist keine Mannschafts-Konkurrenz.';
+  const s = typeof d.spiel === 'string' ? k.spiele[d.spiel] : undefined;
+  if (!s) return 'Begegnung nicht gefunden.';
+  const mid = typeof d.mannschaft === 'string' ? d.mannschaft : '';
+  const m = k.mannschaften[mid];
+  if (!m || (s.a !== mid && s.b !== mid)) return 'Diese Mannschaft spielt nicht in dieser Begegnung.';
+  if (s.status === 'wartet' || s.status === 'freilos' || s.status === 'entfallen' || s.gestrichen) return 'Für diese Begegnung lässt sich keine Aufstellung abgeben.';
+  const amtlich = leitung || (e.autor?.rolle === 'helfer' && (aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri'))) || (e.autor?.rolle === 'spieler' && e.autor.helfer === true && !m.spieler.includes(e.autor.spieler ?? ''));
+  const fuehrung = e.autor?.rolle === 'spieler' && !!e.autor.spieler && e.autor.spieler === m.fuehrer;
+  if (!amtlich && !fuehrung) return 'Die Aufstellung geben die Mannschaftsführung, Helfer oder die Turnierleitung ab.';
+  const sys = systemVon(k.einst);
+  const roh = (v: unknown) => (typeof v === 'string' && m.spieler.includes(v) ? v : null);
+  const einzel = Array.from({ length: sys.einzel }, (_, i) => roh(Array.isArray(d.einzel) ? d.einzel[i] : null));
+  const doppel = Array.from({ length: sys.doppel }, (_, i): [string, string] | null => {
+    const p = Array.isArray(d.doppel) ? d.doppel[i] : null;
+    if (!Array.isArray(p)) return null;
+    const x = roh(p[0]);
+    const y = roh(p[1]);
+    return x && y && x !== y ? [x, y] : null;
+  });
+  const imEinzel = einzel.filter(Boolean) as string[];
+  if (new Set(imEinzel).size !== imEinzel.length) return 'Jeder Spieler steht im Einzel nur auf einer Position.';
+  const imDoppel = doppel.flat().filter(Boolean) as string[];
+  if (new Set(imDoppel).size !== imDoppel.length) return 'Jeder Spieler spielt nur in einem Doppel.';
+  if (!imEinzel.length && !imDoppel.length) return 'Die Aufstellung ist leer.';
+  const b = begegnungDaten(k, s.id);
+  const alt = b.aufstellung[mid];
+  if (alt && !leitung && aufstellungenKomplett(k, s)) return 'Beide Aufstellungen stehen – ändern kann sie jetzt nur die Turnierleitung.';
+  if (alt) {
+    // Positionen gespielter Teilspiele bleiben, wie sie waren
+    const teile = teileVon(k, s);
+    for (const t of teile) {
+      if (!t.eintrag) continue;
+      const pos = s.a === mid ? t.posA : t.posB;
+      const vorher = t.art === 'einzel' ? alt.einzel[pos - 1] : alt.doppel[pos - 1]?.join('+');
+      const jetzt = t.art === 'einzel' ? einzel[pos - 1] : doppel[pos - 1]?.join('+');
+      if ((vorher ?? null) !== (jetzt ?? null)) return `Spiel ${t.nr} ist schon gespielt – die Aufstellung dafür lässt sich nicht mehr ändern.`;
+    }
+  }
+  const auf: Aufstellung = { einzel, doppel, ereignis: e.id, von: e.autor?.name ?? '', zeit: e.zeit };
+  b.aufstellung[mid] = auf;
+  void z;
+  return null;
+}
+
+/** Alle Teilspiele einer Begegnung zurücksetzen (Leitung/Oberschiedsrichter) */
+function begegnungZuruecksetzen(k: KonkurrenzZustand, s: Spiel, darf: boolean): Pruefung {
+  if (!darf) return 'Ergebnisse löschen können die Turnierleitung und der Oberschiedsrichter.';
+  if (s.phase === 'ko' && abhaengigeMitErgebnis(k, s).length > 0) return 'Das Folgespiel hat schon ein Ergebnis. Bitte zuerst dort zurücksetzen.';
+  const b = k.begegnungen[s.id];
+  if (b) {
+    b.teile = leer();
+    b.los = null;
+  }
+  return null;
+}
+
+/**
+ * Ergebnis eines Teilspiels. Spieler dürfen Teilspiele eintragen, in denen sie selbst spielen; die
+ * Mannschaftsführung alle Teilspiele der eigenen Begegnung. Bestätigen/Anfechten durch die Gegenseite wie bei
+ * normalen Spielen. Im K.-o. darf sich der Sieger der Begegnung nicht ändern, wenn das Folgespiel schon läuft.
+ */
+function teilEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, nr: number, e: LokalesEreignis, d: Record<string, unknown>, leitung: boolean, aufgaben: readonly Aufgabe[]): Pruefung {
+  const teile = teileVon(k, s);
+  const t = teile[nr - 1];
+  if (!t) return 'Teilspiel nicht gefunden.';
+  if (e.autor?.rolle === 'spieler' && !leitung) {
+    const ich = e.autor.spieler ?? '';
+    const team = [s.a, s.b].map((x) => (x ? k.mannschaften[x] : undefined)).find((m) => m?.spieler.includes(ich));
+    const amtlichAlsHelfer = e.autor.helfer === true && !team;
+    if (!amtlichAlsHelfer && !(t.a.includes(ich) || t.b.includes(ich) || (!!team && team.fuehrer === ich)))
+      return 'Spieler tragen nur eigene Spiele ein; die Mannschaftsführung alle Spiele ihrer Begegnung.';
+  }
+  const b = begegnungDaten(k, s.id);
+  const alt = b.teile[String(nr)];
+  const ziel: TeilZustand = alt && (alt.aTeam === s.a || alt.aTeam === s.b) ? alt : { eintrag: null, stand: null, alternativen: [], angefochtenVon: null, aTeam: s.a ?? '' };
+  // Vorhandene Einträge in die Sicht der aktuellen Seite A bringen
+  if (ziel.aTeam !== s.a && ziel.eintrag) {
+    const um = (x: ErgebnisEintrag): ErgebnisEintrag => ({ ...x, eingabe: eingabeTauschen(x.eingabe), ergebnis: tauschen(x.ergebnis), seite: x.seite === 'a' ? 'b' : x.seite === 'b' ? 'a' : null });
+    ziel.eintrag = um(ziel.eintrag);
+    ziel.alternativen = ziel.alternativen.map(um);
+    ziel.aTeam = s.a ?? '';
+  }
+  // Pseudo-Spiel: gleiche Regeln wie ein Einzel (Seite = Mannschaft des Eintragenden)
+  const pseudo: Spiel = {
+    ...s,
+    phase: 'gruppen',
+    status: t.status === 'offen' || t.status === 'gespielt' || (t.status === 'entfallen' && t.a.length > 0 && t.b.length > 0) ? 'offen' : 'wartet',
+    gesperrt: false,
+    gestrichen: false,
+    kampflosDurchRueckzug: null,
+    eintrag: ziel.eintrag,
+    stand: ziel.stand,
+    alternativen: ziel.alternativen,
+    angefochtenVon: ziel.angefochtenVon,
+  };
+  const einst = k.einst;
+  const vorher = s.gewinner;
+  const f = spielEreignis(z, { ...k, einst: { ...einst, festeSaetze: null } }, pseudo, e, d, leitung, aufgaben);
+  if (f) return f.replace('Dieses Spiel kann noch nicht eingetragen werden.', 'Dieses Spiel kann erst eingetragen werden, wenn beide Aufstellungen stehen.');
+  const sicherung = b.teile[String(nr)];
+  b.teile[String(nr)] = { eintrag: pseudo.eintrag, stand: pseudo.stand, alternativen: pseudo.alternativen, angefochtenVon: pseudo.angefochtenVon, aTeam: s.a ?? '' };
+  if (s.phase === 'ko') {
+    const neu = begegnungAuswerten(k, s).eintrag?.ergebnis.gewinner ?? null;
+    if (neu !== vorher && abhaengigeMitErgebnis(k, s).length > 0) {
+      if (sicherung) b.teile[String(nr)] = sicherung;
+      else delete b.teile[String(nr)];
+      return 'Das Folgespiel hat schon ein Ergebnis. Bitte zuerst dort das Ergebnis zurücksetzen.';
+    }
+  }
+  return null;
+}
+
+function tauschen(x: Ergebnis): Ergebnis {
+  return {
+    ...x,
+    saetze: x.saetze ? x.saetze.map(([a, b]) => [b, a] as [number, number]) : null,
+    satzA: x.satzB,
+    satzB: x.satzA,
+    ballA: x.ballB,
+    ballB: x.ballA,
+    gewinner: x.gewinner === 'a' ? 'b' : x.gewinner === 'b' ? 'a' : null,
+  };
 }
 
 function schiriLesen(z: TurnierZustand, v: unknown): Schiedsrichter | null {

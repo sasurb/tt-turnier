@@ -1,5 +1,5 @@
 import { spielerName } from './modell';
-import { teilnehmerVon, type Buchung, type TurnierZustand } from './zustand';
+import { spielerVon, teilnehmerVon, type Buchung, type TurnierZustand } from './zustand';
 
 /**
  * Kasse: Startgeld je Spieler (Summe der Konkurrenzen, in denen er gemeldet ist), Zahlungen und
@@ -99,7 +99,7 @@ export function ohneCheckin(z: TurnierZustand): { konkurrenz: string; teilnehmer
     const k = z.konkurrenzen[id]!;
     if (k.gestartet.gruppen || k.gestartet.ko) continue;
     for (const t of k.meldungen) {
-      const spieler = k.paare[t]?.spieler ?? [t];
+      const spieler = spielerVon(k, t);
       if (spieler.some((s) => z.checkin[s] !== true)) aus.push({ konkurrenz: id, teilnehmer: t });
     }
   }

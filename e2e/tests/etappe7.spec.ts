@@ -63,7 +63,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   ]) {
     await page.getByLabel('Vorname').fill(v!);
     await page.getByLabel('Nachname').fill(n!);
-    await page.getByLabel('Verein').fill('TTV Mitte');
+    await page.getByLabel('Verein', { exact: true }).fill('TTV Mitte');
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${n} ✓`)).toBeVisible();
   }

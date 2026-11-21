@@ -98,6 +98,7 @@ public final class KernTest {
         protokoll();
         etappe9();
         etappe10();
+        etappe11();
         http();
         String online = System.getenv("TT_ONLINE");
         if (online != null && !online.isEmpty()) zusammenspiel(online);
@@ -382,6 +383,57 @@ public final class KernTest {
         pruefe(a.g("filter") == null, "Entfernen rückgängig: kein Filter mehr");
     }
 
+    /** Kennung für einen Spieler anlegen und anmelden → Token */
+    static String spielerToken(Zentrale z, String tid, String leit, String bezug) {
+        A a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "spieler", "bezug", bezug, "name", bezug))), leit);
+        String code = null;
+        for (Object o : a.l("codes")) if (bezug.equals(Json.alsObjekt(o).get("bezug"))) code = (String) Json.alsObjekt(o).get("code");
+        return rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", code), null).t("token");
+    }
+
+    static int aufstellungen(A a) {
+        int n = 0;
+        for (Object o : a.l("ereignisse")) if ("mannschaft.aufgestellt".equals(Json.alsObjekt(o).get("art"))) n++;
+        return n;
+    }
+
+    static void etappe11() throws Exception {
+        System.out.println("Etappe 11: Mannschaften – Aufstellung nur durch die Führung, verdeckt bis beide abgegeben haben");
+        Zentrale z = new Zentrale(new Speicher(neuerOrdner()), new PlattformJvm(null), new Online(2000), () -> uhr);
+        z.setzePort(8080);
+        String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
+        A a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Mannschafts-Cup"), konto);
+        String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
+        String leit = a.t("token");
+        rufe(z, "POST", "events", Json.obj("ereignisse", liste(
+            ev("m-0000001", "spieler.angelegt", Json.obj("id", "a1", "vorname", "A", "nachname", "Eins", "verein", "")),
+            ev("m-0000002", "spieler.angelegt", Json.obj("id", "a2", "vorname", "A", "nachname", "Zwei", "verein", "")),
+            ev("m-0000003", "spieler.angelegt", Json.obj("id", "b1", "vorname", "B", "nachname", "Eins", "verein", "")),
+            ev("m-0000004", "mannschaft.gemeldet", Json.obj("konkurrenz", "m", "id", "m-aaaa", "name", "A", "spieler", liste("a1", "a2"), "fuehrer", "a1")),
+            ev("m-0000005", "mannschaft.gemeldet", Json.obj("konkurrenz", "m", "id", "m-bbbb", "name", "B", "spieler", liste("b1"), "fuehrer", "b1")))), leit, q("turnier", tid), false);
+        String a1 = spielerToken(z, tid, leit, "a1");
+        String a2 = spielerToken(z, tid, leit, "a2");
+        String b1 = spielerToken(z, tid, leit, "b1");
+        String spiel = "g0-m-aaaa-m-bbbb";
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000006", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "einzel", liste("a1", "a2"))))), a2, q("turnier", tid), false);
+        pruefe(abgelehnt(a, "keine_berechtigung"), "Spieler ohne Führung: Aufstellung abgelehnt");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000007", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", "g0-m-cccc-m-bbbb", "mannschaft", "m-aaaa", "einzel", liste("a1"))))), a1, q("turnier", tid), false);
+        pruefe(abgelehnt(a, "keine_berechtigung"), "Gruppenspiel einer fremden Begegnung: abgelehnt");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000008", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "einzel", liste("a1", "a2"))))), a1, q("turnier", tid), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Mannschaftsführung gibt die Aufstellung ab");
+        A gegner = rufe(z, "GET", "events", null, b1, q("turnier", tid, "ab", "0"), false);
+        A selbst = rufe(z, "GET", "events", null, a1, q("turnier", tid, "ab", "0"), false);
+        A zuschauer = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        A leitung = rufe(z, "GET", "events", null, leit, q("turnier", tid, "ab", "0"), false);
+        pruefe(aufstellungen(gegner) == 0 && aufstellungen(zuschauer) == 0 && gegner.t("filter") != null, "Gegner und Zuschauer sehen die Aufstellung noch nicht (Filter gesetzt)");
+        pruefe(aufstellungen(selbst) == 1 && aufstellungen(leitung) == 1, "Verfasser und Leitung sehen sie");
+        a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000009", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-bbbb", "einzel", liste("b1"))))), b1, q("turnier", tid), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Gegner gibt ab");
+        gegner = rufe(z, "GET", "events", null, b1, q("turnier", tid, "ab", "0"), false);
+        zuschauer = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
+        pruefe(aufstellungen(gegner) == 2 && aufstellungen(zuschauer) == 2 && zuschauer.g("filter") == null, "Beide abgegeben: für alle sichtbar, Filter weg");
+    }
+
     /** Fingerabdruck wie PHP: sha256 der sortierten IDs, 16 Zeichen */
     static final class Api10 {
         static String php(String... ids) {
@@ -397,7 +449,7 @@ public final class KernTest {
         z.setzePort(8080);
         String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
         A a = rufe(z, "GET", "info", null, null);
-        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.12.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
+        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.13.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
         a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Kassencup", "datum", "2027-02-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         String leit = a.t("token");

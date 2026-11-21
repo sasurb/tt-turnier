@@ -71,7 +71,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   for (const [v, n, ve, ttr] of spieler) {
     await page.getByLabel('Vorname').fill(v!);
     await page.getByLabel('Nachname').fill(n!);
-    await page.getByLabel('Verein').fill(ve!);
+    await page.getByLabel('Verein', { exact: true }).fill(ve!);
     await page.getByRole('textbox', { name: 'TTR-Punkte' }).fill(ttr!);
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${n} ✓`)).toBeVisible();

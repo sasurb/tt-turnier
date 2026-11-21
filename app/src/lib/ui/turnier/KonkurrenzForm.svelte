@@ -1,6 +1,7 @@
 <script lang="ts">
   import { T } from '../../texte';
-  import { MODI, centAus, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
+  import { SYSTEME, SYSTEM_REIHE, bisSiege, folgeLesen, folgeText, standardMannschaft, systemVon, type SystemId } from '../../engine/mannschaft';
+  import { MODI, MODI_MANNSCHAFT, centAus, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
   import { klassen as klassenStore } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
   import WertungInfo from './WertungInfo.svelte';
@@ -62,6 +63,25 @@
   const mitGruppen = $derived(e.modus === 'jgj' || e.modus === 'gruppen_ko');
   const mitKo = $derived(e.modus !== 'jgj');
   const einfachesKo = $derived(e.modus === 'ko' || e.modus === 'gruppen_ko');
+  // Mannschaften: Spielsystem, Durchspielen, eigene Spielfolge
+  // svelte-ignore state_referenced_locally
+  let system = $state<SystemId>(start.mannschaft?.system ?? 'bundes4');
+  // svelte-ignore state_referenced_locally
+  let durchspielen = $state(start.mannschaft?.durchspielen ?? false);
+  // svelte-ignore state_referenced_locally
+  let eigeneFolge = $state(start.mannschaft?.eigen ? folgeText(start.mannschaft.eigen.folge) : 'D1-D1, 1-2, 2-1, 1-1, 2-2');
+  const eigenGelesen = $derived(folgeLesen(eigeneFolge));
+  const sysVorschau = $derived(
+    system === 'eigen'
+      ? typeof eigenGelesen === 'string'
+        ? null
+        : systemVon({ mannschaft: { system: 'eigen', durchspielen, eigen: eigenGelesen } })
+      : SYSTEME[system],
+  );
+  const modiListe = $derived(e.art === 'mannschaft' ? MODI.filter((m) => MODI_MANNSCHAFT.includes(m)) : MODI);
+  $effect(() => {
+    if (e.art === 'mannschaft' && !MODI_MANNSCHAFT.includes(e.modus)) e.modus = 'gruppen_ko';
+  });
 
   async function absenden(ev: SubmitEvent) {
     ev.preventDefault();
@@ -72,6 +92,14 @@
       return;
     }
     const max = zahl(maxTeilnehmer);
+    let mannschaft = null as KonkurrenzEinstellungen['mannschaft'];
+    if (e.art === 'mannschaft') {
+      if (system === 'eigen' && typeof eigenGelesen === 'string') {
+        fehler = eigenGelesen;
+        return;
+      }
+      mannschaft = { ...standardMannschaft(), system, durchspielen, eigen: system === 'eigen' && typeof eigenGelesen !== 'string' ? eigenGelesen : null };
+    }
     const aus: KonkurrenzEinstellungen = {
       ...$state.snapshot(e),
       name: e.name.trim(),
@@ -82,6 +110,7 @@
       beginn: /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(beginn) ? beginn : null,
       vorgabe: mitVorgabe ? vorgabeJe : null,
       startgeld: geld,
+      mannschaft,
       maxTeilnehmer: max !== null && max >= 2 && max <= 1000 ? max : null,
       ttrGrenzen: [...new Set(ttrGrenzen.split(',').map((t) => parseInt(t.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 4000))].sort((a, b) => a - b),
       veroeffentlichung: veroeff === 'turnier' ? null : veroeff === 'offen' ? { tabellen: true, ko: true } : { tabellen: false, ko: false },
@@ -113,7 +142,7 @@
   <fieldset disabled={gestartet || mitMeldungen}>
     <legend>{T.konk.art}<Hilfe text={T.konk.artHilfe} /></legend>
     <div class="reihe arten">
-      {#each ['einzel', 'doppel', 'mixed'] as const as a (a)}
+      {#each ['einzel', 'doppel', 'mixed', 'mannschaft'] as const as a (a)}
         <label class="wahl klein" class:aktiv={e.art === a}>
           <input type="radio" name="art-{id}" value={a} bind:group={e.art} />
           <span><strong>{T.konk.arten[a]}</strong></span>
@@ -122,9 +151,27 @@
     </div>
   </fieldset>
 
+  {#if e.art === 'mannschaft'}
+    <fieldset disabled={gestartet} class="mannschaft" data-testid="mannschaft-system">
+      <legend>{T.mannschaft.system}<Hilfe text={T.mannschaft.systemHilfe} /></legend>
+      <select bind:value={system} aria-label={T.mannschaft.system}>
+        {#each SYSTEM_REIHE as sid (sid)}<option value={sid}>{sid === 'eigen' ? T.mannschaft.eigen : SYSTEME[sid].name}</option>{/each}
+      </select>
+      {#if system === 'eigen'}
+        <div class="label-zeile"><label for="mf-{id}">{T.mannschaft.folge}</label><Hilfe text={T.mannschaft.folgeHilfe} /></div>
+        <textarea id="mf-{id}" bind:value={eigeneFolge} rows="3"></textarea>
+        {#if typeof eigenGelesen === 'string'}<div class="meldung fehler" role="alert">{eigenGelesen}</div>{/if}
+      {/if}
+      {#if sysVorschau}
+        <p class="leise" data-testid="system-vorschau">{T.mannschaft.vorschau(sysVorschau.einzel, sysVorschau.doppel, sysVorschau.folge.length, bisSiege(sysVorschau))}</p>
+      {/if}
+      <label class="haken"><input type="checkbox" bind:checked={durchspielen} /> {T.mannschaft.durchspielen}</label>
+    </fieldset>
+  {/if}
+
   <fieldset disabled={gestartet}>
     <legend>{T.konk.modus}</legend>
-    {#each MODI as m (m)}
+    {#each modiListe as m (m)}
       <label class="wahl" class:aktiv={e.modus === m}>
         <input type="radio" name="modus-{id}" value={m} bind:group={e.modus} />
         <span><strong>{T.konk.modi[m]}</strong><span class="leise">{T.konk.modiText[m]}</span></span>
@@ -306,4 +353,5 @@
   .weitere summary { font-size: 1rem; }
   h3 { margin-top: 16px; }
   .zeit { max-width: 10rem; }
+  .mannschaft textarea { width: 100%; }
 </style>

@@ -1,4 +1,5 @@
 import type { Autor } from '@shared/protokoll';
+import type { BegegnungDaten, Mannschaft, MannschaftEinstellungen } from './mannschaft';
 
 /**
  * Datenmodell der Turnier-Engine. Alles hier wird aus den Ereignissen berechnet
@@ -16,8 +17,10 @@ export const MODI: readonly Modus[] = ['gruppen_ko', 'jgj', 'ko', 'doppel_ko', '
 export function istSchweizerArt(m: Modus): boolean {
   return m === 'schweizer' || m === 'cup';
 }
-/** Einzel, Doppel (zwei Spieler je Teilnehmer) oder Mixed (Doppel aus Frau und Mann) */
-export type KonkurrenzArt = 'einzel' | 'doppel' | 'mixed';
+/** Einzel, Doppel (zwei Spieler je Teilnehmer), Mixed (Doppel aus Frau und Mann) oder Mannschaft (ab 0.13) */
+export type KonkurrenzArt = 'einzel' | 'doppel' | 'mixed' | 'mannschaft';
+/** Spielsysteme, die Mannschafts-Konkurrenzen erlauben */
+export const MODI_MANNSCHAFT: readonly Modus[] = ['gruppen_ko', 'jgj', 'ko'];
 /** Rangfolge in Gruppen: DTTB-Wettspielordnung D 7.5 oder ITTF-Regel 3.7.5 */
 export type Wertung = 'dttb' | 'ittf';
 /** Rückzug während der Gruppe: nach WO D 7.9 (Spiele streichen) oder „Hobby“ (gespielte bleiben, Rest kampflos) */
@@ -137,6 +140,8 @@ export interface KonkurrenzEinstellungen {
   startgeld: number | null;
   /** Höchstzahl Teilnehmer für die Online-Anmeldung (danach Warteliste); null = unbegrenzt */
   maxTeilnehmer: number | null;
+  /** Mannschafts-Konkurrenz: Spielsystem (ab 0.13); null bei Einzel/Doppel */
+  mannschaft: MannschaftEinstellungen | null;
 }
 
 export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
@@ -175,6 +180,7 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
     beginn: null,
     startgeld: null,
     maxTeilnehmer: null,
+    mannschaft: null,
   };
 }
 
@@ -223,6 +229,7 @@ export const FEST_NACH_START: readonly (keyof KonkurrenzEinstellungen)[] = [
   'art',
   'festeSaetze',
   'beschleunigt',
+  'mannschaft',
 ];
 
 /** Feste Satzzahl, soweit sie für das Spielsystem gilt (nur Schweizer System und Cup-System) */
@@ -267,6 +274,8 @@ export interface Ergebnis {
   /** null = unentschieden (nur bei fester Satzzahl, siehe festeSaetze) */
   gewinner: Seite | null;
   art: 'normal' | 'kampflos' | 'aufgabe';
+  /** Mannschafts-Begegnung: gewonnene Teilspiele A:B (Sätze und Bälle sind dann Summen aller Teilspiele) */
+  spiele?: [number, number];
 }
 
 export interface ErgebnisEintrag {
@@ -406,6 +415,10 @@ export interface KonkurrenzZustand {
   meldungen: string[];
   /** Paare der Doppel-/Mixed-Konkurrenz */
   paare: Record<string, Paar>;
+  /** Mannschaften (ab 0.13), Teilnehmer-ID „m-…“ */
+  mannschaften: Record<string, Mannschaft>;
+  /** Aufstellungen und Teilspiele je Begegnung (Spiel-ID) */
+  begegnungen: Record<string, BegegnungDaten>;
   setzliste: string[] | null;
   auslosungGruppen: AuslosungGruppen | null;
   auslosungKo: AuslosungKo | null;

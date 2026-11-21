@@ -100,7 +100,7 @@
   function formularAus(e: AnmeldungEinstellungen) {
     offen = e.offen;
     schluss = e.schluss ? lokaleZeit(e.schluss) : '';
-    auswahl = e.konkurrenzen.length ? e.konkurrenzen.map((k) => k.id) : [...z.konkurrenzReihe];
+    auswahl = e.konkurrenzen.length ? e.konkurrenzen.map((k) => k.id) : z.konkurrenzReihe.filter((x) => z.konkurrenzen[x]!.einst.art !== 'mannschaft');
     angaben = [...e.angaben];
     hinweisText = e.hinweis;
     mitBank = e.bank !== null || !e.konkurrenzen.length;
@@ -296,7 +296,7 @@
     <fieldset>
       <legend>{T.anm.konkurrenzen}<Hilfe text={T.anm.konkurrenzenHilfe} /></legend>
       {#if !z.konkurrenzReihe.length}<p class="leise">{T.anm.keineKonkurrenzen}</p>{/if}
-      {#each z.konkurrenzReihe as kid (kid)}
+      {#each z.konkurrenzReihe.filter((x) => z.konkurrenzen[x]!.einst.art !== 'mannschaft') as kid (kid)}
         {@const k = z.konkurrenzen[kid]!}
         <label class="haken">
           <input type="checkbox" value={kid} bind:group={auswahl} />

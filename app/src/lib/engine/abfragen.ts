@@ -30,6 +30,8 @@ export function name(z: TurnierZustand, id: string | null, k?: KonkurrenzZustand
   if (z.spieler[id]) return spielerName(z.spieler[id]);
   const paar = k?.paare[id] ?? Object.values(z.konkurrenzen).map((x) => x.paare[id]).find(Boolean);
   if (paar) return paarName(z.spieler[paar.spieler[0]], z.spieler[paar.spieler[1]]);
+  const m = k?.mannschaften?.[id] ?? Object.values(z.konkurrenzen).map((x) => x.mannschaften?.[id]).find(Boolean);
+  if (m) return m.name;
   return '?';
 }
 
@@ -48,6 +50,14 @@ export function nameLang(z: TurnierZustand, id: string | null, k?: KonkurrenzZus
 export function teilnehmerDaten(z: TurnierZustand, k: KonkurrenzZustand): Record<string, TurnierSpieler> {
   if (k.einst.art === 'einzel') return z.spieler;
   const aus: Record<string, TurnierSpieler> = {};
+  if (k.einst.art === 'mannschaft') {
+    // Mannschaft: TTR = Durchschnitt der Spieler mit TTR (für die Setzung), Verein wie gemeldet
+    for (const m of Object.values(k.mannschaften)) {
+      const ttr = m.spieler.map((x) => z.spieler[x]?.ttr).filter((t): t is number => typeof t === 'number');
+      aus[m.id] = { id: m.id, vorname: '', nachname: m.name, verein: m.verein, ttr: ttr.length ? Math.round(ttr.reduce((a, b) => a + b, 0) / ttr.length) : null, klasse: null, geschlecht: null, jahrgang: null };
+    }
+    return aus;
+  }
   for (const p of Object.values(k.paare)) {
     const a = z.spieler[p.spieler[0]];
     const b = z.spieler[p.spieler[1]];

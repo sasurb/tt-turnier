@@ -283,7 +283,7 @@ $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
-pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.12.0' && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
+pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.13.0' && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1'], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
@@ -1175,6 +1175,49 @@ pruefe($s === 200 && $d['turnier']['rechte'] === 'leitung', 'alte Turnierkennung
 pruefe($s === 401, 'altes Leitungspasswort gilt nicht mehr (Kennungen neu ausgeben)');
 [$s, $d] = rufe($apiAlt, 'GET', 'turnier.einstellungen', null, $altTok, ['id' => 'altturnier']);
 pruefe($s === 200 && !isset($d['leitungsCode']) && $d['mail'] === false, 'alte Turniere: Einstellungen über das Konto; ohne Mailer kein Versand');
+
+echo "Etappe 11: Mannschaften – Aufstellung nur durch die Führung, verdeckt bis beide abgegeben haben\n";
+$api = neueApi();
+rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
+[, $d] = rufe($api, 'POST', 'login', ['email' => 'admin@example.org', 'passwort' => 'geheim123']);
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Mannschafts-Cup', 'datum' => '2026-12-05'], $d['token']);
+$mtid = $d['turnier']['id'];
+$mLeit = $d['token'];
+rufe($api, 'POST', 'events', ['ereignisse' => [
+    ereignis('m-0000001', 'spieler.angelegt', ['id' => 'a1', 'vorname' => 'A', 'nachname' => 'Eins', 'verein' => '']),
+    ereignis('m-0000002', 'spieler.angelegt', ['id' => 'a2', 'vorname' => 'A', 'nachname' => 'Zwei', 'verein' => '']),
+    ereignis('m-0000003', 'spieler.angelegt', ['id' => 'b1', 'vorname' => 'B', 'nachname' => 'Eins', 'verein' => '']),
+    ereignis('m-0000004', 'mannschaft.gemeldet', ['konkurrenz' => 'm', 'id' => 'm-aaaa', 'name' => 'A', 'spieler' => ['a1', 'a2'], 'fuehrer' => 'a1']),
+    ereignis('m-0000005', 'mannschaft.gemeldet', ['konkurrenz' => 'm', 'id' => 'm-bbbb', 'name' => 'B', 'spieler' => ['b1'], 'fuehrer' => 'b1']),
+]], $mLeit, ['turnier' => $mtid]);
+[, $d] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $mtid, 'eintraege' => [['rolle' => 'spieler', 'bezug' => 'a1', 'name' => 'A1'], ['rolle' => 'spieler', 'bezug' => 'a2', 'name' => 'A2'], ['rolle' => 'spieler', 'bezug' => 'b1', 'name' => 'B1']]], $mLeit);
+$mTok = [];
+foreach ($d['codes'] as $c) {
+    if ($c['rolle'] === 'spieler') {
+        [, $z] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $mtid, 'code' => $c['code']], null, [], '10.11.0.' . count($mTok));
+        $mTok[$c['bezug']] = $z['token'];
+    }
+}
+$aufst = fn(string $id, string $m, string $spiel = 'g0-m-aaaa-m-bbbb') => ['ereignisse' => [ereignis($id, 'mannschaft.aufgestellt', ['konkurrenz' => 'm', 'spiel' => $spiel, 'mannschaft' => $m, 'einzel' => ['x']])]];
+$anzahlAuf = fn(array $d) => count(array_filter($d['ereignisse'], fn($e) => $e['art'] === 'mannschaft.aufgestellt'));
+[$s, $d] = rufe($api, 'POST', 'events', $aufst('m-0000006', 'm-aaaa'), $mTok['a2'], ['turnier' => $mtid]);
+pruefe($s === 200 && $d['angenommen'] === [] && ($d['abgelehnt'][0]['fehler'] ?? '') === 'keine_berechtigung', 'Spieler ohne Führung: Aufstellung abgelehnt');
+[$s, $d] = rufe($api, 'POST', 'events', $aufst('m-0000007', 'm-aaaa', 'g0-m-cccc-m-bbbb'), $mTok['a1'], ['turnier' => $mtid]);
+pruefe($d['angenommen'] === [], 'Gruppenspiel einer fremden Begegnung: abgelehnt');
+[$s, $d] = rufe($api, 'POST', 'events', $aufst('m-0000008', 'm-aaaa'), $mTok['a1'], ['turnier' => $mtid]);
+pruefe(count($d['angenommen']) === 1, 'Mannschaftsführung gibt die Aufstellung ab');
+[, $gegner] = rufe($api, 'GET', 'events', null, $mTok['b1'], ['turnier' => $mtid, 'ab' => 0]);
+[, $selbst] = rufe($api, 'GET', 'events', null, $mTok['a1'], ['turnier' => $mtid, 'ab' => 0]);
+[, $zusch] = rufe($api, 'GET', 'events', null, null, ['turnier' => $mtid, 'ab' => 0]);
+[, $leit] = rufe($api, 'GET', 'events', null, $mLeit, ['turnier' => $mtid, 'ab' => 0]);
+pruefe($anzahlAuf($gegner) === 0 && $anzahlAuf($zusch) === 0 && isset($gegner['filter']), 'Gegner und Zuschauer sehen die Aufstellung noch nicht (Filter gesetzt)');
+pruefe($anzahlAuf($selbst) === 1 && $anzahlAuf($leit) === 1, 'Verfasser und Leitung sehen sie');
+[$s, $d] = rufe($api, 'POST', 'events', $aufst('m-0000009', 'm-bbbb'), $mTok['b1'], ['turnier' => $mtid]);
+pruefe(count($d['angenommen']) === 1, 'Gegner gibt ab');
+[, $gegner] = rufe($api, 'GET', 'events', null, $mTok['b1'], ['turnier' => $mtid, 'ab' => 0]);
+[, $zusch] = rufe($api, 'GET', 'events', null, null, ['turnier' => $mtid, 'ab' => 0]);
+pruefe($anzahlAuf($gegner) === 2 && $anzahlAuf($zusch) === 2 && !isset($zusch['filter']), 'Beide abgegeben: für alle sichtbar, Filter weg');
+pruefe(Api::filterKennung(['aufstellung:x' => true]) === substr(hash('sha256', 'aufstellung:x'), 0, 16), 'Filter-Kennung wie im Kern der Zentrale');
 
 echo "\n$anzahl Prüfungen, $fehler Fehler\n";
 exit($fehler === 0 ? 0 : 1);

@@ -218,6 +218,11 @@ export function ergebnisGleich(x: Ergebnis, y: Ergebnis): boolean {
 /** „3:1 (11:7, 9:11, 11:5, 12:10)“ – optional aus Sicht von B */
 export function ergebnisText(e: Ergebnis, ausSichtVon: Seite = 'a'): string {
   const b = ausSichtVon === 'b';
+  // Mannschafts-Begegnung: gewonnene Spiele, Sätze in Klammern
+  if (e.spiele) {
+    const [x, y] = b ? [e.spiele[1], e.spiele[0]] : e.spiele;
+    return `${x}:${y} (${b ? `${e.satzB}:${e.satzA}` : `${e.satzA}:${e.satzB}`} Sätze)${e.art === 'kampflos' ? ' kampflos' : ''}`;
+  }
   const stand = b ? `${e.satzB}:${e.satzA}` : `${e.satzA}:${e.satzB}`;
   const zusatz = e.art === 'kampflos' ? ' kampflos' : e.art === 'aufgabe' ? ' Aufgabe' : '';
   if (!e.saetze || e.art === 'kampflos') return stand + zusatz;

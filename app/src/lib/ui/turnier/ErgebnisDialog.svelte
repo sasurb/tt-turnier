@@ -18,6 +18,9 @@
     aufgaben = [],
     eintragen,
     schliessen,
+    namen = null,
+    seite = undefined,
+    untertitel = null,
   }: {
     z: TurnierZustand;
     k: KonkurrenzZustand;
@@ -30,10 +33,15 @@
     aufgaben?: readonly Aufgabe[];
     eintragen: (art: string, daten: Record<string, unknown>) => Promise<unknown>;
     schliessen: () => void;
+    /** Teilspiel einer Mannschafts-Begegnung: Anzeigenamen der Seiten (Spieler) statt der Teilnehmer */
+    namen?: [string, string] | null;
+    /** Teilspiel: eigene Seite (null = nicht beteiligt); fehlt = aus der Meldung ermitteln */
+    seite?: Seite | null;
+    untertitel?: string | null;
   } = $props();
 
   const leitung = $derived(rolle === 'leitung' || rolle === 'admin' || rolle === 'veranstalter');
-  const meineSeite = $derived<Seite | null>(rolle === 'spieler' ? seiteVon(k, spiel, ich) : null);
+  const meineSeite = $derived<Seite | null>(seite !== undefined ? seite : rolle === 'spieler' ? seiteVon(k, spiel, ich) : null);
   /** Anfechtungen entscheiden und Ergebnisse löschen: Leitung und Oberschiedsrichter */
   const entscheidet = $derived(leitung || aufgaben.includes('oberschiri'));
   const amtlich = $derived(leitung || (rolle === 'helfer' && (aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri'))) || (helfer && meineSeite === null));
@@ -42,9 +50,9 @@
   /** Feste Satzzahl (Schweizer/Cup): alle Sätze werden gespielt, Unentschieden möglich */
   const feste = $derived(festeSaetzeVon(k.einst));
   const gewinn = $derived(gewinnSaetze(k.einst.bestOf));
-  const vorgabe = $derived(vorgabeVon(z, k, spiel));
-  const nameA = $derived(name(z, spiel.a) + (meineSeite === 'a' ? ` (${T.erg.du})` : ''));
-  const nameB = $derived(name(z, spiel.b) + (meineSeite === 'b' ? ` (${T.erg.du})` : ''));
+  const vorgabe = $derived(namen ? null : vorgabeVon(z, k, spiel));
+  const nameA = $derived((namen ? namen[0] : name(z, spiel.a)) + (meineSeite === 'a' ? ` (${T.erg.du})` : ''));
+  const nameB = $derived((namen ? namen[1] : name(z, spiel.b)) + (meineSeite === 'b' ? ` (${T.erg.du})` : ''));
   const kannEintragen = $derived(darf && (spiel.status === 'offen' || spiel.status === 'gespielt') && !spiel.gestrichen && !spiel.gesperrt && !(spiel.kampflosDurchRueckzug && !spiel.eintrag));
 
   // Formular
@@ -164,7 +172,7 @@
 <dialog bind:this={dialog} onclose={schliessen} aria-labelledby="erg-titel">
   <div class="kopf">
     <div>
-      <div class="leise">{k.einst.name}</div>
+      <div class="leise">{untertitel ?? k.einst.name}</div>
       <h2 id="erg-titel">{nameA} <span class="leise">–</span> {nameB}</h2>
       {#if vorgabe}<p class="vorgabe" data-testid="vorgabe">{T.spiele.vorgabe(name(z, vorgabe.seite === 'a' ? spiel.a : spiel.b), vorgabe.punkte)}</p>{/if}
     </div>
