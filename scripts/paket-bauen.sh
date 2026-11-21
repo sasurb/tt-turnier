@@ -35,9 +35,9 @@ Options -Indexes
   <FilesMatch "\.(js|css|svg|woff2?)$">
     Header unset Content-Security-Policy
   </FilesMatch>
-  # Service Worker (nur Mitteilungen): braucht nichts zu laden, immer frisch vom Server
+  # Service Worker (Offline-Betrieb + Mitteilungen): lädt nur App-Dateien vom eigenen Server, immer frisch
   <Files "sw.js">
-    Header always set Content-Security-Policy "default-src 'none'"
+    Header always set Content-Security-Policy "default-src 'self'"
     Header set Cache-Control "no-cache"
   </Files>
 </IfModule>

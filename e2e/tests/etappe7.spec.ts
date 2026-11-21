@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { angabenSetzen } from './hilfen';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 
@@ -52,11 +53,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
 
-  const angaben = page.locator('details', { hasText: 'Angaben im Turnier' });
-  await angaben.locator('summary').click();
-  await angaben.getByLabel('Anzahl Tische').fill('2');
-  await angaben.getByRole('button', { name: 'Speichern' }).click();
-  await expect(angaben.getByText('Gespeichert.')).toBeVisible();
+  await angabenSetzen(page, { tische: '2' });
   await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
   for (const [v, n] of [
     ['Anna', 'Alpha'],

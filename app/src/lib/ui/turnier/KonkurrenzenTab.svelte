@@ -10,6 +10,7 @@
   import Hilfe from '../Hilfe.svelte';
   import KonkurrenzDetail from './KonkurrenzDetail.svelte';
   import KonkurrenzForm from './KonkurrenzForm.svelte';
+  import TurnierAngaben from './TurnierAngaben.svelte';
   import { alsEineAktion } from '../../aktion';
 
   let { z, eintragen }: { z: TurnierZustand; eintragen: (art: string, d: Record<string, unknown>) => Promise<unknown> } = $props();
@@ -141,6 +142,8 @@
     }
   }
 </script>
+
+<TurnierAngaben {z} {eintragen} />
 
 <section class="karte">
   <h2>{T.konk.titel}</h2>

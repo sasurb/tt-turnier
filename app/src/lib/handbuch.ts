@@ -265,7 +265,7 @@ export const HANDBUCH: HandbuchKapitel[] = [
     id: 'kasse',
     titel: 'Kasse, Check-in und Quittungen',
     fuer: ['leitung', 'helfer'],
-    einleitung: 'Im Reiter „Kasse“ checkst du Spieler am Turniertag ein und buchst das Startgeld.',
+    einleitung: 'Im Reiter „Kasse & Check-in“ checkst du Spieler am Turniertag ein und buchst das Startgeld.',
     abschnitte: [
       {
         titel: 'Ablauf',
@@ -281,6 +281,12 @@ export const HANDBUCH: HandbuchKapitel[] = [
         text: [
           'Buchungen lassen sich nur stornieren, nicht rückgängig machen – so bleiben ausgegebene Quittungen gültig. Ob ein Umsatzsteuer-Hinweis auf die Quittung gehört, entscheidet ihr als Verein (im Zweifel steuerlich beraten lassen).',
           'Ändert jemand anderes als dein Konto die IBAN, bekommst du eine Mail.',
+        ],
+      },
+      {
+        titel: 'Ohne Netz kassieren',
+        text: [
+          'Jemand zahlt vorab, z. B. beim Training in der Halle ohne Netz? Kein Problem: Öffne das Turnier einmal mit Netz auf deinem Handy (als Leitung oder mit einer Helferkennung mit Aufgabe Kasse). Danach öffnen sich App und Turnier auch offline. Buchungen und Check-ins werden auf dem Handy gespeichert und automatisch nachgetragen, sobald wieder Netz da ist. Oben steht so lange „Kein Netz“ und die Zahl der wartenden Einträge.',
         ],
       },
     ],

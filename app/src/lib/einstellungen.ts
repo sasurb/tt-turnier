@@ -26,6 +26,12 @@ export interface GemerktesTurnier {
   wer?: string | null;
   /** Über das eigene Konto geöffnet: Rechte kommen vom Konto (solange es angemeldet ist) */
   konto?: boolean | null;
+  /**
+   * Zuletzt vom Server bestätigte Rechte des Kontos (kontoId) für dieses Turnier – nur für den Offline-Betrieb,
+   * damit Leitung und Kasse ohne Netz weiterarbeiten. Der Server prüft beim Nachtragen jeden Eintrag erneut.
+   */
+  kontoRolle?: Rolle | null;
+  kontoId?: number | null;
 }
 
 export interface KontoSitzung {
@@ -98,6 +104,8 @@ export function turnierMerken(t: Omit<GemerktesTurnier, 'zuletzt'>) {
     aufgaben: t.aufgaben !== undefined ? t.aufgaben : (alt?.aufgaben ?? null),
     wer: t.wer !== undefined ? t.wer : (alt?.wer ?? null),
     konto: t.konto !== undefined ? t.konto : (alt?.konto ?? null),
+    kontoRolle: t.kontoRolle !== undefined ? t.kontoRolle : (alt?.kontoRolle ?? null),
+    kontoId: t.kontoId !== undefined ? t.kontoId : (alt?.kontoId ?? null),
     zuletzt: new Date().toISOString(),
   });
   schreiben('tt.turniere', liste);

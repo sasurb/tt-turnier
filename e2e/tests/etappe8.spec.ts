@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { angabenSetzen } from './hilfen';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,11 +44,7 @@ test('Rückgängig, Nachmelden, Zeitplan, Vorplanen und Ziehen auf Tische', asyn
   const fehler: string[] = [];
   page.on('pageerror', (e) => fehler.push(e.message));
   await einzelgeraet(page, 'Planpokal');
-  const angaben = page.locator('details', { hasText: 'Angaben im Turnier' });
-  await angaben.locator('summary').click();
-  await angaben.getByLabel('Anzahl Tische').fill('2');
-  await angaben.getByRole('button', { name: 'Speichern' }).click();
-  await expect(angaben.getByText('Gespeichert.')).toBeVisible();
+  await angabenSetzen(page, { tische: '2' });
   await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
   for (const [v, n] of [
     ['Anna', 'Alpha'],

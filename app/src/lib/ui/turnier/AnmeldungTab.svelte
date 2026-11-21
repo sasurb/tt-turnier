@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import { alleGesehen, appHinweisAn, neueAnmeldungen, setzeAppHinweis } from '../../anmeldeHinweis';
   import type { AnmeldeStatus, AnmeldungEinstellungen, AnmeldungEintrag, AnmeldungKonkurrenz } from '@shared/protokoll';
   import { T } from '../../texte';
   import { api } from '../../dienste';
@@ -21,7 +22,15 @@
     turnierId,
     token,
     eintragen,
-  }: { z: TurnierZustand; turnierId: string; token: string; eintragen: (art: string, d: Record<string, unknown>, opt?: { id?: string }) => Promise<unknown> } = $props();
+    neuGesehen = () => undefined,
+  }: {
+    z: TurnierZustand;
+    turnierId: string;
+    token: string;
+    eintragen: (art: string, d: Record<string, unknown>, opt?: { id?: string }) => Promise<unknown>;
+    /** Die Leitung hat die neuen Anmeldungen gesehen (Hinweis im Reiter zurücksetzen) */
+    neuGesehen?: () => void;
+  } = $props();
 
   let laedt = $state(true);
   let fehler = $state('');
@@ -40,6 +49,25 @@
   let angaben = $state<string[]>([]);
   let hinweisText = $state('');
   let mitBank = $state(true);
+  let hinweisMail = $state(true);
+  // svelte-ignore state_referenced_locally
+  let appHinweis = $state(appHinweisAn(turnierId));
+  /** Aufgeklappt: bei neuen Anmeldungen gleich offen */
+  let aufgeklappt = $state(false);
+  let neuAnzahl = $state(0);
+  function appHinweisSetzen(an: boolean) {
+    appHinweis = an;
+    setzeAppHinweis(turnierId, an);
+  }
+  // Wer den Abschnitt aufklappt, hat die neuen Anmeldungen gesehen
+  $effect(() => {
+    if (!aufgeklappt || laedt) return;
+    const l = liste;
+    untrack(() => {
+      alleGesehen(turnierId, l);
+      neuGesehen();
+    });
+  });
 
   const link = $derived(`${appBasis()}#/meldung/${turnierId}`);
   const ids = $derived(new Set(liste.map((a) => a.id)));
@@ -76,6 +104,7 @@
     angaben = [...e.angaben];
     hinweisText = e.hinweis;
     mitBank = e.bank !== null || !e.konkurrenzen.length;
+    hinweisMail = e.hinweisMail !== false;
   }
   function lokaleZeit(iso: string): string {
     const d = new Date(iso);
@@ -91,6 +120,7 @@
       angaben: angaben.filter((a) => z.angaben.includes(a as never)) as AnmeldungEinstellungen['angaben'],
       bank: mitBank ? bank : null,
       ort: z.ort,
+      hinweisMail,
     };
   }
 
@@ -101,6 +131,10 @@
       liste = a.anmeldungen;
       freigabe = a.freigabe ?? null;
       formularAus(a.einstellungen);
+      const frisch = neueAnmeldungen(turnierId, a.anmeldungen, (x) => !!z.spieler[x]);
+      neuAnzahl = frisch.length;
+      // Aufklappen, wenn es etwas zu tun gibt (neue Anmeldungen oder Übernahme ins Turnier)
+      if (frisch.length || uebernahmePlanen(z, a.anmeldungen).schritte.length) aufgeklappt = true;
       fehler = '';
       // Konkurrenzen (Namen, Höchstzahl, Startgeld, von Hand Gemeldete) still nachziehen
       const neu = konkurrenzenFuer(a.einstellungen.konkurrenzen.map((k) => k.id));
@@ -181,14 +215,18 @@
   const angabenNamen: Record<string, string> = { ttr: T.meldung.ttr, klasse: T.meldung.klasse, geschlecht: T.meldung.geschlecht, jahrgang: T.meldung.jahrgang };
 </script>
 
-<section class="karte">
-  <h2>{T.anm.titel}<Hilfe text={T.anm.hilfe} /></h2>
+<details class="karte abschnitt" bind:open={aufgeklappt} data-testid="abschnitt-anmeldungen">
+  <summary>
+    <h2 class="titel">{T.anm.abschnitt} <span class="leise">({liste.length})</span></h2>
+    {#if neuAnzahl}<span class="marke neu" data-testid="anmeldung-neu">{T.anm.neu(neuAnzahl)}</span>{/if}
+  </summary>
   {#if laedt}
     <p class="leise">{T.app.laden}</p>
   {:else}
     {#if !z.datum}<div class="meldung info">{T.anm.keinDatum}</div>{/if}
-    <p>
+    <p class="reihe">
       <span class="marke" class:online={einst?.offen} data-testid="anmeldung-status">{einst?.offen ? T.anm.offen : T.anm.geschlossen}</span>
+      <Hilfe text={T.anm.hilfe} />
     </p>
     {#if einst?.offen}
       <div class="reihe">
@@ -198,63 +236,9 @@
       </div>
       {#if qr}<div class="qr"><QrCode text={link} groesse={220} label={T.anm.link} /></div>{/if}
     {/if}
-
-    <fieldset>
-      <legend>{T.anm.konkurrenzen}<Hilfe text={T.anm.konkurrenzenHilfe} /></legend>
-      {#if !z.konkurrenzReihe.length}<p class="leise">{T.anm.keineKonkurrenzen}</p>{/if}
-      {#each z.konkurrenzReihe as kid (kid)}
-        {@const k = z.konkurrenzen[kid]!}
-        <label class="haken">
-          <input type="checkbox" value={kid} bind:group={auswahl} />
-          <span>
-            {k.einst.name}
-            <span class="leise">
-              {[
-                T.anm.platz((belegung[kid]?.plaetze ?? 0) + (konkurrenzenFuer([kid])[0]?.vorab ?? 0), k.einst.maxTeilnehmer),
-                belegung[kid]?.warteliste ? T.anm.warteliste(belegung[kid]!.warteliste) : '',
-                k.einst.startgeld ? euro(k.einst.startgeld) : '',
-              ]
-                .filter(Boolean)
-                .map((x) => ` · ${x}`)
-                .join('')}
-            </span>
-          </span>
-        </label>
-      {/each}
-    </fieldset>
-    {#if z.angaben.length}
-      <fieldset>
-        <legend>{T.anm.angaben}</legend>
-        {#each z.angaben as a (a)}<label class="haken"><input type="checkbox" value={a} bind:group={angaben} /> {angabenNamen[a]}</label>{/each}
-      </fieldset>
-    {/if}
-    <div class="label-zeile"><label for="an-schluss">{T.anm.schluss}</label><Hilfe text={T.anm.schlussHilfe} /></div>
-    <input id="an-schluss" type="datetime-local" bind:value={schluss} />
-    <label>{T.anm.hinweis}<textarea bind:value={hinweisText} maxlength="1000" rows="3"></textarea></label>
-    {#if bank}
-      <div class="haken"><input id="an-bank" type="checkbox" bind:checked={mitBank} /><label for="an-bank">{T.anm.bank}</label><Hilfe text={T.anm.bankHilfe} /></div>
-    {:else}
-      <p class="leise">{T.anm.ohneBank}</p>
-    {/if}
     {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
     {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
-    {#if freigabe && !freigabe.erlaubt}
-      <div class="meldung info" role="status" data-testid="anmeldung-freigabe">{T.anm.nochNichtFrei(freigabe.ab)}</div>
-    {/if}
-    <div class="reihe">
-      {#if einst?.offen}
-        <button disabled={sendet} onclick={() => speichern(true)}>{T.anm.speichern}</button>
-        <button class="zweit" disabled={sendet} onclick={() => speichern(false)} data-testid="anmeldung-schliessen">{T.anm.schliessen}</button>
-      {:else}
-        <button disabled={sendet || !z.datum || !z.konkurrenzReihe.length || (freigabe !== null && !freigabe.erlaubt)} onclick={() => speichern(true)} data-testid="anmeldung-oeffnen">{T.anm.oeffnen}</button>
-      {/if}
-    </div>
-  {/if}
-</section>
-
-{#if !laedt}
-  <section class="karte">
-    <h2>{T.anm.liste} <span class="leise">({liste.length})</span></h2>
+    <h3>{T.anm.liste} <span class="leise">({liste.length})</span></h3>
     {#if plan.schritte.length}
       <div class="meldung info uebernahme">
         <button disabled={sendet} onclick={uebernehmen} data-testid="anmeldung-uebernehmen">{T.anm.uebernehmen(plan.schritte.length)}</button>
@@ -306,11 +290,73 @@
         {/each}
       </ul>
     {/if}
-  </section>
-{/if}
+
+    <details class="einrichten" open={!einst?.offen}>
+      <summary>{T.anm.einrichten}</summary>
+    <fieldset>
+      <legend>{T.anm.konkurrenzen}<Hilfe text={T.anm.konkurrenzenHilfe} /></legend>
+      {#if !z.konkurrenzReihe.length}<p class="leise">{T.anm.keineKonkurrenzen}</p>{/if}
+      {#each z.konkurrenzReihe as kid (kid)}
+        {@const k = z.konkurrenzen[kid]!}
+        <label class="haken">
+          <input type="checkbox" value={kid} bind:group={auswahl} />
+          <span>
+            {k.einst.name}
+            <span class="leise">
+              {[
+                T.anm.platz((belegung[kid]?.plaetze ?? 0) + (konkurrenzenFuer([kid])[0]?.vorab ?? 0), k.einst.maxTeilnehmer),
+                belegung[kid]?.warteliste ? T.anm.warteliste(belegung[kid]!.warteliste) : '',
+                k.einst.startgeld ? euro(k.einst.startgeld) : '',
+              ]
+                .filter(Boolean)
+                .map((x) => ` · ${x}`)
+                .join('')}
+            </span>
+          </span>
+        </label>
+      {/each}
+    </fieldset>
+    {#if z.angaben.length}
+      <fieldset>
+        <legend>{T.anm.angaben}</legend>
+        {#each z.angaben as a (a)}<label class="haken"><input type="checkbox" value={a} bind:group={angaben} /> {angabenNamen[a]}</label>{/each}
+      </fieldset>
+    {/if}
+    <div class="label-zeile"><label for="an-schluss">{T.anm.schluss}</label><Hilfe text={T.anm.schlussHilfe} /></div>
+    <input id="an-schluss" type="datetime-local" bind:value={schluss} />
+    <label>{T.anm.hinweis}<textarea bind:value={hinweisText} maxlength="1000" rows="3"></textarea></label>
+    {#if bank}
+      <div class="haken"><input id="an-bank" type="checkbox" bind:checked={mitBank} /><label for="an-bank">{T.anm.bank}</label><Hilfe text={T.anm.bankHilfe} /></div>
+    {:else}
+      <p class="leise">{T.anm.ohneBank}</p>
+    {/if}
+    <fieldset>
+      <legend>{T.anm.hinweisTitel}<Hilfe text={T.anm.hinweisHilfe} /></legend>
+      <label class="haken"><input type="checkbox" bind:checked={hinweisMail} data-testid="hinweis-mail" /> {T.anm.hinweisMail}</label>
+      <label class="haken"><input type="checkbox" checked={appHinweis} onchange={(ev) => appHinweisSetzen((ev.currentTarget as HTMLInputElement).checked)} data-testid="hinweis-app" /> {T.anm.hinweisApp}</label>
+    </fieldset>
+    {#if freigabe && !freigabe.erlaubt}
+      <div class="meldung info" role="status" data-testid="anmeldung-freigabe">{T.anm.nochNichtFrei(freigabe.ab)}</div>
+    {/if}
+    <div class="reihe">
+      {#if einst?.offen}
+        <button disabled={sendet} onclick={() => speichern(true)}>{T.anm.speichern}</button>
+        <button class="zweit" disabled={sendet} onclick={() => speichern(false)} data-testid="anmeldung-schliessen">{T.anm.schliessen}</button>
+      {:else}
+        <button disabled={sendet || !z.datum || !z.konkurrenzReihe.length || (freigabe !== null && !freigabe.erlaubt)} onclick={() => speichern(true)} data-testid="anmeldung-oeffnen">{T.anm.oeffnen}</button>
+      {/if}
+    </div>
+    </details>
+  {/if}
+</details>
 
 <style>
-  h2 { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  h3 { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 16px; }
+  .abschnitt > summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 44px; cursor: pointer; }
+  .abschnitt > summary .titel { font-size: 1.2rem; margin: 0; }
+  .einrichten { margin-top: 16px; border-top: 1px solid var(--linie); padding-top: 8px; }
+  .einrichten > summary { min-height: 44px; display: flex; align-items: center; font-weight: 700; cursor: pointer; }
+  .marke.neu { background: var(--orange); color: #fff; }
   fieldset { border: 0; padding: 0; margin: 12px 0; }
   legend { font-weight: 700; display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
   .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; min-height: 44px; }

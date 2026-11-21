@@ -41,6 +41,9 @@ jobs:
       VITE_BETREIBER_ANSCHRIFT: ${{ vars.BETREIBER_ANSCHRIFT }}
       VITE_BETREIBER_MAIL: ${{ vars.BETREIBER_MAIL }}
       VITE_BETREIBER_TELEFON: ${{ vars.BETREIBER_TELEFON }}
+      VITE_SPENDEN_PAYPAL: ${{ vars.SPENDEN_PAYPAL }}
+      VITE_SPENDEN_GITHUB: ${{ vars.SPENDEN_GITHUB }}
+      VITE_SPENDEN_KOFI: ${{ vars.SPENDEN_KOFI }}
     steps:
       - name: Secrets prüfen
         id: pruefen
@@ -155,6 +158,9 @@ jobs:
           VITE_BETREIBER_ANSCHRIFT: ${{ vars.BETREIBER_ANSCHRIFT }}
           VITE_BETREIBER_MAIL: ${{ vars.BETREIBER_MAIL }}
           VITE_BETREIBER_TELEFON: ${{ vars.BETREIBER_TELEFON }}
+          VITE_SPENDEN_PAYPAL: ${{ vars.SPENDEN_PAYPAL }}
+          VITE_SPENDEN_GITHUB: ${{ vars.SPENDEN_GITHUB }}
+          VITE_SPENDEN_KOFI: ${{ vars.SPENDEN_KOFI }}
           VITE_KONTAKT_URL: ${{ vars.WEBSPACE_URL }}
         run: npm ci && npm run build
       - uses: actions/configure-pages@v6

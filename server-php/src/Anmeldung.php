@@ -46,13 +46,14 @@ final class Anmeldung
 
     private static function leer(): array
     {
-        return ['offen' => false, 'schluss' => null, 'konkurrenzen' => [], 'hinweis' => '', 'angaben' => [], 'bank' => null, 'ort' => ''];
+        return ['offen' => false, 'schluss' => null, 'konkurrenzen' => [], 'hinweis' => '', 'angaben' => [], 'bank' => null, 'ort' => '', 'hinweisMail' => true];
     }
 
     /** Öffentliche Fassung: ohne „vorab“ (Zählhilfe) und ohne Bankverbindung (die sehen nur bestätigte Anmeldungen) */
     private static function ausgabe(array $e): array
     {
         $e['bank'] = null;
+        unset($e['hinweisMail']);
         $e['konkurrenzen'] = array_map(static fn(array $k): array => [
             'id' => $k['id'], 'name' => $k['name'], 'art' => $k['art'], 'max' => $k['max'], 'startgeld' => $k['startgeld'],
         ], $e['konkurrenzen']);
@@ -223,6 +224,38 @@ final class Anmeldung
     private function mailen(array $t, string $an, string $betreff, string $text): void
     {
         $this->api->mail($an, $betreff, $text, null, null, $this->leitungMail($t));
+    }
+
+    /** Höchstens so viele Hinweis-Mails „Neue Anmeldung“ je Turnier und Tag */
+    private const HINWEISE_JE_TAG = 50;
+
+    /**
+     * Hinweis an die Turnierleitung (abschaltbar unter „Online-Anmeldung“): ohne Namen und Mail-Adressen der
+     * Angemeldeten – nur Konkurrenzen und Zahlen. Die Namen stehen in der App.
+     */
+    private function leitungHinweisen(array $t, array $e, array $z, array $zeilen): void
+    {
+        if (($e['hinweisMail'] ?? true) === false) {
+            return;
+        }
+        $an = $this->leitungMail($t);
+        $schluessel = 'anmeldung-hinweis|' . $t['id'];
+        if ($an === null || $this->api->anzahlVersuche($schluessel, 86400) >= self::HINWEISE_JE_TAG) {
+            return;
+        }
+        $this->api->fehlversuch($schluessel);
+        $teile = [];
+        foreach ($z['d']['konkurrenzen'] as $k) {
+            $kk = self::konkurrenzVon($e, (string)$k['id']);
+            $teile[] = '• ' . ($kk['name'] ?? $k['id']) . (($k['status'] ?? '') === 'warteliste' ? ' (Warteliste)' : '');
+        }
+        $bestaetigt = count(array_filter($zeilen, static fn(array $x): bool => $x['bestaetigt'] !== null));
+        $this->api->mail($an, "Neue Anmeldung: {$t['name']}", "Hallo,\n\n"
+            . "für „{$t['name']}“ (" . self::datumText($t) . ") ist eine neue Anmeldung bestätigt worden:\n"
+            . implode("\n", $teile) . "\n\n"
+            . "Bestätigte Anmeldungen insgesamt: {$bestaetigt}\n\n"
+            . "Namen und Angaben siehst du in der App unter „Spieler“ → „Online-Anmeldungen“: " . $this->api->appUrl() . '#/t/' . $t['id'] . "/spieler\n\n"
+            . "Diese Hinweise lassen sich dort unter „Hinweis bei neuen Anmeldungen“ abschalten.");
     }
 
     private function link(array $t, string $schluessel): string
@@ -514,6 +547,7 @@ final class Anmeldung
                 . $this->standText($t, $e, $z, $zeilen)
                 . "\nStand ansehen oder abmelden: " . $this->link($t, (string)$a->rumpf['schluessel']) . "\n"
                 . "Bitte hebe diese Mail auf. Rückst du von der Warteliste nach, bekommst du eine Mail.");
+            $this->leitungHinweisen($t, $e, $z, $zeilen);
         }
         return $this->stand($t, $e, $z, $zeilen);
     }
@@ -711,6 +745,7 @@ final class Anmeldung
             'angaben' => $angaben,
             'bank' => $bank,
             'ort' => is_string($r['ort'] ?? null) ? mb_substr(trim($r['ort']), 0, 120) : '',
+            'hinweisMail' => ($r['hinweisMail'] ?? true) !== false,
         ];
         // Freigabe zuletzt prüfen (erst die Eingaben, damit Fehler darin sofort auffallen)
         $frei = $this->api->anmeldungFreigabe((int)$t['konto_id']);

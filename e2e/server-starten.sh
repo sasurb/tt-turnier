@@ -8,7 +8,8 @@ ZIEL="${ZIEL:-/tmp/tt-e2e}"
 
 if [ "${OHNE_BAU:-}" != "1" ]; then
   (cd app && VITE_BETREIBER_NAME="Erika Muster" VITE_BETREIBER_ANSCHRIFT="Musterweg 1, 12345 Musterstadt" \
-    VITE_BETREIBER_MAIL="turnier@example.org" npm run build --silent)
+    VITE_BETREIBER_MAIL="turnier@example.org" VITE_SPENDEN_PAYPAL="https://www.paypal.com/paypalme/beispiel" \
+    VITE_SPENDEN_KOFI="https://ko-fi.com/beispiel" npm run build --silent)
 fi
 rm -rf "$ZIEL"
 ./scripts/paket-bauen.sh "$ZIEL" > /dev/null

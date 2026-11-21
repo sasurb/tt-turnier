@@ -5,7 +5,7 @@
   import { T } from '../../texte';
   import { linkZu } from '../../router.svelte';
   import { kurzId } from '../../engine/ids';
-  import { ALLE_ANGABEN, spielerName, type Angabe, type SpielerDaten } from '../../engine/modell';
+  import { spielerName, type Angabe, type SpielerDaten } from '../../engine/modell';
   import { begonnen, teilnehmerVon, type TurnierZustand } from '../../engine/zustand';
   import { imPool, pool, poolLaden, poolSpeichern } from '../../pool.svelte';
   import { klassenLaden } from '../../klassen.svelte';
@@ -27,6 +27,8 @@
   });
 
   const angabenText: Record<Angabe, string> = { ttr: T.tspieler.ttr, klasse: T.tspieler.klasse, geschlecht: T.tspieler.geschlecht, jahrgang: T.tspieler.jahrgang };
+  /** Vereine aus Turnier und Pool als Vorschläge beim Anlegen */
+  const vereine = $derived([...z.spielerReihe.map((id) => z.spieler[id]!.verein), ...pool.liste.map((p) => p.verein)]);
   const offeneKonkurrenzen = $derived(z.konkurrenzReihe.filter((id) => !begonnen(z.konkurrenzen[id]!)));
   const imTurnier = $derived(new Set(z.spielerReihe.map((id) => z.spieler[id]!.pool).filter(Boolean)));
   const treffer = $derived(
@@ -108,47 +110,10 @@
     if (confirm(T.tspieler.entfernenFrage)) await eintragen(ART.spielerEntfernt, { id });
   }
 
-  // Angaben, Ort, Tische
-  // svelte-ignore state_referenced_locally
-  let ort = $state(z.ort);
-  // svelte-ignore state_referenced_locally
-  let tische = $state(z.tische ? String(z.tische) : '');
-  // svelte-ignore state_referenced_locally
-  let angaben = $state<Angabe[]>([...z.angaben]);
-  let gespeichert = $state(false);
-  async function datenSpeichern(e: SubmitEvent) {
-    e.preventDefault();
-    const t = parseInt(tische, 10);
-    await eintragen(ART.turnierDaten, { ort: ort.trim(), tische: Number.isFinite(t) && t > 0 ? t : null, angaben: [...angaben] });
-    gespeichert = true;
-    setTimeout(() => (gespeichert = false), 2000);
-  }
 </script>
 
-<section class="karte">
-  <details>
-    <summary>{T.tspieler.angabenTitel}</summary>
-    <form onsubmit={datenSpeichern}>
-      <p class="leise">{T.tspieler.angabenText}</p>
-      <div class="angaben">
-        {#each ALLE_ANGABEN as a (a)}
-          <label class="haken"><input type="checkbox" value={a} bind:group={angaben} /> {angabenText[a]}</label>
-        {/each}
-      </div>
-      <div class="raster">
-        <div><label for="ort">{T.tspieler.ort}</label><input id="ort" bind:value={ort} /></div>
-        <div><label for="tische">{T.tspieler.tische}</label><input id="tische" bind:value={tische} inputmode="numeric" maxlength="3" /></div>
-      </div>
-      <div class="reihe" style="margin-top:12px">
-        <button type="submit">{T.app.speichern}</button>
-        {#if gespeichert}<span class="leise">{T.app.gespeichert}</span>{/if}
-      </div>
-    </form>
-  </details>
-</section>
-
-<section class="karte">
-  <h2>{T.tspieler.titel} <span class="leise">({z.spielerReihe.length})</span></h2>
+<details class="karte abschnitt" open data-testid="abschnitt-spieler">
+  <summary><h2 class="titel">{T.tspieler.titel} <span class="leise">({z.spielerReihe.length})</span></h2></summary>
   <div class="reihe">
     <button class:zweit={modus !== 'pool'} onclick={() => (modus = modus === 'pool' ? '' : 'pool')} aria-expanded={modus === 'pool'}>{T.tspieler.ausPool}</button>
     <button class:zweit={modus !== 'neu'} onclick={() => (modus = modus === 'neu' ? '' : 'neu')} aria-expanded={modus === 'neu'}>+ {T.tspieler.neu}</button>
@@ -188,7 +153,7 @@
       {/if}
     </div>
   {:else if modus === 'neu'}
-    <SpielerForm angaben={z.angaben} mitPool knopf={T.tspieler.hinzufuegen} speichern={neuAnlegen} abbrechen={() => (modus = '')} />
+    <SpielerForm angaben={z.angaben} mitPool {vereine} knopf={T.tspieler.hinzufuegen} speichern={neuAnlegen} abbrechen={() => (modus = '')} />
   {/if}
 
   {#if z.spielerReihe.length === 0}
@@ -199,7 +164,7 @@
         {@const s = z.spieler[id]!}
         <li>
           {#if bearbeite === id}
-            <SpielerForm angaben={z.angaben} start={s} knopf={T.tspieler.speichern} speichern={(d) => aendern(id, d)} abbrechen={() => (bearbeite = null)} />
+            <SpielerForm angaben={z.angaben} {vereine} start={s} knopf={T.tspieler.speichern} speichern={(d) => aendern(id, d)} abbrechen={() => (bearbeite = null)} />
           {:else}
             <div class="zeile">
               <span class="wachsen">
@@ -218,15 +183,15 @@
       {/each}
     </ul>
   {/if}
-  <p class="leise">{T.tspieler.angabenTitel}: Name, Verein{#each z.angaben as a (a)}, {angabenText[a]}{/each}<Hilfe text={T.tspieler.angabenText} /></p>
-</section>
+  <p class="leise">{T.tspieler.angabenTitel}: Name, Verein{#each z.angaben as a (a)}, {angabenText[a]}{/each}<Hilfe text={T.tspieler.angabenOrt} /></p>
+</details>
 
 <style>
-  .angaben { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+  .abschnitt > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+  .abschnitt > summary .titel { font-size: 1.2rem; margin: 0; }
   .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; margin: 6px 0; }
   .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
   .haken.aus { opacity: 0.55; }
-  .raster { display: grid; grid-template-columns: 2fr 1fr; gap: 0 12px; }
   .pool { margin-top: 12px; }
   .auswahl { list-style: none; padding: 0; margin: 8px 0; max-height: 22rem; overflow-y: auto; border: 1px solid var(--linie); border-radius: 10px; }
   .auswahl li { padding: 2px 12px; border-bottom: 1px solid var(--linie); }

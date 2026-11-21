@@ -87,3 +87,31 @@ export function datenschutz(b: Betreiber): Abschnitt[] {
     },
   ];
 }
+
+export interface Spendenweg {
+  id: 'paypal' | 'github' | 'kofi';
+  name: string;
+  url: string;
+}
+
+/** Nur vollständige https-Adressen (sonst wird der Weg nicht angezeigt) */
+function spendenUrl(v: string | undefined): string {
+  const t = (v ?? '').trim();
+  try {
+    return t && new URL(t).protocol === 'https:' ? t : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Spendenwege des Entwicklers. Die Adressen kommen beim Bauen aus den GitHub-Variablen SPENDEN_PAYPAL,
+ * SPENDEN_GITHUB und SPENDEN_KOFI; ohne Variable fehlt der Weg (ganz ohne: kein Spenden-Hinweis).
+ */
+export const SPENDENWEGE: Spendenweg[] = (
+  [
+    { id: 'paypal', name: 'PayPal', url: spendenUrl(env.VITE_SPENDEN_PAYPAL) },
+    { id: 'github', name: 'GitHub Sponsors', url: spendenUrl(env.VITE_SPENDEN_GITHUB) },
+    { id: 'kofi', name: 'Ko-fi', url: spendenUrl(env.VITE_SPENDEN_KOFI) },
+  ] as Spendenweg[]
+).filter((w) => w.url !== '');

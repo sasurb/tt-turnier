@@ -944,7 +944,20 @@ pruefe(str_starts_with($erste->text, "Hallo,\n") && !str_contains($erste->text, 
 $antwortAn = $erste->antwortAn;
 pruefe($antwortAn === 'sued@example.org', 'Antworten auf Anmelde-Mails gehen an die Turnierleitung');
 rufe($api, 'POST', 'anmeldung.bestaetigen', ['turnier' => $tid, 'schluessel' => $keys['ben']]);
+// Etappe 11: Hinweis-Mail an die Leitung je bestätigter Anmeldung – ohne Namen und Mail-Adressen
+$hinweis = mailAn($mailer, 'sued@example.org');
+pruefe($hinweis !== null && str_starts_with($hinweis->betreff, 'Neue Anmeldung: Frühjahrsturnier') && str_contains($hinweis->text, 'Bestätigte Anmeldungen insgesamt: 2')
+    && !str_contains($hinweis->text, 'Ben') && !str_contains($hinweis->text, 'Muster') && !str_contains($hinweis->text, '@example.org'),
+    'Hinweis-Mail an die Leitung ohne Namen');
+[, $d] = rufe($api, 'GET', 'anmeldungen', null, $leit, ['turnier' => $tid]);
+pruefe(($d['einstellungen']['hinweisMail'] ?? null) === true, 'Leitung sieht die Einstellung Hinweis-Mail (Standard an)');
+[, $d] = rufe($api, 'GET', 'anmeldung', null, null, ['turnier' => $tid]);
+pruefe(!array_key_exists('hinweisMail', $d['einstellungen']), 'Einstellung Hinweis-Mail nicht öffentlich');
+[$s] = rufe($api, 'POST', 'anmeldung.einstellungen', ['hinweisMail' => false] + $einst, $leit);
+pruefe($s === 200, 'Hinweis-Mail abgeschaltet');
+$vorher = count(array_filter($mailer->mails, fn($m) => $m->an === 'sued@example.org'));
 [$s, $d] = rufe($api, 'POST', 'anmeldung.bestaetigen', ['turnier' => $tid, 'schluessel' => $keys['cem']]);
+pruefe(count(array_filter($mailer->mails, fn($m) => $m->an === 'sued@example.org')) === $vorher, 'Abgeschaltet: keine Hinweis-Mail');
 pruefe($s === 200 && $d['konkurrenzen'][0]['status'] === 'warteliste' && $d['konkurrenzen'][0]['position'] === 1 && $d['konkurrenzen'][1]['status'] === 'platz' && $d['startgeld'] === 0,
     'Herren voll: Warteliste Platz 1; Doppel unbegrenzt');
 [$s, $d] = rufe($api, 'GET', 'anmeldungen', null, null, ['turnier' => $tid]);

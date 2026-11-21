@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { angabenSetzen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { letzteMail } from './mails';
 
@@ -347,7 +348,7 @@ test('Demo ohne Server: Turnier nur auf diesem Gerät, Sicherung herunterladen u
   await bild(page, '14-wiederherstellen');
   await page.getByRole('button', { name: 'Wiederherstellen' }).click();
   await expect(page.getByText(/Turnier wiederhergestellt: 2 Einträge übernommen/)).toBeVisible();
-  await page.getByRole('link', { name: 'Spieler', exact: true }).click();
+  await page.getByRole('link', { name: /^Spieler/ }).click();
   await expect(page.getByText('Lotte Lokal')).toBeVisible();
   await page.getByRole('link', { name: 'Einstellungen' }).click();
   await page.locator('summary', { hasText: 'Protokoll' }).click();
@@ -435,11 +436,7 @@ test('Einzelgerät: Konkurrenzen nach Leistungsklassen, klassenreine Gruppen', a
   await page.getByLabel(/^Dein Name/).fill('Sascha');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   // Leistungsklasse als Spielerangabe einschalten
-  const angaben = page.locator('details', { hasText: 'Angaben im Turnier' });
-  await angaben.locator('summary').click();
-  await angaben.getByLabel('Leistungsklasse', { exact: true }).check();
-  await angaben.getByRole('button', { name: 'Speichern' }).click();
-  await expect(angaben.getByText('Gespeichert.')).toBeVisible();
+  await angabenSetzen(page, { angaben: ['Leistungsklasse'] });
   await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
   for (const [v, kl] of [
     ['Ali', 'A'],
@@ -522,11 +519,7 @@ test('Etappe 5: Doppel mit Trostrunde, Spielaufruf an Tische mit Schiedsrichter'
   await page.getByLabel(/^Dein Name/).fill('Sascha');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   // 2 Tische
-  const angaben = page.locator('details', { hasText: 'Angaben im Turnier' });
-  await angaben.locator('summary').click();
-  await angaben.getByLabel('Anzahl Tische').fill('2');
-  await angaben.getByRole('button', { name: 'Speichern' }).click();
-  await expect(angaben.getByText('Gespeichert.')).toBeVisible();
+  await angabenSetzen(page, { tische: '2' });
   await page.getByRole('button', { name: '+ Neuer Spieler' }).click();
   for (const v of ['Ali', 'Bea', 'Cid', 'Dan', 'Eva', 'Fin', 'Gil', 'Hal', 'Ida']) {
     await page.getByLabel('Vorname').fill(v);

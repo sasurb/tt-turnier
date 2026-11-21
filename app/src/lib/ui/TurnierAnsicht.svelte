@@ -39,6 +39,7 @@
   import AnmeldungTab from './turnier/AnmeldungTab.svelte';
   import MitteilungKarte from './turnier/MitteilungKarte.svelte';
   import { meinAufruf, name as tnName } from '../engine/abfragen';
+  import { appHinweisAn, neueAnmeldungen } from '../anmeldeHinweis';
   import { benachrichtigen, mitteilungEinstellung, wachHalten, wachHaltenErneuern, type MitteilungEinstellung } from '../mitteilung';
 
   let { id, reiter = null, code = null, weitere = [] }: { id: string; reiter?: string | null; code?: string | null; weitere?: string[] } = $props();
@@ -101,13 +102,18 @@
         kontoRechte = s ? (a.turnier.rechte ?? null) : null;
       }
       rechteFuer = s?.token ?? '';
+      // Für den Offline-Betrieb merken (nur Anzeige – der Server prüft jeden Eintrag beim Nachtragen)
+      const g = gemerktesTurnier(id);
+      if (g && s && (g.kontoRolle !== kontoRechte || g.kontoId !== s.konto.id)) turnierMerken({ ...g, kontoRolle: kontoRechte, kontoId: s.konto.id });
     } catch (x) {
       if (kennung && x instanceof ApiFehler && x.code === 'nicht_angemeldet') {
         turnierAbmelden(id);
         eintrag = gemerktesTurnier(id) ?? null;
         zugangFehler = T.zugang.kennungUngueltig;
       }
-      kontoRechte = null;
+      // Kein Netz: zuletzt bestätigte Rechte dieses Kontos weiter nutzen (Einträge warten auf das Netz)
+      const g = gemerktesTurnier(id);
+      kontoRechte = x instanceof ApiFehler && x.istNetzwerk && s && g?.kontoId === s.konto.id ? (g.kontoRolle ?? null) : null;
       rechteFuer = s?.token ?? '';
     }
   }
@@ -146,7 +152,7 @@
     lokal && zustand !== null && eintrag !== null && erinnerungFaellig(lokaleSicherung(id), zustand.anzahlEreignisse, ereignisse[0]?.zeit ?? eintrag.zuletzt, jetzt),
   );
 
-  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'spieler' | 'kasse' | 'konkurrenzen' | 'anmeldung' | 'zugaenge' | 'drucken' | 'einstellungen';
+  type Reiter = 'meine' | 'spiele' | 'tische' | 'tabellen' | 'spieler' | 'kasse' | 'konkurrenzen' | 'zugaenge' | 'drucken' | 'einstellungen';
   /** „Tische“ erscheint, sobald eine Konkurrenz läuft */
   const mitTischen = $derived(!!zustand && Object.values(zustand.konkurrenzen).some((k) => k.gestartet.gruppen || k.gestartet.ko));
   const reiterListe = $derived<Reiter[]>(
@@ -158,7 +164,6 @@
           'spieler',
           'kasse',
           'konkurrenzen',
-          ...(anmeldungMoeglich ? ['anmeldung' as const] : []),
           ...(lokal ? [] : ['zugaenge' as const]),
           'drucken',
           'einstellungen',
@@ -195,7 +200,9 @@
   );
   /** QR-Code vom Spielzettel: #/t/<id>/spiel/<konkurrenz>/<spiel> öffnet das Spiel zum Eintragen */
   const spielLink = $derived(reiter === 'spiel' && weitere.length === 2 ? { k: weitere[0]!, s: weitere[1]! } : null);
-  const aktiv = $derived<Reiter>(spielLink ? (rolle === 'spieler' ? 'meine' : 'spiele') : reiter && reiterListe.includes(reiter as Reiter) ? (reiter as Reiter) : standardReiter);
+  /** Frühere Adresse …/anmeldung (bis 0.12 eigener Reiter): heute Teil von „Spieler“ */
+  const reiterNeu = $derived(reiter === 'anmeldung' ? 'spieler' : reiter);
+  const aktiv = $derived<Reiter>(spielLink ? (rolle === 'spieler' ? 'meine' : 'spiele') : reiterNeu && reiterListe.includes(reiterNeu as Reiter) ? (reiterNeu as Reiter) : standardReiter);
   let spielLinkGeoeffnet = '';
   $effect(() => {
     const l = spielLink;
@@ -438,6 +445,33 @@
     }, 20_000);
   });
 
+  /* ---------- Hinweis auf neue Online-Anmeldungen (nur Leitung, online, abschaltbar je Gerät) ---------- */
+  let anmeldungNeu = $state(0);
+  let anmeldungBekannt = -1;
+  async function anmeldungenPruefen() {
+    const token = schreibToken;
+    if (!token || !leitung || !anmeldungMoeglich || !appHinweisAn(id) || document.visibilityState !== 'visible') return;
+    try {
+      const a = await api.anmeldungen(token, id);
+      const z = zustand;
+      const neu = neueAnmeldungen(id, a.anmeldungen, (x) => !!z?.spieler[x]).length;
+      // Ton/Mitteilung nur, wenn während der Sitzung neue dazukommen (nicht beim Öffnen)
+      if (anmeldungBekannt >= 0 && neu > anmeldungBekannt && aktiv !== 'spieler') {
+        void benachrichtigen({ ...mitteilung, spieler: null, vibration: false }, name || T.app.titel, T.anm.neuHinweis(neu), `anmeldung-${id}`);
+      }
+      anmeldungBekannt = neu;
+      if (aktiv !== 'spieler') anmeldungNeu = neu;
+    } catch {
+      /* kein Netz – später erneut */
+    }
+  }
+  $effect(() => {
+    if (laedt || !leitung || !anmeldungMoeglich || !schreibToken) return;
+    untrack(() => void anmeldungenPruefen());
+    const t = setInterval(() => void anmeldungenPruefen(), 120_000);
+    return () => clearInterval(t);
+  });
+
   /* ---------- Vom Server abgelehnte Einträge ---------- */
   const abgelehnt = $derived(ereignisse.filter((e) => e.status === 'abgelehnt'));
   async function abgelehnteVerwerfen() {
@@ -623,6 +657,12 @@
       <button class="zweit klein" onclick={abgelehnteVerwerfen}>{T.abgelehnt.verwerfen}</button>
     </div>
   {/if}
+  {#if anmeldungNeu > 0 && aktiv !== 'spieler'}
+    <div class="meldung info reihe" role="status" data-testid="anmeldung-hinweis">
+      <span class="wachsen">🔔 {T.anm.neuHinweis(anmeldungNeu)}</span>
+      <a class="knopf klein" href={linkZu(`t/${id}/spieler`)}>{T.anm.ansehen}</a>
+    </div>
+  {/if}
   {#if aufrufHinweis && aktiv !== 'meine'}
     <div class="meldung aufruf reihe" role="alert" data-testid="aufruf-hinweis">
       <span class="wachsen">🔔 {aufrufHinweis.text}</span>
@@ -662,7 +702,9 @@
 
   <nav class="reiter" aria-label="Bereiche">
     {#each reiterListe as r (r)}
-      <a href={linkZu(`t/${id}/${r}`)} class:aktiv={aktiv === r} aria-current={aktiv === r ? 'page' : undefined}>{T.reiter[r]}</a>
+      <a href={linkZu(`t/${id}/${r}`)} class:aktiv={aktiv === r} aria-current={aktiv === r ? 'page' : undefined}
+        >{T.reiter[r]}{#if r === 'spieler' && anmeldungNeu > 0}<span class="zaehler" data-testid="reiter-neu" aria-label={T.anm.neuHinweis(anmeldungNeu)}>{anmeldungNeu}</span>{/if}</a
+      >
     {/each}
   </nav>
 
@@ -694,10 +736,11 @@
       <p class="leise live-link"><a href={linkZu(`live/${id}`)} data-testid="live-link">{T.live.linkTabellen}</a></p>
     {:else if aktiv === 'spieler'}
       <SpielerTab z={zustand} {eintragen} />
+      {#if anmeldungMoeglich && schreibToken && leitung}
+        <AnmeldungTab z={zustand} turnierId={id} token={schreibToken} {eintragen} neuGesehen={() => (anmeldungNeu = 0)} />
+      {/if}
     {:else if aktiv === 'kasse'}
       <KasseTab z={zustand} turnierId={id} {leitung} {eintragen} />
-    {:else if aktiv === 'anmeldung' && schreibToken}
-      <AnmeldungTab z={zustand} turnierId={id} token={schreibToken} {eintragen} />
     {:else if aktiv === 'konkurrenzen'}
       <KonkurrenzenTab z={zustand} {eintragen} />
     {:else if aktiv === 'drucken'}
@@ -825,6 +868,7 @@
   }
   .reiter a:hover { background: var(--flaeche); }
   .reiter a.aktiv { background: var(--blau); color: #fff; }
+  .zaehler { margin-left: 6px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--orange); color: #fff; font-size: 0.85rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
   .code-zeile {
     display: flex;
     align-items: center;

@@ -11,6 +11,8 @@ export const T = {
     speichern: 'Speichern',
     gespeichert: 'Gespeichert.',
     laden: 'Lädt …',
+    offline:
+      'Kein Netz. Du kannst mit den Turnieren auf diesem Gerät weiterarbeiten, z. B. Startgeld kassieren. Die Einträge werden automatisch nachgetragen, sobald wieder Netz da ist.',
     fehlerAllgemein: 'Etwas ist schiefgelaufen.',
     hilfe: 'Hilfe',
     schliessen: 'Schließen',
@@ -461,7 +463,7 @@ export const T = {
     protokoll: 'Protokoll',
     tische: 'Tische',
     drucken: 'Drucken',
-    kasse: 'Kasse',
+    kasse: 'Kasse & Check-in',
     anmeldung: 'Anmeldungen',
   },
   rollen: {
@@ -505,6 +507,7 @@ export const T = {
     keineAngabe: '–',
     jahrgang: 'Jahrgang',
     auchInPool: 'Auch im Spielerpool speichern',
+    gleicherVerein: 'Weitere Spieler vom gleichen Verein (Verein bleibt stehen)',
     hinzufuegen: 'Hinzufügen',
     speichern: 'Speichern',
     bearbeiten: 'Bearbeiten',
@@ -515,6 +518,8 @@ export const T = {
       'Name und Verein stehen immer im Turnier. Welche weiteren Angaben sollen hier geführt werden? Alles, was im Turnier steht, kann jeder sehen, der den Link hat. Nicht gewählte Angaben bleiben nur im Spielerpool.',
     ort: 'Ort / Halle',
     tische: 'Anzahl Tische',
+    tischeKurz: (n: number) => `${n} Tische`,
+    angabenOrt: 'Die Angaben im Turnier, Ort und Anzahl Tische stellst du unter „Konkurrenzen“ ganz oben ein.',
     suchen: 'Suchen',
     auswahl: (n: number) => (n === 1 ? '1 ausgewählt' : `${n} ausgewählt`),
     uebernehmen: 'Ins Turnier übernehmen',
@@ -1234,9 +1239,9 @@ export const T = {
     keineErgebnisse: 'Mit deiner Kennung lassen sich keine Ergebnisse eintragen.',
   },
   kasse: {
-    titel: 'Check-in und Startgeld',
+    titel: 'Kasse & Check-in',
     hilfe:
-      'Am Turniertag haken Leitung oder Kasse ab, wer da ist, und kassieren das Startgeld. Das Startgeld ergibt sich aus den Konkurrenzen, in denen jemand gemeldet ist (Betrag je Konkurrenz unter „Konkurrenzen“). Zahlungen und Anwesenheit sehen nur Leitung und Helfer – Zuschauer und Spieler nicht.',
+      'Am Turniertag haken Leitung oder Kasse ab, wer da ist, und kassieren das Startgeld. Das Startgeld ergibt sich aus den Konkurrenzen, in denen jemand gemeldet ist (Betrag je Konkurrenz unter „Konkurrenzen“; bei Mannschaften je Spieler der Mannschaft). Zahlungen und Anwesenheit sehen nur Leitung und Helfer – Zuschauer und Spieler nicht. Das geht auch ohne Netz, z. B. wenn jemand beim Training vorab zahlt: Das Turnier muss nur einmal mit Netz auf dem Handy geöffnet worden sein. Die Buchungen werden automatisch nachgetragen, sobald wieder Netz da ist.',
     suche: 'Name oder Verein …',
     filter: { alle: 'Alle', fehlt: 'Nicht da', offen: 'Offen', da: 'Da' } as Record<string, string>,
     da: 'Da',
@@ -1316,12 +1321,36 @@ export const T = {
     keine: 'Keine Buchung gefunden.',
     startgeld: (turnier: string) => `Startgeld ${turnier}`,
   },
+  spenden: {
+    titel: 'Unterstützen',
+    fuss: 'Unterstützen ♥',
+    text: [
+      'Ich stelle diese Open-Source-Anwendung gerne kostenfrei zur Verfügung und freue mich über jeden Verein, der sie nutzt. Am meisten hilft mir eure Rückmeldung: Mit euren Änderungswünschen und Fehlermeldungen wird die App für alle besser.',
+      'Wer mag, kann die Entwicklung aber natürlich auch mit einer kleinen Spende unterstützen – darüber freue ich mich sehr. Die App bleibt so oder so für alle kostenlos.',
+    ],
+    ueber: (weg: string) => `Spenden über ${weg}`,
+    hinweis:
+      'Die Spende geht an mich als Privatperson, nicht an einen gemeinnützigen Verein – eine Spendenbescheinigung kann ich deshalb nicht ausstellen. Die Links führen zum jeweiligen Anbieter; erst dort werden Daten zur Zahlung erhoben.',
+    keine: 'Zurzeit ist kein Spendenweg eingerichtet. Über Rückmeldungen freue ich mich trotzdem!',
+    wuensche: 'Wünsche, Kritik oder einen Fehler gefunden?',
+    kontakt: 'Schreib mir über das Kontaktformular.',
+  },
   anm: {
     nochNichtFrei: (ab: string | null) =>
       ab
         ? `Die Online-Anmeldung steht neuen Konten ab ${new Date(ab).toLocaleDateString('de-DE')} zur Verfügung – so kann niemand ein frisch angelegtes Konto zum Verschicken von Mails missbrauchen. Der Administrator kann sie früher freischalten (Kontaktformular).`
         : 'Die Online-Anmeldung ist für dein Konto gesperrt. Bitte wende dich über das Kontaktformular an den Administrator.',
     titel: 'Online-Anmeldung',
+    abschnitt: 'Online-Anmeldungen',
+    einrichten: 'Online-Anmeldung einrichten',
+    neu: (n: number) => (n === 1 ? '1 neu' : `${n} neu`),
+    neuHinweis: (n: number) => (n === 1 ? 'Eine neue Online-Anmeldung liegt vor.' : `${n} neue Online-Anmeldungen liegen vor.`),
+    ansehen: 'Ansehen',
+    hinweisTitel: 'Hinweis bei neuen Anmeldungen',
+    hinweisHilfe:
+      'Mail: Bei jeder bestätigten Anmeldung bekommst du eine kurze Mail an die Adresse deines Kontos – ohne Namen, nur Konkurrenz und Anzahl (höchstens 50 am Tag). App: Solange das Turnier auf diesem Gerät offen ist, erscheint ein Hinweis mit Ton; der Reiter „Spieler“ zeigt die Zahl der neuen Anmeldungen. Gilt nur für dieses Gerät.',
+    hinweisMail: 'Per Mail benachrichtigen',
+    hinweisApp: 'In der App benachrichtigen (dieses Gerät)',
     hilfe:
       'Spieler melden sich über einen Link selbst an und bestätigen per Mail. Ist eine Konkurrenz voll, kommen sie auf die Warteliste und rücken automatisch nach, wenn jemand absagt (mit Mail). Ins Turnier kommen Anmeldungen erst, wenn du sie übernimmst. Datenschutz: E-Mail-Adressen sieht nur die Leitung; 30 Tage nach dem Turniertag werden alle Anmeldungen gelöscht.',
     nurOnline: 'Die Online-Anmeldung gibt es nur bei Online-Turnieren mit eingerichtetem Mailversand.',

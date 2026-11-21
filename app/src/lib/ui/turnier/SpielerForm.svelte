@@ -2,11 +2,13 @@
   import { T } from '../../texte';
   import type { Angabe, Geschlecht, SpielerDaten } from '../../engine/modell';
   import { klassen, klassenMerken } from '../../klassen.svelte';
+  import { vereinMerken, vereinsVorschlaege } from '../../vereine';
 
   let {
     angaben,
     start = {},
     mitPool = false,
+    vereine = [],
     knopf,
     speichern,
     abbrechen,
@@ -14,23 +16,33 @@
     angaben: Angabe[];
     start?: Partial<SpielerDaten>;
     mitPool?: boolean;
+    /** Weitere Vereine für die Vorschläge (z. B. aus Pool und Turnier) */
+    vereine?: (string | null | undefined)[];
     knopf: string;
     speichern: (d: SpielerDaten, inPool: boolean) => Promise<void>;
     abbrechen: () => void;
   } = $props();
 
   const id = Math.random().toString(36).slice(2, 7);
+  /** Neuer Spieler (kein Bearbeiten): nach dem Speichern leeren, damit gleich der nächste folgen kann */
   // svelte-ignore state_referenced_locally
-  let d = $state({
-    vorname: start.vorname ?? '',
-    nachname: start.nachname ?? '',
-    verein: start.verein ?? '',
-    ttr: start.ttr != null ? String(start.ttr) : '',
-    klasse: start.klasse ?? '',
-    geschlecht: (start.geschlecht ?? '') as Geschlecht | '',
-    jahrgang: start.jahrgang != null ? String(start.jahrgang) : '',
-  });
+  const neu = !start.vorname && !start.nachname;
+  function leer(verein = '') {
+    return {
+      vorname: start.vorname ?? '',
+      nachname: start.nachname ?? '',
+      verein: start.verein ?? verein,
+      ttr: start.ttr != null ? String(start.ttr) : '',
+      klasse: start.klasse ?? '',
+      geschlecht: (start.geschlecht ?? '') as Geschlecht | '',
+      jahrgang: start.jahrgang != null ? String(start.jahrgang) : '',
+    };
+  }
+  let d = $state(leer());
+  let gleicherVerein = $state(false);
   let inPool = $state(true);
+  let erstesFeld = $state<HTMLInputElement | null>(null);
+  const vorschlaege = $derived(vereinsVorschlaege(vereine));
   let fehler = $state('');
   let sendet = $state(false);
 
@@ -50,6 +62,12 @@
     try {
       await speichern(daten, mitPool && inPool);
       if (angaben.includes('klasse')) klassenMerken(daten.klasse);
+      vereinMerken(daten.verein);
+      if (neu) {
+        // Felder leeren; mit Häkchen „gleicher Verein“ bleibt der Verein stehen
+        d = leer(gleicherVerein ? daten.verein : '');
+        erstesFeld?.focus();
+      }
     } catch (x) {
       fehler = x instanceof Error ? x.message : String(x);
     } finally {
@@ -60,9 +78,9 @@
 
 <form class="spielerform" onsubmit={absenden}>
   <div class="raster">
-    <div><label for="vn-{id}">{T.tspieler.vorname}</label><input id="vn-{id}" bind:value={d.vorname} autocomplete="off" required={!d.nachname} /></div>
+    <div><label for="vn-{id}">{T.tspieler.vorname}</label><input id="vn-{id}" bind:this={erstesFeld} bind:value={d.vorname} autocomplete="off" required={!d.nachname} /></div>
     <div><label for="nn-{id}">{T.tspieler.nachname}</label><input id="nn-{id}" bind:value={d.nachname} autocomplete="off" /></div>
-    <div class="ganz"><label for="ve-{id}">{T.tspieler.verein}</label><input id="ve-{id}" bind:value={d.verein} autocomplete="off" /></div>
+    <div class="ganz"><label for="ve-{id}">{T.tspieler.verein}</label><input id="ve-{id}" bind:value={d.verein} autocomplete="off" list="vereine-{id}" /></div>
     {#if angaben.includes('ttr')}
       <div><label for="tt-{id}">{T.tspieler.ttr}</label><input id="tt-{id}" bind:value={d.ttr} inputmode="numeric" maxlength="4" /></div>
     {/if}
@@ -85,6 +103,12 @@
   <datalist id="klassen-vorschlag">
     {#each klassen.liste.length ? klassen.liste : ['Anfänger', 'Fortgeschritten', 'A', 'B', 'C'] as k (k)}<option value={k}></option>{/each}
   </datalist>
+  <datalist id="vereine-{id}">
+    {#each vorschlaege as v (v)}<option value={v}></option>{/each}
+  </datalist>
+  {#if neu}
+    <label class="haken"><input type="checkbox" bind:checked={gleicherVerein} /> {T.tspieler.gleicherVerein}</label>
+  {/if}
   {#if mitPool}
     <label class="haken"><input type="checkbox" bind:checked={inPool} /> {T.tspieler.auchInPool}</label>
   {/if}
@@ -102,7 +126,7 @@
   @media (max-width: 420px) {
     .raster { grid-template-columns: 1fr; }
   }
-  .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; }
+  .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; min-height: 44px; }
   .haken input { width: 22px; height: 22px; min-height: 0; }
   .reihe { margin-top: 12px; }
 </style>

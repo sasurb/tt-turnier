@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { route, linkZu } from './lib/router.svelte';
   import { T } from './lib/texte';
-  import { serverLaden } from './lib/app.svelte';
+  import { app, serverLaden } from './lib/app.svelte';
   import Kopf from './lib/ui/Kopf.svelte';
   import Fuss from './lib/ui/Fuss.svelte';
   import Start from './lib/ui/Start.svelte';
@@ -27,8 +27,15 @@
   import DruckAnsicht from './lib/ui/DruckAnsicht.svelte';
   import Meldung from './lib/ui/Meldung.svelte';
   import Handbuch from './lib/ui/Handbuch.svelte';
+  import Spenden from './lib/ui/Spenden.svelte';
 
-  onMount(() => void serverLaden());
+  onMount(() => {
+    void serverLaden();
+    // Wieder Netz: Server neu prüfen (Offline-Hinweis verschwindet, Einträge werden nachgetragen)
+    const online = () => void serverLaden(true);
+    addEventListener('online', online);
+    return () => removeEventListener('online', online);
+  });
 </script>
 
 {#if route.seite === 'live' && route.param}
@@ -39,6 +46,9 @@
 <Kopf />
 
 <main class="inhalt">
+  {#if app.server.art === 'bereit' && app.server.offline}
+    <div class="meldung info" role="status" data-testid="offline">{T.app.offline}</div>
+  {/if}
   {#if route.seite === ''}
     <Start />
   {:else if route.seite === 'neu'}
@@ -73,6 +83,8 @@
     <Pool />
   {:else if route.seite === 'zentrale'}
     <Zentrale />
+  {:else if route.seite === 'spenden'}
+    <Spenden />
   {:else if route.seite === 'hilfe'}
     <Handbuch kapitel={route.param} />
   {:else if route.seite === 'meldung' && route.param}

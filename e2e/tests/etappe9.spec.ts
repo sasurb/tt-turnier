@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { angabenSetzen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 import { letzteMail } from './mails';
@@ -47,11 +48,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
 
   // Ein Tisch, Konkurrenz mit Startgeld und Höchstzahl 2
-  const angaben = page.locator('details', { hasText: 'Angaben im Turnier' });
-  await angaben.locator('summary').click();
-  await angaben.getByLabel('Anzahl Tische').fill('1');
-  await angaben.getByRole('button', { name: 'Speichern' }).click();
-  await expect(angaben.getByText('Gespeichert.')).toBeVisible();
+  await angabenSetzen(page, { tische: '1' });
   await page.getByRole('link', { name: 'Konkurrenzen' }).click();
   await page.getByLabel('Name', { exact: true }).fill('Herren');
   await page.getByLabel(/Jeder gegen jeden/).check();
@@ -72,7 +69,8 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await expect(page.getByText('Kasse und Quittung gespeichert.')).toBeVisible();
 
   // Online-Anmeldung öffnen
-  await page.getByRole('link', { name: 'Anmeldungen' }).click();
+  await page.getByRole('link', { name: /^Spieler/ }).click();
+  await page.getByTestId('abschnitt-anmeldungen').locator('summary').first().click();
   await page.getByTestId('anmeldung-oeffnen').click();
   await expect(page.getByTestId('anmeldung-status')).toHaveText('Anmeldung geöffnet');
   const link = await page.getByTestId('anmeldung-link').inputValue();
@@ -146,6 +144,10 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
     await expect(p.getByTestId('meldung-stand')).toContainText(n === 'ben' ? 'Platz sicher' : 'Warteliste – Platz 1');
   }
 
+  // Hinweis-Mail an die Leitung (seit 0.13): ohne Namen der Angemeldeten
+  await expect.poll(() => letzteMail(ADMIN.email, new RegExp(`Neue Anmeldung: Frühjahrscup ${geraet}`))?.text ?? '').toContain('Bestätigte Anmeldungen insgesamt');
+  expect(letzteMail(ADMIN.email, new RegExp(`Neue Anmeldung: Frühjahrscup ${geraet}`))!.text).not.toContain('Netz');
+
   // Leitung: Liste mit Warteliste, Übernahme ins Turnier
   await page.reload();
   const liste = page.getByTestId('anmeldung-liste');
@@ -170,7 +172,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await expect(page.getByText(/Änderung\(en\) übernommen/)).toBeVisible();
 
   // Kasse: Ada ist gestrichen (kein Startgeld), Cem nachgerückt; Check-in, 8 € bar, Quittung
-  await page.getByRole('link', { name: 'Kasse', exact: true }).click();
+  await page.getByRole('link', { name: 'Kasse & Check-in', exact: true }).click();
   await expect(page.getByTestId('kasse-liste').locator('li', { hasText: 'Ada Aufschlag' })).toContainText('Kein Startgeld');
   await expect(page.getByTestId('kasse-liste').locator('li', { hasText: 'Cem Netz' })).toContainText('Offen: 8,00 €');
   const zeile = page.getByTestId('kasse-liste').locator('li', { hasText: 'Ben Netz' });
@@ -223,7 +225,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   const h = await k2.newPage();
   await h.goto(`./#/c/${tid}/${evaCode}`);
   await expect(h.getByTestId('angemeldet-als')).toContainText('Eva Kasse');
-  await expect(h.getByRole('link', { name: 'Kasse', exact: true })).toBeVisible();
+  await expect(h.getByRole('link', { name: 'Kasse & Check-in', exact: true })).toBeVisible();
   await expect(h.getByRole('link', { name: 'Zugänge' })).toHaveCount(0);
   const cemZeile = h.getByTestId('kasse-liste').locator('li', { hasText: 'Cem Netz' });
   await cemZeile.getByTestId('checkin').click();

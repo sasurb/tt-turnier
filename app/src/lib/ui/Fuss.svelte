@@ -1,6 +1,7 @@
 <script lang="ts">
   import { linkZu } from '../router.svelte';
   import { T } from '../texte';
+  import { SPENDENWEGE } from '../rechtliches';
 </script>
 
 <footer>
@@ -8,6 +9,7 @@
   <a href={linkZu('impressum')}>{T.fuss.impressum}</a>
   <a href={linkZu('datenschutz')}>{T.fuss.datenschutz}</a>
   <a href={linkZu('kontakt')}>{T.fuss.kontakt}</a>
+  {#if SPENDENWEGE.length}<a href={linkZu('spenden')} data-testid="fuss-spenden">{T.spenden.fuss}</a>{/if}
 </footer>
 
 <style>

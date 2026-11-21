@@ -655,6 +655,11 @@ export interface AnmeldungEinstellungen {
   bank: { empfaenger: string; iban: string; bic: string } | null;
   /** Ort des Turniers (Anzeige) */
   ort: string;
+  /**
+   * Hinweis-Mail an die Turnierleitung bei jeder bestätigten Anmeldung (ab 0.13, ohne Namen; fehlt = an).
+   * Nur in der Fassung für die Leitung, nie öffentlich.
+   */
+  hinweisMail?: boolean;
 }
 export const ANMELDUNG_MAX_KONKURRENZEN = 30;
 export const ANMELDUNG_MAX_JE_TURNIER = 1000;

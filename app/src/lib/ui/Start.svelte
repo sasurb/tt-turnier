@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SPENDENWEGE } from '../rechtliches';
   import type { TurnierInfo, ZentraleStatus } from '@shared/protokoll';
   import { T } from '../texte';
   import { linkZu } from '../router.svelte';
@@ -117,7 +118,10 @@
     <p class="leise">{zentrale && !zentralGeraet ? T.start.zentraleBeitreten : T.start.beitretenHinweis}</p>
     <a class="knopf" class:zweit={angemeldet} href={linkZu('beitreten')} data-testid="beitreten">{T.start.beitreten}</a>
   </section>
-  <p class="hilfe-link"><a href={linkZu('hilfe')} data-testid="start-hilfe">{T.start.hilfe}</a></p>
+  <p class="hilfe-link">
+    <a href={linkZu('hilfe')} data-testid="start-hilfe">{T.start.hilfe}</a>
+    {#if SPENDENWEGE.length}<a href={linkZu('spenden')}>{T.spenden.fuss}</a>{/if}
+  </p>
 {/if}
 
 {#if konto}
@@ -202,6 +206,6 @@
   .zeile:hover { background: transparent; }
   .zeile:hover strong { color: var(--blau); }
   .pool-link { margin-top: 20px; text-align: center; }
-  .hilfe-link { text-align: center; }
+  .hilfe-link { display: flex; justify-content: center; flex-wrap: wrap; gap: 0 24px; }
   .hilfe-link a { display: inline-flex; align-items: center; min-height: 44px; }
 </style>

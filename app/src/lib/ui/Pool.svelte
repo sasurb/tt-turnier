@@ -99,7 +99,7 @@
   </div>
   <p class="leise">{T.pool.importText}</p>
   {#if neu}
-    <SpielerForm angaben={[...ALLE_ANGABEN]} knopf={T.tspieler.hinzufuegen} speichern={anlegen} abbrechen={() => (neu = false)} />
+    <SpielerForm angaben={[...ALLE_ANGABEN]} vereine={pool.liste.map((x) => x.verein)} knopf={T.tspieler.hinzufuegen} speichern={anlegen} abbrechen={() => (neu = false)} />
   {/if}
 </section>
 
@@ -113,7 +113,7 @@
       {#each treffer as p (p.id)}
         <li>
           {#if bearbeite === p.id}
-            <SpielerForm angaben={[...ALLE_ANGABEN]} start={p} knopf={T.tspieler.speichern} speichern={(d) => aendern(p, d)} abbrechen={() => (bearbeite = null)} />
+            <SpielerForm angaben={[...ALLE_ANGABEN]} vereine={pool.liste.map((x) => x.verein)} start={p} knopf={T.tspieler.speichern} speichern={(d) => aendern(p, d)} abbrechen={() => (bearbeite = null)} />
           {:else}
             <div class="zeile">
               <span class="wachsen">
