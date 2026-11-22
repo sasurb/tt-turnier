@@ -1,3 +1,11 @@
+<script module lang="ts">
+  /**
+   * Auf-/Zugeklappt je Konkurrenz für die ganze Sitzung merken (auch beim Reiterwechsel).
+   * Nur Abweichungen vom Standard (offen, solange nicht beendet) werden gespeichert.
+   */
+  const aufgeklappt = new Map<string, boolean>();
+</script>
+
 <script lang="ts">
   import KonkurrenzMeldungen from './KonkurrenzMeldungen.svelte';
   import { ART, type PoolSpieler } from '@shared/protokoll';
@@ -27,6 +35,20 @@
   }: { z: TurnierZustand; k: KonkurrenzZustand; poolListe: PoolSpieler[]; eintragen: (art: string, d: Record<string, unknown>) => Promise<unknown> } = $props();
 
   let bearbeiten = $state(false);
+
+  /*
+   * Nicht open={k.status !== 'beendet'} schreiben: Der Turnierzustand wird bei jeder Änderung
+   * (auch beim Abgleich) neu berechnet, dann klappte Svelte die Karte sofort wieder auf.
+   */
+  const standardOffen = $derived(k.status !== 'beendet');
+  // svelte-ignore state_referenced_locally
+  let auf = $state<boolean | null>(aufgeklappt.get(k.id) ?? null);
+  function umgeschaltet(e: Event & { currentTarget: HTMLDetailsElement }) {
+    const o = e.currentTarget.open;
+    auf = o === standardOffen ? null : o;
+    if (auf === null) aufgeklappt.delete(k.id);
+    else aufgeklappt.set(k.id, auf);
+  }
   let gruppenZahl = $state<number | null>(null);
   let fehler = $state('');
 
@@ -151,7 +173,7 @@
   }
 </script>
 
-<details class="karte konk" open={k.status !== 'beendet'} data-testid="konkurrenz">
+<details class="karte konk" open={auf ?? standardOffen} ontoggle={umgeschaltet} data-testid="konkurrenz">
   <summary>
     <span>{k.einst.name} <span class="leise">· {doppel || mannschaft ? T.konk.arten[k.einst.art] + ' · ' : ''}{T.konk.modi[k.einst.modus]} · {mannschaft ? T.mannschaft.anzahl(n) : doppel ? T.konk.paare(n) : T.konk.teilnehmer(n)}</span></span>
     <span class="marke">{T.konk.status[istRundenModus(k.einst.modus) && k.status === 'gruppen' ? 'runden' : k.status]}</span>

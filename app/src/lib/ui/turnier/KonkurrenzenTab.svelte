@@ -192,11 +192,16 @@
     <div class="reihe">
       <button onclick={() => (neu = true)}>+ {T.konk.neu}</button>
       <button class="zweit" onclick={() => (assistent = true)} data-testid="klassen-assistent">{T.konk.klassenAssistent}</button>
-      {#if zusammenlegbar.length >= 2}<button class="zweit" onclick={() => (zlOffen = !zlOffen)} aria-expanded={zlOffen} data-testid="zusammenlegen">{T.konk.zusammenlegen}</button>{/if}
+      {#if zusammenlegbar.length >= 2}
+        <span class="mit-hilfe">
+          <button class="zweit" onclick={() => (zlOffen = !zlOffen)} aria-expanded={zlOffen} data-testid="zusammenlegen">{T.konk.zusammenlegen}</button>
+          <span data-testid="zusammenlegen-hilfe"><Hilfe text={T.konk.zusammenlegenHilfe} /></span>
+        </span>
+      {/if}
     </div>
     {#if zlOffen}
       <div class="zusammen" data-testid="zusammenlegen-form">
-        <h3>{T.konk.zusammenlegen}<Hilfe text={T.konk.zusammenlegenHilfe} /></h3>
+        <h3>{T.konk.zusammenlegen}</h3>
         <div class="zl-raster">
           <div>
             <label for="zlv">{T.konk.zusammenlegenVon}</label>
@@ -234,6 +239,7 @@
   h4 { margin: 12px 0 4px; }
   .oder { margin-top: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .vorlage { margin-top: 12px; }
+  .mit-hilfe { display: inline-flex; align-items: center; }
   .zusammen { margin-top: 14px; border-top: 1px solid var(--linie); padding-top: 10px; }
   .zl-raster { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
   @media (max-width: 480px) {

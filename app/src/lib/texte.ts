@@ -625,7 +625,7 @@ export const T = {
     aendernNicht: (grund: string) => `Geht nicht: ${grund}`,
     zusammenlegen: 'Konkurrenzen zusammenlegen',
     zusammenlegenHilfe:
-      'Zu wenige Meldungen in einer Klasse? Legt die Meldungen einer Konkurrenz zu einer anderen und löscht die leere. Geht nur, solange beide noch nicht gestartet sind. Die Zulassung wird erweitert, damit alle passen.',
+      'Macht aus zwei Konkurrenzen eine einzige – z. B. wenn sich für „Damen“ zu wenige gemeldet haben und sie bei „Herren“ mitspielen sollen. Alle Meldungen der ersten Konkurrenz wandern in die zweite, die erste wird danach gelöscht. Modus und Spielregeln der zweiten bleiben; die Zulassung (TTR, Jahrgang, Klasse) wird so erweitert, dass alle passen. Geht nur bei gleicher Art (Einzel, Doppel …) und solange beide noch nicht ausgelost sind. „Rückgängig“ nimmt es wieder zurück.',
     zusammenlegenVon: 'Meldungen aus',
     zusammenlegenNach: 'zu',
     zusammenlegenName: 'Neuer Name (optional)',

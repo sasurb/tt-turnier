@@ -36,6 +36,8 @@
   let fehler = $state('');
   let hinweis = $state('');
   let einst = $state<AnmeldungEinstellungen | null>(null);
+  /** „Einrichten“: zu, sobald die Anmeldung offen ist – Wahl der Leitung bleibt beim Nachladen (alle 2 min) erhalten */
+  let einrichtenAuf = $state<boolean | null>(null);
   let liste = $state<AnmeldungEintrag[]>([]);
   let qr = $state(false);
   let sendet = $state(false);
@@ -291,7 +293,7 @@
       </ul>
     {/if}
 
-    <details class="einrichten" open={!einst?.offen}>
+    <details class="einrichten" open={einrichtenAuf ?? !einst?.offen} ontoggle={(e) => (einrichtenAuf = e.currentTarget.open === !einst?.offen ? null : e.currentTarget.open)}>
       <summary>{T.anm.einrichten}</summary>
     <fieldset>
       <legend>{T.anm.konkurrenzen}<Hilfe text={T.anm.konkurrenzenHilfe} /></legend>
