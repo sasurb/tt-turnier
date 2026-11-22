@@ -115,7 +115,8 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   // App-Wertung: Sieg gegen Stärkeren → +30 (K = 32), amtlicher TTR bleibt
   await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
   const wertung = page.getByTestId('abschnitt-appwertung');
-  await wertung.locator('summary').click();
+  // Gibt es etwas zu übernehmen, ist der Abschnitt schon aufgeklappt
+  await expect(wertung).toHaveAttribute('open', '');
   await expect(wertung.getByTestId('appwertung-zeile')).toHaveText('1025 → 1055 (+30, 1 Spiel)');
   await expect(wertung.getByText('Kai Klub')).toHaveCount(0);
   await layoutPruefen(page, wertung);

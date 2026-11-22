@@ -25,6 +25,8 @@
   const ids = $derived(z.spielerReihe.filter((id) => werte[id]));
   const geplant = $derived(poolUebernahmePlanen(z, pool.liste));
   let meldung = $state<{ ok: boolean; text: string } | null>(null);
+  /** Aufgeklappt-Zustand selbst merken (Neuaufbau beim Abgleich); offen, solange es etwas zu übernehmen gibt */
+  let auf = $state<boolean | null>(null);
   let laeuft = $state(false);
 
   async function uebernehmen() {
@@ -47,7 +49,7 @@
 </script>
 
 {#if ids.length}
-  <details class="karte abschnitt" data-testid="abschnitt-appwertung">
+  <details class="karte abschnitt" data-testid="abschnitt-appwertung" open={auf ?? geplant.length > 0} ontoggle={(e) => (auf = e.currentTarget.open)}>
     <summary><span class="kopf"><h2 class="titel">{T.appwertung.titel}</h2><Hilfe text={T.appwertung.hilfe} /></span></summary>
     <ul class="liste">
       {#each ids as id (id)}
