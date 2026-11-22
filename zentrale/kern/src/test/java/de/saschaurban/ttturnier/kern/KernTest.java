@@ -283,13 +283,13 @@ public final class KernTest {
 
         System.out.println("Datenschutz beim Abholen (Zuschauer)");
         rufe(z, "POST", "events", Json.obj("ereignisse", liste(
-            ev("d-0000001", "spieler.angelegt", Json.obj("id", "sp1", "vorname", "Lea", "nachname", "Löwe", "verein", "TSV", "jahrgang", 2012L, "geschlecht", "w", "pool", "p-1")),
+            ev("d-0000001", "spieler.angelegt", Json.obj("id", "sp1", "vorname", "Lea", "nachname", "Löwe", "verein", "TSV", "jahrgang", 2012L, "geschlecht", "w", "pool", "p-1", "ttr", 1025L, "ttrGeschaetzt", true)),
             ev("d-0000002", "spiel.aufgerufen", Json.obj("konkurrenz", "k", "spiel", "x", "tisch", 2L, "schiri", Json.obj("name", "Opa Paul"))),
             ev("d-0000003", "spiel.aufgerufen", Json.obj("konkurrenz", "k", "spiel", "y", "tisch", 3L, "schiri", Json.obj("name", "Lea", "spieler", "sp1"))))), leitB, q("turnier", tid), false);
         long vorher = zahlAus(rufe(z, "GET", "events", null, leitB, q("turnier", tid, "ab", "0"), false).g("hoechsteSeq")) - 3;
         a = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", String.valueOf(vorher)), false);
         Map<String, Object> lea = Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(0)).get("daten"));
-        pruefe("zuschauer".equals(a.t("sicht")) && "Löwe".equals(lea.get("nachname")) && !lea.containsKey("jahrgang") && !lea.containsKey("geschlecht") && !lea.containsKey("pool"), "Zuschauer: kein Jahrgang, Geschlecht, Pool");
+        pruefe("zuschauer".equals(a.t("sicht")) && "Löwe".equals(lea.get("nachname")) && !lea.containsKey("jahrgang") && !lea.containsKey("geschlecht") && !lea.containsKey("pool") && !lea.containsKey("ttrGeschaetzt") && Long.valueOf(1025).equals(lea.get("ttr")), "Zuschauer: kein Jahrgang, Geschlecht, Pool, nicht „geschätzt“");
         pruefe(!Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(1)).get("daten")).containsKey("schiri")
             && Json.schreiben(Json.alsObjekt(Json.alsObjekt(a.l("ereignisse").get(2)).get("daten")).get("schiri")).equals("{\"spieler\":\"sp1\"}"), "Zuschauer: Schiedsrichter nur als Spieler-Bezug");
         a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "spieler", "bezug", "sp9", "name", "Pia"))), leitB);
@@ -333,7 +333,20 @@ public final class KernTest {
             Json.obj("id", "p2", "vorname", "Ben", "nachname", "B", "verein", "TSV", "ttr", 99999L))), konto);
         Map<String, Object> p2 = Json.alsObjekt(a.l("spieler").get(1));
         pruefe(a.s == 200 && a.l("spieler").size() == 2 && p2.get("ttr") == null && !Json.alsObjekt(a.l("spieler").get(0)).containsKey("fremd"), "Pool speichern, Felder geprüft");
-        rufe(z, "POST", "pool.loeschen", Json.obj("ids", liste("p2")), konto);
+        a = rufe(z, "POST", "pool.speichern", Json.obj("spieler", liste(
+            Json.obj("id", "h1", "vorname", "Han\nna", "nachname", "H", "verein", "", "ttr", 1025L, "ttrGeschaetzt", true, "appSpiele", 7L,
+                "wertungTurniere", liste("12345678"), "lizenz", "NU-123"),
+            Json.obj("id", "h2", "vorname", "Hugo", "nachname", "H", "verein", "", "ttrGeschaetzt", true, "appSpiele", -3L, "lizenz", "<script>"))), konto);
+        Map<String, Object> h1 = null, h2 = null;
+        for (Object o : a.l("spieler")) {
+            Map<String, Object> m = Json.alsObjekt(o);
+            if ("h1".equals(m.get("id"))) h1 = m;
+            if ("h2".equals(m.get("id"))) h2 = m;
+        }
+        pruefe(h1 != null && Boolean.TRUE.equals(h1.get("ttrGeschaetzt")) && Long.valueOf(7).equals(h1.get("appSpiele")) && "Hanna".equals(h1.get("vorname"))
+            && !h1.containsKey("wertungTurniere") && "NU-123".equals(h1.get("lizenz")), "Pool: geschätzter Wert, App-Spiele, Lizenz; Steuerzeichen raus; keine Turnierliste");
+        pruefe(h2 != null && !h2.containsKey("ttrGeschaetzt") && !h2.containsKey("appSpiele") && !h2.containsKey("lizenz"), "Pool: ungültige Zusatzfelder verworfen");
+        rufe(z, "POST", "pool.loeschen", Json.obj("ids", liste("p2", "h1", "h2")), konto);
         a = rufe(z, "GET", "pool", null, konto);
         pruefe(a.l("spieler").size() == 1, "Pool löschen");
         a = rufe(z, "POST", "turnier.uebersicht", Json.obj("turnier", tid, "text", "Gruppe A"), leitB);
@@ -452,7 +465,7 @@ public final class KernTest {
         z.setzePort(8080);
         String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
         A a = rufe(z, "GET", "info", null, null);
-        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.14.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
+        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.15.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
         a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Kassencup", "datum", "2027-02-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         String leit = a.t("token");

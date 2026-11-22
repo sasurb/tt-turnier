@@ -6,6 +6,7 @@
   import { ALLE_ANGABEN, type SpielerDaten } from '../engine/modell';
   import { csvAusgeben, csvLesen, geraetInsKonto, geraetePool, imPool, pool, poolLaden, poolLoeschen, poolSpeichern } from '../pool.svelte';
   import SpielerForm from './turnier/SpielerForm.svelte';
+  import { hobbyStufe } from '../engine/stufen';
   import { klassenLaden } from '../klassen.svelte';
 
   let { imTurnier = null }: {
@@ -47,7 +48,7 @@
     meldung = { ok: true, text: T.pool.gespeichert };
   }
   async function aendern(p: PoolSpieler, d: SpielerDaten) {
-    await poolSpeichern([{ ...p, ...d }]);
+    await poolSpeichern([{ ...p, ...d, ttrGeschaetzt: !!d.ttrGeschaetzt }]);
     bearbeite = null;
   }
   function loeschen(p: PoolSpieler) {
@@ -122,7 +123,7 @@
               <span class="wachsen">
                 <span><strong>{p.vorname} {p.nachname}</strong>{#if imTurnier?.has(p.id)} <span class="marke">{T.pool.imTurnier}</span>{/if}</span>
                 <span class="leise">
-                  {p.verein}{p.ttr ? ` · TTR ${p.ttr}` : ''}{p.klasse ? ` · ${p.klasse}` : ''}{p.geschlecht ? ` · ${T.tspieler.geschlechter[p.geschlecht]}` : ''}{p.jahrgang ? ` · ${p.jahrgang}` : ''}
+                  {p.verein}{p.ttr ? (p.ttrGeschaetzt ? ` · ${T.einstufung.stufe(p.ttr, hobbyStufe(p.ttr)?.id ?? null)}` : ` · TTR ${p.ttr}`) : ''}{p.klasse ? ` · ${p.klasse}` : ''}{p.geschlecht ? ` · ${T.tspieler.geschlechter[p.geschlecht]}` : ''}{p.jahrgang ? ` · ${p.jahrgang}` : ''}
                 </span>
               </span>
               <button class="zweit klein" onclick={() => (bearbeite = p.id)}>{T.tspieler.bearbeiten}</button>

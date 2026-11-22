@@ -75,6 +75,8 @@ export interface TurnierZustand {
   zurueckgenommen: string[];
   /** Kasse und Quittungen (nur volle Sicht; null = nicht eingerichtet) */
   kasse: KasseEinstellungen | null;
+  /** App-Wertung der Hobbyspieler in den Spielerpool übernommen (Zeitpunkt, ab 0.15) – gegen doppeltes Übernehmen */
+  wertungUebernommen: string | null;
   /** Check-in am Turniertag: Spieler-ID → da (nur volle Sicht) */
   checkin: Record<string, boolean>;
   /** Startgeld-Buchungen in Reihenfolge (Quittungsnummer = nr; nur volle Sicht) */
@@ -123,6 +125,7 @@ export function leererZustand(): TurnierZustand {
     satzMinuten: null,
     zurueckgenommen: [],
     kasse: null,
+    wertungUebernommen: null,
     checkin: leer(),
     buchungen: [],
     abgeschlossen: false,
@@ -207,6 +210,7 @@ function spielerDatenLesen(d: Record<string, unknown>): Partial<SpielerDaten> {
   if (ve !== undefined) r.verein = ve;
   const ttr = zahl(d.ttr, 0, 4000);
   if (ttr !== undefined) r.ttr = ttr;
+  if (typeof d.ttrGeschaetzt === 'boolean') r.ttrGeschaetzt = d.ttrGeschaetzt;
   const jg = zahl(d.jahrgang, 1900, 2100);
   if (jg !== undefined) r.jahrgang = jg;
   if (d.klasse === null) r.klasse = null;
@@ -276,6 +280,7 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
         .map((k) => k.trim())
         .filter(Boolean)
         .slice(0, 20);
+    if (typeof z.nurHobby === 'boolean') e.zulassung.nurHobby = z.nurHobby;
     if (Array.isArray(z.geschlecht)) e.zulassung.geschlecht = z.geschlecht.filter((g): g is 'm' | 'w' | 'd' => g === 'm' || g === 'w' || g === 'd');
   }
   // Mannschaften: Spielsystem immer vorhanden, nur Gruppen/Jeder gegen jeden/K.-o.
@@ -769,6 +774,8 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       const sm = zahl(d.satzMinuten, 2, 15);
       if (sm !== undefined) z.satzMinuten = sm;
       if ('kasse' in d) z.kasse = kasseLesen(d.kasse, z.kasse);
+      // Einmalig: lässt sich nicht zurücksetzen (auch nicht per Rückgängig), damit kein Turnier doppelt zählt
+      if (typeof d.wertungUebernommen === 'string' && d.wertungUebernommen.length <= 40 && !z.wertungUebernommen) z.wertungUebernommen = d.wertungUebernommen;
       // „Ergebnisse veröffentlichen“: Abweichungen der Konkurrenzen zurücknehmen
       if (d.alleKonkurrenzen === true) for (const k of Object.values(z.konkurrenzen)) k.einst.veroeffentlichung = null;
       break;
@@ -1622,7 +1629,7 @@ export const NICHT_RUECKGAENGIG: readonly string[] = [
  */
 export function rueckgaengigErlaubt(e: Pick<LokalesEreignis, 'art' | 'daten'>): boolean {
   if (NICHT_RUECKGAENGIG.includes(e.art)) return false;
-  if (e.art === ART.turnierDaten && e.daten && typeof e.daten === 'object' && 'namen' in e.daten) return false;
+  if (e.art === ART.turnierDaten && e.daten && typeof e.daten === 'object' && ('namen' in e.daten || 'wertungUebernommen' in e.daten)) return false;
   return true;
 }
 

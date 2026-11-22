@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Einstufung from './Einstufung.svelte';
   import { onMount } from 'svelte';
   import type { AnmeldungInfo, AnmeldungStand } from '@shared/protokoll';
   import { T } from '../texte';
@@ -26,6 +27,8 @@
 
   let f = $state({ vorname: '', nachname: '', verein: '', email: '', ttr: '', klasse: '', geschlecht: '', jahrgang: '' });
   let wahl = $state<Record<string, { an: boolean; partner: string }>>({});
+  /** Q-TTR vorhanden (ja) oder Einstufung mit 4 Fragen (nein) */
+  let hatTtr = $state<'ja' | 'nein' | ''>('');
   let minderjaehrig = $state(false);
   let einverstanden = $state(false);
   let datenschutz = $state(false);
@@ -41,7 +44,7 @@
       gewaehlt.length > 0 &&
       datenschutz &&
       (!minderjaehrig || einverstanden) &&
-      (!pflicht.has('ttr') || f.ttr !== '') &&
+      (!pflicht.has('ttr') || (hatTtr !== '' && f.ttr !== '')) &&
       (!pflicht.has('klasse') || !!f.klasse.trim()) &&
       (!pflicht.has('geschlecht') || !!f.geschlecht) &&
       (!pflicht.has('jahrgang') || f.jahrgang !== ''),
@@ -92,6 +95,7 @@
         verein: f.verein.trim(),
         email: f.email.trim(),
         ttr: pflicht.has('ttr') ? zahl(f.ttr) : null,
+        ...(pflicht.has('ttr') && hatTtr === 'nein' ? { ttrGeschaetzt: true } : {}),
         klasse: pflicht.has('klasse') ? f.klasse.trim() || null : null,
         geschlecht: pflicht.has('geschlecht') ? ((f.geschlecht || null) as 'm' | 'w' | 'd' | null) : null,
         jahrgang: pflicht.has('jahrgang') ? zahl(f.jahrgang) : null,
@@ -210,7 +214,15 @@
       <label>{T.meldung.verein}<input bind:value={f.verein} autocomplete="organization" maxlength="120" /></label>
       <div class="label-zeile"><label for="m-email">{T.meldung.email}</label><Hilfe text={T.meldung.emailHilfe} /></div>
       <input id="m-email" type="email" bind:value={f.email} autocomplete="email" maxlength="190" required />
-      {#if pflicht.has('ttr')}<label>{T.meldung.ttr}<input bind:value={f.ttr} inputmode="numeric" maxlength="4" /></label>{/if}
+      {#if pflicht.has('ttr')}
+        <fieldset class="ttr-frage">
+          <legend>{T.einstufung.hatTtr}</legend>
+          <label class="wahl"><input type="radio" name="hat-ttr" value="ja" bind:group={hatTtr} onchange={() => (f.ttr = '')} />{T.einstufung.ja}</label>
+          <label class="wahl"><input type="radio" name="hat-ttr" value="nein" bind:group={hatTtr} onchange={() => (f.ttr = '')} />{T.einstufung.nein}</label>
+        </fieldset>
+        {#if hatTtr === 'ja'}<label>{T.einstufung.qttr}<input bind:value={f.ttr} inputmode="numeric" maxlength="4" /></label>{/if}
+        {#if hatTtr === 'nein'}<Einstufung sofort uebernehmen={(wert) => (f.ttr = String(wert))} />{/if}
+      {/if}
       {#if pflicht.has('klasse')}<label>{T.meldung.klasse}<input bind:value={f.klasse} maxlength="40" /></label>{/if}
       {#if pflicht.has('geschlecht')}
         <label>{T.meldung.geschlecht}
@@ -256,4 +268,8 @@
   .st-warteliste { color: var(--orange); }
   .st-abgemeldet { color: var(--leise); }
   .fang { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  .ttr-frage { border: 0; padding: 0; margin: 12px 0 0; }
+  .ttr-frage legend { font-weight: 700; padding: 0; }
+  .ttr-frage .wahl { display: flex; gap: 10px; align-items: center; font-weight: 400; min-height: 44px; margin: 0; }
+  .ttr-frage .wahl input { width: 22px; height: 22px; min-height: 0; flex: none; }
 </style>

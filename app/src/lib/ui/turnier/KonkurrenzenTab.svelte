@@ -1,4 +1,6 @@
 <script lang="ts">
+  import TtrGrenzenWahl from './TtrGrenzenWahl.svelte';
+  import { vorlageErkennen } from '../../engine/stufen';
   import { onMount } from 'svelte';
   import { ART } from '@shared/protokoll';
   import { T } from '../../texte';
@@ -106,8 +108,9 @@
           let stufe = 0;
           for (const g of grenzenListe) if (s.ttr >= g) stufe++;
           schluessel = `ttr${stufe}`;
-          name = `TTR ${ttrBereichName(stufe, grenzenListe)}`;
-          zulassung = { ttrMin: stufe === 0 ? null : grenzenListe[stufe - 1]!, ttrMax: stufe >= grenzenListe.length ? null : grenzenListe[stufe]! - 1 };
+          name = vorlageErkennen(grenzenListe) ? ttrBereichName(stufe, grenzenListe) : `TTR ${ttrBereichName(stufe, grenzenListe)}`;
+          // Nur Obergrenze (DTTB-Praxis): Schwächere dürfen auch in einer höheren Klasse starten
+          zulassung = { ttrMax: stufe >= grenzenListe.length ? null : grenzenListe[stufe]! - 1 };
         }
       }
       const g = gruppen.get(schluessel) ?? { name, zulassung, spieler: [] };
@@ -161,8 +164,7 @@
       {#each ['klasse', 'ttr'] as w (w)}<option value={w}>{T.konk.klassenNachWahl[w]}</option>{/each}
     </select>
     {#if nach === 'ttr'}
-      <div class="label-zeile"><label for="kg">{T.konk.ttrGrenzen}</label><Hilfe text={T.konk.ttrGrenzenHilfe} /></div>
-      <input id="kg" bind:value={grenzen} inputmode="numeric" />
+      <TtrGrenzenWahl bind:wert={grenzen} id="assistent" />
     {/if}
     {#if z.spielerReihe.length === 0}
       <p class="meldung info">{T.konk.keineSpieler}</p>

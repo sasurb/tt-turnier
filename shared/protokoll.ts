@@ -479,6 +479,12 @@ export interface PoolSpieler {
   klasse?: string | null;
   geschlecht?: 'm' | 'w' | 'd' | null;
   jahrgang?: number | null;
+  /** TTR ist ein geschätzter Wert (Hobbyspieler, Einstufung bzw. App-Wertung) statt Q-TTR (ab 0.15) */
+  ttrGeschaetzt?: boolean;
+  /** Gewertete App-Spiele bisher (K-Faktor der App-Wertung) */
+  appSpiele?: number;
+  /** click-TT-Spieler-ID bzw. Lizenznummer (wie im Turnier) */
+  lizenz?: string | null;
   /** Letzte Änderung (ISO), setzt der Server */
   geaendert?: string;
 }
@@ -692,6 +698,8 @@ export interface AnmeldungSendenAnfrage {
   verein: string;
   email: string;
   ttr?: number | null;
+  /** TTR aus der Einstufung (kein Q-TTR) – ab 0.15 */
+  ttrGeschaetzt?: boolean;
   klasse?: string | null;
   geschlecht?: 'm' | 'w' | 'd' | null;
   jahrgang?: number | null;
@@ -738,6 +746,8 @@ export interface AnmeldungEintrag {
   verein: string;
   email: string;
   ttr: number | null;
+  /** ab 0.15; fehlt bei älteren Anmeldungen */
+  ttrGeschaetzt?: boolean;
   klasse: string | null;
   geschlecht: 'm' | 'w' | 'd' | null;
   jahrgang: number | null;

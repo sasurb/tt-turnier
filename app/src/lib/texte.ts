@@ -697,6 +697,8 @@ export const T = {
     zulassungText: 'Optional. Passt ein Spieler nicht, zeigt die App beim Melden einen Hinweis – gemeldet werden kann er trotzdem.',
     ttrMin: 'TTR ab',
     ttrMax: 'TTR bis',
+    nurHobby: 'Nur Hobbyspieler (ohne amtlichen TTR)',
+    nurHobbyHilfe: 'Reines Hobby-Turnier: Spieler mit amtlichem Q-TTR bekommen beim Melden einen Hinweis. Ohne Häkchen ist die Konkurrenz offen – Hobby- und Vereinsspieler spielen gemischt, getrennt nur über „TTR bis“.',
     klassen: 'Leistungsklassen (mit Komma trennen)',
     trennungTitel: 'Leistungsklassen in den Gruppen',
     trennung: 'Gruppen bilden aus',
@@ -1567,5 +1569,62 @@ export const T = {
     nicht_angemeldet: 'Nicht angemeldet – Einträge werden nicht gesendet',
     fehler: 'Fehler beim Abgleich',
     ausstehend: (n: number) => (n === 1 ? '1 Eintrag wartet' : `${n} Einträge warten`),
+  },
+  /** Einstufung für Hobbyspieler ohne TTR (ab 0.15, engine/stufen.ts) */
+  einstufung: {
+    knopf: 'Kein TTR? Einstufen',
+    titel: 'Einstufung in 4 Fragen',
+    text: 'Für Hobbyspieler ohne Q-TTR: Aus den Antworten ergibt sich ein geschätzter Startwert auf der TTR-Skala. Er passt sich nach jedem gespielten Einzel in der App an. Gespeichert wird nur der Wert, nicht die Antworten.',
+    fragen: [
+      {
+        frage: 'Wo und wie oft spielst du?',
+        antworten: ['Ab und zu, z. B. im Urlaub oder im Garten', 'Regelmäßig in der Freizeit', 'Wöchentlich in einer Hobbygruppe oder im Training', 'Aktiv im Verein (Punktspiele)'],
+      },
+      {
+        frage: 'Wie sicher sind deine Ballwechsel?',
+        antworten: ['Ich halte den Ball meist ein paar Mal im Spiel', 'Sichere Ballwechsel mit Vor- und Rückhand', 'Ich platziere gezielt und schupfe sicher', 'Sicheres Topspin- und Blockspiel'],
+      },
+      {
+        frage: 'Wie gehst du mit Schnitt (Spin) um?',
+        antworten: ['Ich spiele ohne gezielten Schnitt', 'Ich spiele einfachen Unterschnitt', 'Erste Topspins und Aufschläge mit Schnitt', 'Ich lese Schnitt sicher und variiere meine Aufschläge'],
+      },
+      {
+        frage: 'Wie viel Turniererfahrung hast du?',
+        antworten: ['Noch keine', 'Ein paar Hobbyturniere', 'Regelmäßig Hobbyturniere, oft vordere Plätze', 'Ich gewinne Hobbyturniere und spiele taktisch geplant'],
+      },
+    ],
+    ergebnis: (stufe: string, wert: number) => `${stufe} – Startwert ${wert}`,
+    uebernehmen: 'Wert übernehmen',
+    offen: (n: number) => (n === 1 ? 'Noch 1 Frage offen' : `Noch ${n} Fragen offen`),
+    geschaetzt: 'Geschätzter Wert (Hobby, kein Q-TTR)',
+    geschaetztHilfe: 'Angehakt: Der Wert stammt aus der Einstufung oder der App-Wertung und ist kein amtlicher Q-TTR. Solche Werte passen sich nach jedem gespielten Einzel an (App-Wertung); amtliche TTR-Werte bleiben unverändert.',
+    kurz: '≈',
+    stufe: (wert: number, stufe: string | null) => `≈${wert}${stufe ? ` · ${stufe}` : ''}`,
+    hatTtr: 'Hast du einen offiziellen Q-TTR-Wert (myTischtennis)?',
+    ja: 'Ja',
+    nein: 'Nein, ich spiele hobbymäßig',
+    qttr: 'Dein Q-TTR-Wert',
+  },
+  /** App-Wertung der Hobbyspieler im Reiter „Teilnehmer“ (engine/appwertung.ts) */
+  appwertung: {
+    titel: 'App-Wertung der Hobbyspieler',
+    hilfe: 'Geschätzte Werte passen sich nach jedem gespielten Einzel an – wie beim TTR: Ein Sieg gegen Stärkere bringt mehr als gegen Schwächere. In den ersten 5 App-Spielen ändert sich der Wert doppelt so schnell (K = 32, danach 16). Im laufenden Turnier zählen für Setzung und Klassen weiter die Startwerte. Nach dem Turnier übernimmst du die neuen Werte in deinen Spielerpool – dann starten die Spieler beim nächsten Mal mit dem angepassten Wert. Amtliche TTR-Werte ändert die App nie.',
+    leer: 'Noch keine gewerteten Einzel.',
+    zeile: (start: number, aktuell: number, spiele: number) => `${start} → ${aktuell} (${aktuell - start >= 0 ? '+' : ''}${aktuell - start}, ${spiele === 1 ? '1 Spiel' : `${spiele} Spiele`})`,
+    uebernehmen: (n: number) => (n === 1 ? '1 neuen Wert in den Spielerpool übernehmen' : `${n} neue Werte in den Spielerpool übernehmen`),
+    uebernommen: (n: number) => (n === 1 ? '1 Wert im Spielerpool aktualisiert.' : `${n} Werte im Spielerpool aktualisiert.`),
+    schonUebernommen: 'Die Werte dieses Turniers sind schon im Spielerpool.',
+    ohnePool: 'Nicht im Spielerpool – Wert wird nicht gespeichert',
+    fehler: 'Spielerpool nicht gespeichert – bitte die Werte von Hand im Spielerpool nachtragen.',
+    amtlichImPool: 'Im Pool steht ein amtlicher TTR – bleibt unverändert',
+  },
+  /** Vorlagen für Leistungsklassen nach TTR (engine/stufen.ts) */
+  vorlagen: {
+    label: 'Vorlage',
+    hilfe: 'Klassen haben nur eine Obergrenze (DTTB-Praxis): Wer darunter liegt, darf auch in einer höheren Klasse starten. „Hobby + Verein“ verbindet die Hobby-Stufen H1–H4 mit den Klassen E–A auf einer Skala: H3 entspricht der E-Klasse (bis 1250), H4 der D-Klasse (bis 1450).',
+    wahl: { eigen: 'Eigene Grenzen', gemischt: 'Hobby + Verein (H1–H4, C–A)', dttb: 'DTTB-Klassen (E–A)', hobby: 'Nur Hobby-Stufen (H1–H4)' } as Record<string, string>,
+    damen: 'Damen: Obergrenzen A–D senken um',
+    damenHilfe: 'Für Damen-Konkurrenzen werden die Klassengrenzen oft um 150 bis 200 Punkte niedriger angesetzt. Betrifft nur die Vereinsklassen D, C und B (A ist offen).',
+    bereiche: (namen: string) => `Bereiche: ${namen}`,
   },
 } as const;

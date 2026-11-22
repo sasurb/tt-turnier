@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.14.0';
+    public const VERSION = '0.15.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_JE_TURNIER = 50000;
@@ -19,7 +19,7 @@ final class Api
     private const VERSUCHE_FENSTER = 15 * 60;             // 15 Minuten
     private const VERSUCHE_MAX = 10;
     /** Turnierkennung: 8 Ziffern (ab 0.6); ältere Kennungen (10 Zeichen) bleiben gültig */
-    private const TURNIER_ID_MUSTER = '/^([0-9]{8}|[a-z0-9]{6,16})$/';
+    private const TURNIER_ID_MUSTER = '/^([0-9]{8}|[a-z0-9]{6,16})$/D';
     /** Unbekannte Turnierkennungen je Anschluss und Viertelstunde, bevor gebremst wird (gegen Durchprobieren) */
     private const SUCHE_MAX = 30;
     /** Fehlversuche je Turnier (über alle Anschlüsse) in 15 Minuten, danach werden nur noch richtige Kennungen angenommen */
@@ -1214,9 +1214,9 @@ final class Api
                 unset($d->kasse);
                 $e['daten'] = $d;
             } elseif (($e['art'] === 'spieler.angelegt' || $e['art'] === 'spieler.geaendert') && $e['daten'] instanceof \stdClass) {
-                // Datensparsamkeit (ab 0.12): Jahrgang, Geschlecht, Pool-Bezug und Lizenz nur für Leitung und Kasse
+                // Datensparsamkeit (ab 0.12): Jahrgang, Geschlecht, Pool-Bezug, Lizenz und (ab 0.15) „geschätzt“ nur für Leitung und Kasse
                 $d = clone $e['daten'];
-                unset($d->jahrgang, $d->geschlecht, $d->pool, $d->lizenz);
+                unset($d->jahrgang, $d->geschlecht, $d->pool, $d->lizenz, $d->ttrGeschaetzt);
                 $e['daten'] = $d;
             }
             return $e;
@@ -1244,7 +1244,7 @@ final class Api
         if ($e['art'] === 'turnier.daten') {
             unset($d->kasse); // Kasse und Bankverbindung nur für Leitung und Helfer
         } elseif ($e['art'] === 'spieler.angelegt' || $e['art'] === 'spieler.geaendert') {
-            unset($d->jahrgang, $d->geschlecht, $d->pool, $d->lizenz);
+            unset($d->jahrgang, $d->geschlecht, $d->pool, $d->lizenz, $d->ttrGeschaetzt);
             if (isset($d->id) && is_string($d->id) && isset($weg[$d->id])) {
                 // Entfernter Spieler: keine Angaben zur Person mehr (bleibt nur als Platzhalter im Protokoll)
                 $d = (object)(['id' => $d->id] + ($e['art'] === 'spieler.angelegt' ? ['vorname' => self::ENTFERNT_NAME, 'nachname' => '', 'verein' => ''] : []));
@@ -2474,6 +2474,7 @@ final class Api
     {
         $d = json_decode((string)$z['daten'], true);
         $d = is_array($d) ? $d : [];
+        unset($d['wertungTurniere']); // nur kurz in 0.15-Tests gespeichert, nicht mehr ausgeben
         $d['id'] = (string)$z['id'];
         $d['geaendert'] = self::iso((int)$z['geaendert']);
         return $d;
@@ -2487,10 +2488,11 @@ final class Api
             throw new ApiFehler('ungueltig', 'Spieler muss ein Objekt sein.');
         }
         $id = $e['id'] ?? null;
-        if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{1,40}$/', $id)) {
+        if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{1,40}$/D', $id)) {
             throw new ApiFehler('ungueltig', 'Spieler-ID ungültig.');
         }
-        $txt = static fn(mixed $v, int $max): string => is_string($v) ? mb_substr(trim($v), 0, $max) : '';
+        // Steuerzeichen raus (Zeilenumbrüche würden CSV-Export und Anzeige stören)
+        $txt = static fn(mixed $v, int $max): string => is_string($v) ? mb_substr(trim((string)preg_replace('/[\x00-\x1F\x7F]/u', '', $v)), 0, $max) : '';
         $d = [
             'vorname' => $txt($e['vorname'] ?? '', 80),
             'nachname' => $txt($e['nachname'] ?? '', 80),
@@ -2506,6 +2508,18 @@ final class Api
         $d['klasse'] = $txt($e['klasse'] ?? '', 40) ?: null;
         $g = $e['geschlecht'] ?? null;
         $d['geschlecht'] = in_array($g, ['m', 'w', 'd'], true) ? $g : null;
+        // ab 0.15: geschätzter Wert (Hobby), App-Spiele für den K-Faktor; click-TT-Lizenz
+        if (($e['ttrGeschaetzt'] ?? null) === true && $d['ttr'] !== null) {
+            $d['ttrGeschaetzt'] = true;
+        }
+        $n = $e['appSpiele'] ?? null;
+        if (is_int($n) && $n > 0 && $n <= 100000) {
+            $d['appSpiele'] = $n;
+        }
+        $li = $e['lizenz'] ?? null;
+        if (is_string($li) && preg_match('/^[A-Za-z0-9-]{1,20}$/D', trim($li))) {
+            $d['lizenz'] = trim($li);
+        }
         return [$id, $d];
     }
 

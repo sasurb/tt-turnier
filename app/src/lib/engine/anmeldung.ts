@@ -48,7 +48,10 @@ export function uebernahmePlanen(z: TurnierZustand, liste: AnmeldungEintrag[]): 
     let spielerDa = !!z.spieler[a.id];
     if (!spielerDa && mitPlatz.length) {
       const daten: Record<string, unknown> = { id: a.id, vorname: a.vorname, nachname: a.nachname, verein: a.verein };
-      if (z.angaben.includes('ttr') && a.ttr !== null) daten.ttr = a.ttr;
+      if (z.angaben.includes('ttr') && a.ttr !== null) {
+        daten.ttr = a.ttr;
+        if (a.ttrGeschaetzt) daten.ttrGeschaetzt = true;
+      }
       if (z.angaben.includes('klasse') && a.klasse) daten.klasse = a.klasse;
       if (z.angaben.includes('geschlecht') && a.geschlecht) daten.geschlecht = a.geschlecht;
       if (z.angaben.includes('jahrgang') && a.jahrgang !== null) daten.jahrgang = a.jahrgang;

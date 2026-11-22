@@ -329,9 +329,19 @@ final class Anmeldung
         ];
         $email = $this->api->email($a);
         $pflicht = $e['angaben'] ?? [];
+        // Datensparsamkeit: nur die Angaben speichern, die die Leitung verlangt (sonst verwerfen)
+        foreach (['ttr', 'klasse', 'geschlecht', 'jahrgang'] as $f) {
+            if (!in_array($f, $pflicht, true)) {
+                unset($r[$f]);
+            }
+        }
         $ttr = $r['ttr'] ?? null;
         if (is_int($ttr) && $ttr >= 0 && $ttr <= 4000) {
             $d['ttr'] = $ttr;
+            // ab 0.15: Wert aus der Einstufung (Hobbyspieler) statt Q-TTR
+            if (($r['ttrGeschaetzt'] ?? null) === true) {
+                $d['ttrGeschaetzt'] = true;
+            }
         } elseif (in_array('ttr', $pflicht, true)) {
             throw new ApiFehler('ungueltig', 'Bitte deinen TTR-Wert angeben (0–4000).');
         }
@@ -664,6 +674,7 @@ final class Anmeldung
                 'verein' => (string)($d['verein'] ?? ''),
                 'email' => (string)$z['email'],
                 'ttr' => $d['ttr'] ?? null,
+                'ttrGeschaetzt' => ($d['ttrGeschaetzt'] ?? false) === true,
                 'klasse' => $d['klasse'] ?? null,
                 'geschlecht' => $d['geschlecht'] ?? null,
                 'jahrgang' => $d['jahrgang'] ?? null,

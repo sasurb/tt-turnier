@@ -1,5 +1,6 @@
 import type { Autor } from '@shared/protokoll';
 import type { BegegnungDaten, Mannschaft, MannschaftEinstellungen } from './mannschaft';
+import { vorlageErkennen } from './stufen';
 
 /**
  * Datenmodell der Turnier-Engine. Alles hier wird aus den Ereignissen berechnet
@@ -59,6 +60,11 @@ export interface SpielerDaten {
   nachname: string;
   verein: string;
   ttr?: number | null;
+  /**
+   * TTR ist ein geschätzter Wert für Hobbyspieler (Einstufung mit 4 Fragen, siehe stufen.ts) statt des
+   * amtlichen Q-TTR (ab 0.15). Fehlt = amtlich.
+   */
+  ttrGeschaetzt?: boolean;
   klasse?: string | null;
   geschlecht?: Geschlecht | null;
   jahrgang?: number | null;
@@ -82,6 +88,8 @@ export interface Zulassung {
   geschlecht: Geschlecht[];
   jahrgangVon: number | null;
   jahrgangBis: number | null;
+  /** Reines Hobby-Turnier: nur Spieler ohne amtlichen TTR (ab 0.15; fehlt = aus) */
+  nurHobby?: boolean;
 }
 
 export interface KonkurrenzEinstellungen {
@@ -165,6 +173,7 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
       geschlecht: [],
       jahrgangVon: null,
       jahrgangBis: null,
+      nurHobby: false,
     },
     klassenTrennung: 'keine',
     ttrGrenzen: [],
@@ -206,13 +215,13 @@ export function klasseVon(s: Pick<SpielerDaten, 'ttr' | 'klasse'> | undefined, e
   return `ttr${stufe}`;
 }
 
-/** Lesbarer Name eines TTR-Bereichs (Stufe aus klasseVon) */
+/** Lesbarer Name eines TTR-Bereichs (Stufe aus klasseVon); Grenzen einer Klassen-Vorlage bekommen deren Namen */
 export function ttrBereichName(stufe: number, grenzen: number[]): string {
   const g = [...grenzen].sort((a, b) => a - b);
   if (g.length === 0) return 'alle';
-  if (stufe === 0) return `bis ${g[0]! - 1}`;
-  if (stufe >= g.length) return `ab ${g[g.length - 1]}`;
-  return `${g[stufe - 1]}–${g[stufe]! - 1}`;
+  const bereich = stufe === 0 ? `bis ${g[0]! - 1}` : stufe >= g.length ? `ab ${g[g.length - 1]}` : `${g[stufe - 1]}–${g[stufe]! - 1}`;
+  const name = vorlageErkennen(g)?.namen[Math.min(stufe, g.length)];
+  return name ? `${name} (${stufe === 0 || stufe >= g.length ? bereich : `bis ${g[stufe]! - 1}`})` : bereich;
 }
 
 /** Diese Einstellungen lassen sich nach dem Start nicht mehr ändern. */

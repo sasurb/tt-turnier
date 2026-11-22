@@ -29,6 +29,7 @@
   import Tabellen from './turnier/Tabellen.svelte';
   import SpielerTab from './turnier/SpielerTab.svelte';
   import TeilnehmerJeKonkurrenz from './turnier/TeilnehmerJeKonkurrenz.svelte';
+  import AppWertung from './turnier/AppWertung.svelte';
   import PoolVerwaltung from './PoolVerwaltung.svelte';
   import KonkurrenzenTab from './turnier/KonkurrenzenTab.svelte';
   import Zugaenge from './turnier/Zugaenge.svelte';
@@ -758,6 +759,7 @@
         <AnmeldungTab z={zustand} turnierId={id} token={schreibToken} {eintragen} neuGesehen={() => (anmeldungNeu = 0)} />
       {/if}
       <TeilnehmerJeKonkurrenz z={zustand} turnierId={id} offen={weitere[0] ?? null} {eintragen} />
+      <AppWertung z={zustand} {eintragen} />
     {:else if aktiv === 'pool'}
       <h2>{T.pool.titel}</h2>
       <p class="leise">{T.pool.textTurnier}</p>

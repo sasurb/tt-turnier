@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TtrGrenzenWahl from './TtrGrenzenWahl.svelte';
   import { T } from '../../texte';
   import { SYSTEME, SYSTEM_REIHE, bisSiege, folgeLesen, folgeText, standardMannschaft, systemVon, type SystemId } from '../../engine/mannschaft';
   import { MODI, MODI_MANNSCHAFT, centAus, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
@@ -121,6 +122,7 @@
         jahrgangBis: zahl(zl.jahrgangBis),
         klassen: klassen.split(',').map((k) => k.trim()).filter(Boolean),
         geschlecht: [...e.zulassung.geschlecht],
+        nurHobby: !!e.zulassung.nurHobby,
       },
     };
     sendet = true;
@@ -270,8 +272,7 @@
       {#each ['keine', 'klasse', 'ttr'] as w (w)}<option value={w}>{T.konk.trennungWahl[w]}</option>{/each}
     </select>
     {#if e.klassenTrennung === 'ttr'}
-      <div class="label-zeile"><label for="tg-{id}">{T.konk.ttrGrenzen}</label><Hilfe text={T.konk.ttrGrenzenHilfe} /></div>
-      <input id="tg-{id}" bind:value={ttrGrenzen} inputmode="numeric" placeholder="1200, 1500" disabled={gestartet} />
+      <TtrGrenzenWahl bind:wert={ttrGrenzen} {id} disabled={gestartet} />
     {/if}
   {/if}
 
@@ -311,6 +312,7 @@
       <div><label for="j1-{id}">{T.konk.jahrgangVon}</label><input id="j1-{id}" bind:value={zl.jahrgangVon} inputmode="numeric" /></div>
       <div><label for="j2-{id}">{T.konk.jahrgangBis}</label><input id="j2-{id}" bind:value={zl.jahrgangBis} inputmode="numeric" /></div>
     </div>
+    <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={e.zulassung.nurHobby} /> {T.konk.nurHobby}</label><Hilfe text={T.konk.nurHobbyHilfe} /></div>
     <label for="kl-{id}">{T.konk.klassen}</label>
     <input id="kl-{id}" bind:value={klassen} placeholder={klassenStore.liste.length ? klassenStore.liste.slice(0, 3).join(', ') : 'Anfänger, Fortgeschritten'} list="klassen-vorschlag" />
     <datalist id="klassen-vorschlag">{#each klassenStore.liste as k (k)}<option value={k}></option>{/each}</datalist>

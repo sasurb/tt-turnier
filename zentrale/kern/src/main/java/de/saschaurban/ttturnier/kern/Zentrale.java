@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.14.0";
+    public static final String VERSION = "0.15.0";
     /** Platzhalter für Namen entfernter Spieler (wie PHP Api::ENTFERNT_NAME) */
     static final String ENTFERNT_NAME = "Entfernt";
     public static final int PROTOKOLL = 1;
@@ -1086,6 +1086,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                 d.remove("geschlecht");
                 d.remove("pool");
                 d.remove("lizenz");
+                d.remove("ttrGeschaetzt");
             }
             m.put("daten", d);
             return m;
@@ -1121,6 +1122,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             d.remove("geschlecht");
             d.remove("pool");
             d.remove("lizenz");
+            d.remove("ttrGeschaetzt");
             if (d.get("id") instanceof String && weg.contains(d.get("id"))) {
                 // Entfernter Spieler: keine Angaben zur Person mehr
                 Map<String, Object> r = new LinkedHashMap<>();
@@ -1781,11 +1783,17 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         d.put("klasse", k.isEmpty() ? null : k);
         Object g = e.get("geschlecht");
         d.put("geschlecht", "m".equals(g) || "w".equals(g) || "d".equals(g) ? g : null);
+        // ab 0.15: geschätzter Wert (Hobby), App-Spiele; click-TT-Lizenz
+        if (Boolean.TRUE.equals(e.get("ttrGeschaetzt")) && d.get("ttr") != null) d.put("ttrGeschaetzt", true);
+        Long n = Json.alsGanzzahl(e.get("appSpiele"));
+        if (n != null && n > 0 && n <= 100000) d.put("appSpiele", n);
+        String li = e.get("lizenz") instanceof String ? ((String) e.get("lizenz")).trim() : null;
+        if (li != null && li.matches("^[A-Za-z0-9-]{1,20}$")) d.put("lizenz", li);
         return new Object[] {id, d};
     }
 
     private static String poolText(Object o, int max) {
-        return o instanceof String ? kuerzen(((String) o).trim(), max) : "";
+        return o instanceof String ? kuerzen(((String) o).replaceAll("[\\x00-\\x1F\\x7F]", "").trim(), max) : "";
     }
 
     private synchronized Map<String, Object> poolAusgabe() {
@@ -1794,6 +1802,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         List<Object> aus = new ArrayList<>();
         for (String id : ids) {
             Map<String, Object> d = new LinkedHashMap<>(pool.get(id));
+            d.remove("wertungTurniere"); // nur kurz in 0.15-Tests gespeichert, nicht mehr ausgeben
             d.put("id", id);
             aus.add(d);
         }

@@ -8,6 +8,7 @@
   import { spielerName, type Angabe, type SpielerDaten } from '../../engine/modell';
   import { begonnen, teilnehmerVon, type TurnierZustand } from '../../engine/zustand';
   import { meldbareEinzel, teilnahmen } from '../../engine/abfragen';
+  import { hobbyStufe } from '../../engine/stufen';
   import { imPool, pool, poolLaden, poolSpeichern } from '../../pool.svelte';
   import { klassenLaden } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
@@ -45,7 +46,9 @@
   function fuersTurnier(d: Partial<SpielerDaten>): Record<string, unknown> {
     const r: Record<string, unknown> = { vorname: d.vorname ?? '', nachname: d.nachname ?? '', verein: d.verein ?? '' };
     for (const a of z.angaben) r[a] = d[a] ?? null;
+    if (z.angaben.includes('ttr') && d.ttrGeschaetzt && typeof d.ttr === 'number') r.ttrGeschaetzt = true;
     if (d.pool) r.pool = d.pool;
+    if (d.lizenz) r.lizenz = d.lizenz;
     return r;
   }
 
@@ -93,7 +96,10 @@
   async function aendern(id: string, d: SpielerDaten) {
     const alt = z.spieler[id]!;
     const neu = fuersTurnier({ ...d, pool: alt.pool });
-    const geaendert = Object.fromEntries(Object.entries(neu).filter(([f, v]) => (alt as unknown as Record<string, unknown>)[f] !== v && !(v === null && (alt as unknown as Record<string, unknown>)[f] === undefined)));
+    const geaendert: Record<string, unknown> = Object.fromEntries(Object.entries(neu).filter(([f, v]) => (alt as unknown as Record<string, unknown>)[f] !== v && !(v === null && (alt as unknown as Record<string, unknown>)[f] === undefined)));
+    const geschaetzt = !!neu.ttrGeschaetzt;
+    if (geschaetzt !== !!alt.ttrGeschaetzt) geaendert.ttrGeschaetzt = geschaetzt;
+    else delete geaendert.ttrGeschaetzt;
     if (Object.keys(geaendert).length) await eintragen(ART.spielerGeaendert, { id, ...geaendert });
     bearbeite = null;
   }
@@ -145,7 +151,7 @@
             <li>
               <label class="haken" class:aus={drin}>
                 <input type="checkbox" value={p.id} bind:group={gewaehlt} disabled={drin} />
-                <span><strong>{p.vorname} {p.nachname}</strong> <span class="leise">{p.verein}{p.ttr ? ` · ${p.ttr}` : ''}{drin ? ` · ${T.tspieler.schonDrin}` : ''}</span></span>
+                <span><strong>{p.vorname} {p.nachname}</strong> <span class="leise">{p.verein}{p.ttr ? ` · ${p.ttrGeschaetzt ? T.einstufung.kurz : ''}${p.ttr}` : ''}{drin ? ` · ${T.tspieler.schonDrin}` : ''}</span></span>
               </label>
             </li>
           {/each}
@@ -174,7 +180,7 @@
               <span class="wachsen">
                 <strong>{spielerName(s)}</strong>
                 <span class="leise">
-                  {s.verein}{#each z.angaben as a (a)}{#if s[a] != null && s[a] !== ''} · {a === 'geschlecht' ? T.tspieler.geschlechter[String(s[a])] : s[a]}{/if}{/each}
+                  {s.verein}{#each z.angaben as a (a)}{#if s[a] != null && s[a] !== ''}{' · '}{a === 'geschlecht' ? T.tspieler.geschlechter[String(s[a])] : a === 'ttr' && s.ttrGeschaetzt ? T.einstufung.stufe(s.ttr!, hobbyStufe(s.ttr!)?.id ?? null) : s[a]}{/if}{/each}
                 </span>
                 {#if z.konkurrenzReihe.length}
                   {@const t = teilnahmen(z, id)}

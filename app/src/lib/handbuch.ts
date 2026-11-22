@@ -103,6 +103,15 @@ export const HANDBUCH: HandbuchKapitel[] = [
         titel: 'Leistungsklassen',
         text: [
           'Spielen nur Gleichstarke gegeneinander, legt der Klassen-Assistent je Klasse oder TTR-Bereich eine eigene Konkurrenz an. Alternativ bildet die Auslosung Gruppen innerhalb einer Konkurrenz nur aus gleicher Klasse.',
+          'Für TTR-Bereiche gibt es Vorlagen: DTTB-Klassen E–A, Hobby-Stufen H1–H4 oder beides auf einer Skala (H3 entspricht der E-Klasse bis 1250, H4 der D-Klasse bis 1450). Klassen haben nur eine Obergrenze – wer darunter liegt, darf auch höher starten. Für Damen-Konkurrenzen lassen sich die Grenzen der Klassen D bis B um 150 oder 200 Punkte senken.',
+        ],
+      },
+      {
+        titel: 'Hobbyspieler ohne TTR',
+        text: [
+          'Wer keinen Q-TTR-Wert hat, wird mit 4 Fragen eingestuft („Kein TTR? Einstufen“ beim Anlegen, in der Online-Anmeldung automatisch). Daraus ergibt sich ein geschätzter Startwert: H1 900, H2 1025, H3 1175, H4 1350. Gespeichert wird nur der Wert.',
+          'Geschätzte Werte passen sich nach jedem gespielten Einzel an, wie beim TTR (in den ersten 5 App-Spielen doppelt so schnell). Im laufenden Turnier zählen weiter die Startwerte. Unter „Teilnehmer“ → „App-Wertung der Hobbyspieler“ übernimmst du die neuen Werte nach dem Turnier in deinen Spielerpool. Amtliche TTR-Werte ändert die App nie.',
+          'Ein reines Hobby-Turnier stellst du je Konkurrenz unter „Weitere Einstellungen“ → „Nur Hobbyspieler“ ein. Ohne dieses Häkchen spielen Hobby- und Vereinsspieler gemischt, getrennt nur über die Obergrenze „TTR bis“.',
         ],
       },
       {

@@ -522,8 +522,9 @@ export function zulassungsHinweise(s: Partial<TurnierSpieler> | undefined, zl: Z
   if (!s) return h;
   if (typeof s.ttr === 'number') {
     if (zl.ttrMin !== null && s.ttr < zl.ttrMin) h.push(`TTR ${s.ttr} unter ${zl.ttrMin}`);
-    if (zl.ttrMax !== null && s.ttr > zl.ttrMax) h.push(`TTR ${s.ttr} über ${zl.ttrMax}`);
+    if (zl.ttrMax !== null && s.ttr > zl.ttrMax) h.push(`${s.ttrGeschaetzt ? 'Wert' : 'TTR'} ${s.ttr} über ${zl.ttrMax}`);
   }
+  if (zl.nurHobby && typeof s.ttr === 'number' && !s.ttrGeschaetzt) h.push('amtlicher TTR (nur Hobby)');
   if (zl.klassen.length && s.klasse && !zl.klassen.some((k) => k.toLowerCase() === s.klasse!.toLowerCase())) h.push(`Klasse „${s.klasse}“`);
   if (zl.geschlecht.length && s.geschlecht && !zl.geschlecht.includes(s.geschlecht)) h.push('Geschlecht');
   if (typeof s.jahrgang === 'number') {

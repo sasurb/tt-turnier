@@ -283,7 +283,7 @@ $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
-pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.14.0' && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
+pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.15.0' && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1'], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
@@ -611,6 +611,17 @@ pruefe($s === 200 && count($d['spieler']) === 2 && $d['spieler'][1]['ttr'] === n
 rufe($api, 'POST', 'pool.speichern', ['spieler' => [['id' => 'p1', 'vorname' => 'Anna', 'nachname' => 'A', 'verein' => 'TTC Neu']]], $vk);
 [, $d] = rufe($api, 'GET', 'pool', null, $vk);
 pruefe(count($d['spieler']) === 2 && $d['spieler'][0]['verein'] === 'TTC Neu', 'Pool ändern');
+[$s, $d] = rufe($api, 'POST', 'pool.speichern', ['spieler' => [
+    ['id' => 'h1', 'vorname' => "Han\nna", 'nachname' => 'H', 'verein' => '', 'ttr' => 1025, 'ttrGeschaetzt' => true, 'appSpiele' => 7, 'wertungTurniere' => ['12345678'], 'lizenz' => 'NU-123'],
+    ['id' => 'h2', 'vorname' => 'Hugo', 'nachname' => 'H', 'verein' => '', 'ttrGeschaetzt' => true, 'appSpiele' => -3, 'lizenz' => '<script>'],
+]], $vk);
+$h = array_column($d['spieler'], null, 'id');
+pruefe($s === 200 && $h['h1']['ttrGeschaetzt'] === true && $h['h1']['appSpiele'] === 7 && $h['h1']['lizenz'] === 'NU-123' && $h['h1']['vorname'] === 'Hanna' && !isset($h['h1']['wertungTurniere']),
+    'Pool: geschätzter Wert, App-Spiele, Lizenz; Steuerzeichen entfernt; keine Turnierliste je Person');
+pruefe(!isset($h['h2']['ttrGeschaetzt']) && !isset($h['h2']['appSpiele']) && !isset($h['h2']['lizenz']), 'Pool: ungültige Zusatzfelder verworfen (geschätzt nur mit Wert)');
+[$s] = rufe($api, 'POST', 'pool.speichern', ['spieler' => [['id' => "h3\n", 'vorname' => 'X', 'nachname' => 'Y', 'verein' => '']]], $vk);
+pruefe($s === 400, 'Pool-ID mit Zeilenumbruch abgewiesen');
+rufe($api, 'POST', 'pool.loeschen', ['ids' => ['h1', 'h2']], $vk);
 [, $d2] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Süd', 'email' => 'sued@example.org', 'passwort' => 'suedsued1']);
 [, $d] = rufe($api, 'GET', 'pool', null, $d2['token']);
 pruefe($d['spieler'] === [], 'Pool ist je Konto getrennt');
@@ -746,14 +757,14 @@ $codeLea = array_values(array_filter($d['codes'], fn($c) => $c['bezug'] === 'sp1
 [, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $tid, 'code' => $codeLea]);
 $tokLea = $d['token'];
 rufe($api, 'POST', 'events', ['ereignisse' => [
-    ereignis('d7-000001', 'spieler.angelegt', ['id' => 'sp1', 'vorname' => 'Lea', 'nachname' => 'Löwe', 'verein' => 'TSV', 'ttr' => 1200, 'jahrgang' => 2012, 'geschlecht' => 'w', 'pool' => 'p-123']),
+    ereignis('d7-000001', 'spieler.angelegt', ['id' => 'sp1', 'vorname' => 'Lea', 'nachname' => 'Löwe', 'verein' => 'TSV', 'ttr' => 1200, 'ttrGeschaetzt' => true, 'jahrgang' => 2012, 'geschlecht' => 'w', 'pool' => 'p-123']),
     ereignis('d7-000002', 'spiel.aufgerufen', ['konkurrenz' => 'k1', 'spiel' => 'g0-a-b', 'tisch' => 2, 'schiri' => ['name' => 'Opa Paul']]),
     ereignis('d7-000003', 'spiel.aufgerufen', ['konkurrenz' => 'k1', 'spiel' => 'g0-a-c', 'tisch' => 3, 'schiri' => ['name' => 'Lea Löwe', 'spieler' => 'sp1']]),
 ]], $leit, ['turnier' => $tid]);
 [, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $tid, 'ab' => '0']);
 $sp = $d['ereignisse'][0]['daten'];
 pruefe($d['sicht'] === 'zuschauer' && $sp['nachname'] === 'Löwe' && $sp['ttr'] === 1200 && $sp['verein'] === 'TSV', 'Zuschauer: Name, Verein und TTR bleiben');
-pruefe(!isset($sp['jahrgang']) && !isset($sp['geschlecht']) && !isset($sp['pool']), 'Zuschauer: kein Jahrgang, kein Geschlecht, kein Pool-Bezug');
+pruefe(!isset($sp['jahrgang']) && !isset($sp['geschlecht']) && !isset($sp['pool']) && !isset($sp['ttrGeschaetzt']), 'Zuschauer: kein Jahrgang, kein Geschlecht, kein Pool-Bezug, nicht „geschätzt“');
 pruefe(!isset($d['ereignisse'][1]['daten']['schiri']) && $d['ereignisse'][1]['daten']['tisch'] === 2, 'Zuschauer: frei eingetippter Schiedsrichter fehlt, Aufruf bleibt');
 pruefe($d['ereignisse'][2]['daten']['schiri'] === ['spieler' => 'sp1'], 'Zuschauer: Schiedsrichter nur als Spieler-Bezug');
 pruefe(array_unique(array_map(fn($e) => $e['autor']['name'], $d['ereignisse'])) === [''], 'Zuschauer: keine Namen der Eintragenden');
@@ -922,7 +933,7 @@ $schluessel = function (string $an) use ($mailer, $tid): string {
 };
 $keys = [];
 foreach (['ada', 'ben', 'cem'] as $i => $n) {
-    [$s, $d] = rufe($api, 'POST', 'anmeldung.senden', $person(ucfirst($n), "$n@example.org", ['minderjaehrig' => $n === 'cem', 'einverstanden' => $n === 'cem', 'konkurrenzen' => [['id' => 'herren'], ['id' => 'doppel', 'partner' => 'Doris D']]]), null, [], '10.9.1.' . ($i + 2));
+    [$s, $d] = rufe($api, 'POST', 'anmeldung.senden', $person(ucfirst($n), "$n@example.org", ['ttrGeschaetzt' => $n === 'ben' ? true : 'ja', 'minderjaehrig' => $n === 'cem', 'einverstanden' => $n === 'cem', 'konkurrenzen' => [['id' => 'herren'], ['id' => 'doppel', 'partner' => 'Doris D']]]), null, [], '10.9.1.' . ($i + 2));
     $keys[$n] = $schluessel("$n@example.org");
 }
 pruefe($s === 200 && strlen($keys['ada']) === 64 && str_contains(mailAn($mailer, 'ada@example.org')->betreff, 'Bitte bestätigen'), 'Bestätigungsmail mit Link');
@@ -950,6 +961,8 @@ pruefe($hinweis !== null && str_starts_with($hinweis->betreff, 'Neue Anmeldung: 
     && !str_contains($hinweis->text, 'Ben') && !str_contains($hinweis->text, 'Muster') && !str_contains($hinweis->text, '@example.org'),
     'Hinweis-Mail an die Leitung ohne Namen');
 [, $d] = rufe($api, 'GET', 'anmeldungen', null, $leit, ['turnier' => $tid]);
+$nachName = array_column($d['anmeldungen'], null, 'vorname');
+pruefe($nachName['Ben']['ttrGeschaetzt'] === true && $nachName['Ada']['ttrGeschaetzt'] === false, 'Anmeldung: geschätzter Wert (Einstufung) nur bei true übernommen');
 pruefe(($d['einstellungen']['hinweisMail'] ?? null) === true, 'Leitung sieht die Einstellung Hinweis-Mail (Standard an)');
 [, $d] = rufe($api, 'GET', 'anmeldung', null, null, ['turnier' => $tid]);
 pruefe(!array_key_exists('hinweisMail', $d['einstellungen']), 'Einstellung Hinweis-Mail nicht öffentlich');
@@ -1012,10 +1025,17 @@ pruefe($s === 200 && $cemNeu['spieler'] === $cemNeu['id'], 'Übernahme ins Turni
 [$s, $d] = rufe($api, 'GET', 'anmeldung', null, null, ['turnier' => $tid]);
 [$s2] = rufe($api, 'POST', 'anmeldung.senden', $person('Emil', 'emil@example.org'), null, [], '10.9.1.11');
 pruefe($d['moeglich'] === false && $s2 === 410, 'nach Meldeschluss keine neuen Anmeldungen');
+// Angaben, die die Leitung nicht verlangt, werden verworfen (Datensparsamkeit, ab 0.15)
 rufe($api, 'POST', 'anmeldung.einstellungen', $einst, $leit);
+[$s] = rufe($api, 'POST', 'anmeldung.senden', $person('Nina', 'nina@example.org', ['jahrgang' => 1990, 'klasse' => 'B', 'geschlecht' => 'w']), null, [], '10.9.1.13');
+[, $d] = rufe($api, 'GET', 'anmeldungen', null, $leit, ['turnier' => $tid]);
+$nina = array_values(array_filter($d['anmeldungen'], fn($x) => $x['vorname'] === 'Nina'))[0] ?? null;
+pruefe($s === 200 && $nina !== null && $nina['jahrgang'] === null && $nina['klasse'] === null && $nina['geschlecht'] === null && $nina['ttr'] === 1400, 'Anmeldung: nicht verlangte Angaben verworfen');
+rufe($api, 'POST', 'anmeldung.einstellungen', ['angaben' => ['ttr', 'jahrgang']] + $einst, $leit);
 // Zeilenumbrüche im Namen werden entfernt; Jahrgang unter 18 verlangt das Einverständnis
 [$s] = rufe($api, 'POST', 'anmeldung.senden', $person("Eve\n\nIhr Konto ist gesperrt: https://x", 'eve@example.org', ['jahrgang' => (int)gmdate('Y', $zeit) - 12]), null, [], '10.9.1.12');
 pruefe($s === 400, 'Jahrgang unter 18 ohne Einverständnis abgewiesen');
+rufe($api, 'POST', 'anmeldung.einstellungen', $einst, $leit);
 [$s] = rufe($api, 'POST', 'anmeldung.senden', $person("Eve\n\nIhr Konto ist gesperrt: https://x", 'eve@example.org'), null, [], '10.9.1.12');
 [, $d] = rufe($api, 'GET', 'anmeldungen', null, $leit, ['turnier' => $tid]);
 $eve = array_values(array_filter($d['anmeldungen'], fn($x) => str_starts_with($x['vorname'], 'Eve')))[0] ?? null;
