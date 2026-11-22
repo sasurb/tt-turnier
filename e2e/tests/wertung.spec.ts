@@ -69,6 +69,8 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   // „Aktiv im Verein“ ohne Veto-Regel: 3 Punkte → H2 (1025), nicht mindestens 1175
   await einstufen(form, [3, 0, 0, 0]);
   await expect(form.getByTestId('einstufung-ergebnis')).toHaveText('H2 Geübt – Startwert 1025');
+  await expect(form.getByTestId('einstufung-text')).toHaveText(/^Du hast ein gutes Ballgefühl.*\(untere E-Klasse\)\.$/);
+  await expect(form.getByText('Wie sieht dein Aufschlag- und Rückschlagspiel aus?')).toBeVisible();
   await layoutPruefen(page, form);
   await bild(page, '83-einstufung');
   await form.getByRole('button', { name: 'Wert übernehmen' }).click();
@@ -168,6 +170,7 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await p.getByRole('radio', { name: 'Nein, ich spiele hobbymäßig' }).check();
   await einstufen(p.locator('main'), [2, 2, 1, 1]);
   await expect(p.getByTestId('einstufung-ergebnis')).toHaveText('H3 Ambitioniert – Startwert 1175');
+  await expect(p.getByTestId('einstufung-text')).toHaveText(/^Schnitt, Platzierung und erste Topspins.*gut mithalten\.$/);
   await expect(p.getByTestId('meldung-senden')).toBeEnabled();
   await layoutPruefen(p, p.locator('main'));
   await bild(p, '86-anmeldung-einstufung');

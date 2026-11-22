@@ -109,7 +109,7 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Hobbyspieler ohne TTR',
         text: [
-          'Wer keinen Q-TTR-Wert hat, wird mit 4 Fragen eingestuft („Kein TTR? Einstufen“ beim Anlegen, in der Online-Anmeldung automatisch). Daraus ergibt sich ein geschätzter Startwert: H1 900, H2 1025, H3 1175, H4 1350. Gespeichert wird nur der Wert.',
+          'Wer keinen Q-TTR-Wert hat, wird mit 4 Fragen eingestuft („Kein TTR? Einstufen“ beim Anlegen, in der Online-Anmeldung automatisch). Gefragt wird nach Spielpraxis, Aufschlag und Rückschlag, Schlagtechnik und Taktik; jede Antwort zählt 0 bis 3 Punkte. Daraus ergibt sich ein geschätzter Startwert: H1 900 (0–2 Punkte), H2 1025 (3–5), H3 1175 (6–9), H4 1350 (10–12), dazu ein kurzer Text, was die Stufe bedeutet. Gespeichert wird nur der Wert.',
           'Geschätzte Werte passen sich nach jedem gespielten Einzel an, wie beim TTR (in den ersten 5 App-Spielen doppelt so schnell). Im laufenden Turnier zählen weiter die Startwerte. Unter „Teilnehmer“ → „App-Wertung der Hobbyspieler“ übernimmst du die neuen Werte nach dem Turnier in deinen Spielerpool. Amtliche TTR-Werte ändert die App nie.',
           'Ein reines Hobby-Turnier stellst du je Konkurrenz unter „Weitere Einstellungen“ → „Nur Hobbyspieler“ ein. Ohne dieses Häkchen spielen Hobby- und Vereinsspieler gemischt, getrennt nur über die Obergrenze „TTR bis“.',
         ],

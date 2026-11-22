@@ -1575,24 +1575,52 @@ export const T = {
     knopf: 'Kein TTR? Einstufen',
     titel: 'Einstufung in 4 Fragen',
     text: 'Für Hobbyspieler ohne Q-TTR: Aus den Antworten ergibt sich ein geschätzter Startwert auf der TTR-Skala. Er passt sich nach jedem gespielten Einzel in der App an. Gespeichert wird nur der Wert, nicht die Antworten.',
+    /** Wortlaut des Fragebogens (Vorgabe Sascha 22.11.2026); Reihenfolge der Antworten = Punkte 0–3 */
     fragen: [
       {
-        frage: 'Wo und wie oft spielst du?',
-        antworten: ['Ab und zu, z. B. im Urlaub oder im Garten', 'Regelmäßig in der Freizeit', 'Wöchentlich in einer Hobbygruppe oder im Training', 'Aktiv im Verein (Punktspiele)'],
+        frage: 'Wie und wie oft spielst du aktuell Tischtennis?',
+        antworten: [
+          'Gelegentlich im Urlaub, Freibad, Garten oder Pausenraum (ohne regelmäßiges Training).',
+          'Regelmäßig in der Freizeit (z. B. wöchentlich mit Freunden, im Betriebssport oder an öffentlichen Platten).',
+          'Regelmäßig im Verein (Hobbygruppe/Training) oder früher einmal aktiv im Verein gespielt.',
+          'Aktiver Vereinsspieler mit regelmäßigem Systemtraining und/oder Punktspielbetrieb.',
+        ],
       },
       {
-        frage: 'Wie sicher sind deine Ballwechsel?',
-        antworten: ['Ich halte den Ball meist ein paar Mal im Spiel', 'Sichere Ballwechsel mit Vor- und Rückhand', 'Ich platziere gezielt und schupfe sicher', 'Sicheres Topspin- und Blockspiel'],
+        frage: 'Wie sieht dein Aufschlag- und Rückschlagspiel aus?',
+        antworten: [
+          'Ich spiele den Ball einfach irgendwie ins Feld, damit das Spiel losgeht.',
+          'Ich kann Aufschläge gezielt platzieren (kurz/lang, Vorhand/Rückhand) und den Ball sicher zurückspielen.',
+          'Ich nutze gezielt Schnitt (Unterschnitt/Seitschnitt) beim Aufschlag und erkenne meistens, ob ein Ball vom Gegner geschnitten ist.',
+          'Ich variiere Schnitt und Tempo beim Aufschlag bewusst und kann gegnerische Schnittaufschläge aktiv (z. B. mit Flip oder Topspin) angreifen.',
+        ],
       },
       {
-        frage: 'Wie gehst du mit Schnitt (Spin) um?',
-        antworten: ['Ich spiele ohne gezielten Schnitt', 'Ich spiele einfachen Unterschnitt', 'Erste Topspins und Aufschläge mit Schnitt', 'Ich lese Schnitt sicher und variiere meine Aufschläge'],
+        frage: 'Welche Schlagtechniken beherrschst du sicher im Ballwechsel?',
+        antworten: [
+          'Vorhand- und Rückhandschläge ohne besonderen Spin; Hauptziel ist es, den Ball auf die Platte zu bringen.',
+          'Sicheres Kontern (gerades Zuspiel) und einfaches Schupfen (Unterschnitt-Abwehr) mit Vor- und Rückhand.',
+          'Gezieltes Schupfspiel mit Unterschnitt sowie erste sichere Topspins (Vorwärtsdrall) auf leere Bälle.',
+          'Sicherer Topspin (auch auf Unterschnitt), aktives Blockspiel am Tisch und gezielte Tempowechsel.',
+        ],
       },
       {
-        frage: 'Wie viel Turniererfahrung hast du?',
-        antworten: ['Noch keine', 'Ein paar Hobbyturniere', 'Regelmäßig Hobbyturniere, oft vordere Plätze', 'Ich gewinne Hobbyturniere und spiele taktisch geplant'],
+        frage: 'Wie gehst du in einem Match taktisch vor?',
+        antworten: [
+          'Ich reagiere einfach auf jeden Ball, der auf meine Seite kommt.',
+          'Ich versuche, den Gegner durch Platzierung (links/rechts) zum Laufen zu bringen.',
+          'Ich spiele gezielt die schwächere Seite des Gegners an und bereite eigene Angriffsbälle vor.',
+          'Ich stelle meine Taktik während des Satzes aktiv um, wenn ich merke, dass der Gegner mit meinem Spiel klarkommt.',
+        ],
       },
     ],
+    /** Ergebnistext je Hobby-Stufe nach der Einstufung (Spielerformular und Online-Anmeldung) */
+    ergebnisTexte: {
+      H1: 'Du spielst aus Spaß am Spiel ohne Vereinsroutine. Hier triffst du auf Gegner, bei denen der Ballwechsel im Vordergrund steht – ideal für dein erstes Turnier.',
+      H2: 'Du hast ein gutes Ballgefühl, spielst sichere Ballwechsel und platzierst deine Schläge. Du spielst auf dem Niveau von Vereins-Einsteigern (untere E-Klasse).',
+      H3: 'Schnitt, Platzierung und erste Topspins gehören zu deinem Repertoire. Du kannst in der E-Klasse (untere Kreisklasse) gut mithalten.',
+      H4: 'Du beherrschst das technische und taktische Spiel auf Vereinsniveau. In dieser Gruppe warten schnelle Ballwechsel und Gegner auf D-Klassen-Niveau.',
+    } as Record<string, string>,
     ergebnis: (stufe: string, wert: number) => `${stufe} – Startwert ${wert}`,
     uebernehmen: 'Wert übernehmen',
     offen: (n: number) => (n === 1 ? 'Noch 1 Frage offen' : `Noch ${n} Fragen offen`),

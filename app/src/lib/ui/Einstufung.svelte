@@ -33,7 +33,10 @@
     </fieldset>
   {/each}
   {#if ergebnis}
-    <p class="meldung ok" role="status" data-testid="einstufung-ergebnis">{T.einstufung.ergebnis(ergebnis.stufe.name, ergebnis.wert)}</p>
+    <div class="meldung ok" role="status">
+      <p class="titel" data-testid="einstufung-ergebnis">{T.einstufung.ergebnis(ergebnis.stufe.name, ergebnis.wert)}</p>
+      <p class="text" data-testid="einstufung-text">{T.einstufung.ergebnisTexte[ergebnis.stufe.id]}</p>
+    </div>
     {#if !sofort}<button type="button" class="zweit" onclick={() => uebernehmen(ergebnis.wert, ergebnis.stufe)}>{T.einstufung.uebernehmen}</button>{/if}
   {:else}
     <p class="leise">{T.einstufung.offen(offen)}</p>
@@ -44,6 +47,9 @@
   .einstufung { border: 1px solid var(--linie); border-radius: 10px; padding: 8px 12px 12px; margin: 8px 0; }
   fieldset { border: 0; padding: 0; margin: 12px 0 0; }
   legend { font-weight: 700; padding: 0; margin-bottom: 4px; }
-  .wahl { display: flex; gap: 10px; align-items: center; font-weight: 400; min-height: 44px; margin: 0; }
+  .wahl { display: flex; gap: 10px; align-items: center; padding: 4px 0; line-height: 1.35; font-weight: 400; min-height: 44px; margin: 0; }
+  .meldung p { margin: 0; }
+  .meldung .titel { font-weight: 700; }
+  .meldung .text { margin-top: 4px; color: var(--text); }
   .wahl input { width: 22px; height: 22px; min-height: 0; flex: none; }
 </style>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ART, type AnmeldungEintrag, type PoolSpieler } from '@shared/protokoll';
-import { einstufen, hobbyStufe, stufeAusPunkten, vereinsKlasse, vorlageErkennen, vorlageGrenzen } from './stufen';
+import { EINSTUFUNG_FRAGEN, STUFEN, einstufen, hobbyStufe, stufeAusPunkten, vereinsKlasse, vorlageErkennen, vorlageGrenzen } from './stufen';
 import { appWertungen, gewinnerwartung, poolUebernahmePlanen } from './appwertung';
 import { klasseVon, standardEinstellungen, ttrBereichName } from './modell';
 import { zulassungsHinweise } from './abfragen';
@@ -8,8 +8,26 @@ import { uebernahmePlanen } from './anmeldung';
 import { Baukasten, saetze } from './test/baukasten';
 import { rueckgaengigErlaubt } from './zustand';
 import { csvAusgeben, csvLesen } from '../pool-csv';
+import { T } from '../texte';
 
 describe('Einstufung für Hobbyspieler', () => {
+  it('Fragebogen: 4 Fragen mit je 4 Antworten (0–3 Punkte) und Ergebnistext je Hobby-Stufe', () => {
+    expect(T.einstufung.fragen).toHaveLength(EINSTUFUNG_FRAGEN);
+    expect(T.einstufung.fragen.map((f) => f.frage)).toEqual([
+      'Wie und wie oft spielst du aktuell Tischtennis?',
+      'Wie sieht dein Aufschlag- und Rückschlagspiel aus?',
+      'Welche Schlagtechniken beherrschst du sicher im Ballwechsel?',
+      'Wie gehst du in einem Match taktisch vor?',
+    ]);
+    for (const f of T.einstufung.fragen) {
+      expect(f.antworten).toHaveLength(4);
+      for (const a of f.antworten) expect(a.length).toBeGreaterThan(20);
+    }
+    // Reihenfolge = Punkte: letzte Antwort von Frage 1 ist der aktive Vereinsspieler (3 Punkte)
+    expect(T.einstufung.fragen[0].antworten[3]).toMatch(/^Aktiver Vereinsspieler/);
+    for (const s of STUFEN.filter((x) => x.hobby)) expect(T.einstufung.ergebnisTexte[s.id]).toMatch(/\. Du |^Du /);
+    expect(T.einstufung.ergebnisTexte.H3).toContain('E-Klasse (untere Kreisklasse)');
+  });
   it('ordnet die Punktsumme den Stufen H1–H4 zu', () => {
     const tabelle: [number, string, number][] = [
       [0, 'H1', 900],
