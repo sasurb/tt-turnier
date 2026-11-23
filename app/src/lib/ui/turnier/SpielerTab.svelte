@@ -8,6 +8,7 @@
   import { spielerName, type Angabe, type SpielerDaten } from '../../engine/modell';
   import { begonnen, teilnehmerVon, type TurnierZustand } from '../../engine/zustand';
   import { meldbareEinzel, teilnahmen } from '../../engine/abfragen';
+  import { ohneKonkurrenz } from '../../engine/auswahl';
   import { hobbyStufe } from '../../engine/stufen';
   import { imPool, pool, poolLaden, poolSpeichern } from '../../pool.svelte';
   import { klassenLaden } from '../../klassen.svelte';
@@ -50,6 +51,20 @@
     if (d.pool) r.pool = d.pool;
     if (d.lizenz) r.lizenz = d.lizenz;
     return r;
+  }
+
+  /** Teilnehmer ohne Konkurrenz (z. B. nach dem Löschen einer Konkurrenz) gesammelt in ein Einzel melden */
+  const ohne = $derived(ohneKonkurrenz(z));
+  let ohneZiel = $state('');
+  let ohneHinweis = $state('');
+  async function ohneMelden() {
+    const ziel = ohneZiel || offeneKonkurrenzen[0];
+    if (!ziel) return;
+    const liste = [...ohne];
+    await alsEineAktion(async () => {
+      for (const id of liste) await eintragen(ART.teilnehmerGemeldet, { konkurrenz: ziel, id });
+    });
+    ohneHinweis = T.ohneKonk.fertig(liste.length, z.konkurrenzen[ziel]?.einst.name ?? '');
   }
 
   async function melden(id: string) {
@@ -128,6 +143,25 @@
     <button class:zweit={modus !== 'neu'} onclick={() => (modus = modus === 'neu' ? '' : 'neu')} aria-expanded={modus === 'neu'}>+ {T.tspieler.neu}</button>
   </div>
   {#if meldung}<div class="meldung ok" role="status">{meldung}</div>{/if}
+  {#if ohneHinweis}<div class="meldung ok" role="status">{ohneHinweis}</div>{/if}
+  {#if ohne.length}
+    <div class="meldung info ohne" data-testid="ohne-konkurrenz">
+      <strong>{T.ohneKonk.titel(ohne.length)}</strong>
+      <p>{T.ohneKonk.text}</p>
+      <p>{ohne.map((id) => spielerName(z.spieler[id])).join(', ')}</p>
+      {#if offeneKonkurrenzen.length}
+        <div class="reihe">
+          <label for="ohne-ziel">{T.ohneKonk.meldenIn}</label>
+          <select id="ohne-ziel" bind:value={ohneZiel}>
+            {#each offeneKonkurrenzen as kid (kid)}<option value={kid}>{z.konkurrenzen[kid]!.einst.name}</option>{/each}
+          </select>
+          <button onclick={ohneMelden} data-testid="ohne-melden">{T.ohneKonk.melden}</button>
+        </div>
+      {:else}
+        <p class="leise">{T.ohneKonk.keineEinzel}</p>
+      {/if}
+    </div>
+  {/if}
 
   {#if modus && offeneKonkurrenzen.length}
     <fieldset class="melden-in">
@@ -214,7 +248,11 @@
   .auswahl li { padding: 2px 12px; border-bottom: 1px solid var(--linie); }
   .spieler { margin-top: 12px; }
   .teilnahmen { font-size: 0.9rem; }
-  .teilnahmen.keine { color: var(--orange); }
+  .teilnahmen.keine { color: var(--orange-text); font-weight: 600; }
+  .ohne { margin-top: 12px; }
+  .ohne p { margin: 4px 0; }
+  .ohne .reihe { align-items: center; }
+  .ohne select { flex: 1 1 12rem; }
   .zeile { display: flex; align-items: center; gap: 8px; }
   .zeile .wachsen { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 </style>

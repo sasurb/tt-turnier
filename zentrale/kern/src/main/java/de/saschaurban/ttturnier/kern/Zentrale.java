@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.15.0";
+    public static final String VERSION = "0.16.0";
     /** Platzhalter für Namen entfernter Spieler (wie PHP Api::ENTFERNT_NAME) */
     static final String ENTFERNT_NAME = "Entfernt";
     public static final int PROTOKOLL = 1;
@@ -845,7 +845,9 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             // Mannschaften: noch nicht aufgedeckte Aufstellungen (wie PHP, ab 0.13)
             Set<String> verdeckt = Collections.emptySet();
             Set<String> offen = Collections.emptySet();
-            if (!"voll".equals(sicht)) {
+            // Kasse-Helfer haben die volle Sicht (Zahlungen), sehen Aufstellungen aber erst nach dem Aufdecken (ab 0.16)
+            boolean kasseSicht = "voll".equals(sicht) && !leitungsSicht(a, t);
+            if (!"voll".equals(sicht) || kasseSicht) {
                 String bezug = null;
                 if ("spieler".equals(sicht) || "helfer".equals(sicht)) {
                     try {
@@ -874,6 +876,8 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             Map<String, Object> antwort = Json.obj("ereignisse", aus, "hoechsteSeq", t.hoechsteSeq(), "mehr", mehr, "sicht", sicht, "bis", bis);
             Set<String> filter = new TreeSet<>(weg);
             for (String b : offen) filter.add("aufgedeckt:" + b);
+            // Eigene Kennung für die Kasse-Sicht (wie PHP): Wechsel Kasse ↔ Leitung lädt alles neu
+            if (kasseSicht) filter.add("sicht:kasse");
             if (!filter.isEmpty()) antwort.put("filter", filterKennung(filter));
             return antwort;
         }
@@ -885,6 +889,17 @@ public final class Zentrale implements HttpServer.Bearbeiter {
      * Pool-Bezüge, keine Namen von Eintragenden und keine frei eingetippten Schiedsrichter-Namen,
      * bei „Namen für Zuschauer: Kurzform“ auch nur „Max M.“.
      */
+    /** Hat diese Anfrage Leitungsrechte im Turnier? (volle Sicht ohne verdeckte Aufstellungen) */
+    private boolean leitungsSicht(Anf a, Speicher.Turnier t) {
+        if (a.token == null) return false;
+        try {
+            Map<String, Object> s = sitzung(a);
+            return s != null && "leitung".equals(rechte(s, t));
+        } catch (ApiFehler f) {
+            return false;
+        }
+    }
+
     private String sicht(Anf a, Speicher.Turnier t) {
         if (a.token != null) {
             Map<String, Object> s;

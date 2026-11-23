@@ -4,7 +4,7 @@
   import { T } from '../../texte';
   import { gruppenKlassen, name, platzierungen, sichtbar, tabelle, trostPlaetze } from '../../engine/abfragen';
   import { baumRunden } from '../../engine/ko';
-  import { gruppenName, type Spiel } from '../../engine/modell';
+  import { gruppeTitel, gruppenName, type Spiel } from '../../engine/modell';
   import { mischen, neuerZufallswert, zufallAus } from '../../engine/zufall';
   import type { TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
@@ -59,7 +59,11 @@
     {#each zeige.tabellen && !istRundenModus(k.einst.modus) ? k.gruppen : [] as g (g.nr)}
       {@const t = tabelle(k, g.nr)}
       {@const ms = k.einst.art === 'mannschaft'}
-      <h3>{k.gruppen.length > 1 ? T.konk.gruppe(gruppenName(g.nr)) : T.konk.modi.jgj}{#if klassen[g.nr]}<span class="marke klasse">{klassen[g.nr]}</span>{/if}<Hilfe text={ms ? T.mannschaft.systemHilfe : T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
+      {@const platzGruppe = typeof g.platzAb === 'number'}
+      {#if k.einst.modus === 'gruppen_platz' && (g.nr === 0 || (platzGruppe && typeof k.gruppen[g.nr - 1]?.platzAb !== 'number'))}
+        <h3 class="stufe">{platzGruppe ? T.konk.platzRunde : T.konk.vorrunde}</h3>
+      {/if}
+      <h3>{platzGruppe || k.gruppen.length > 1 ? gruppeTitel(k, g.nr) : T.konk.modi.jgj}{#if klassen[g.nr]}<span class="marke klasse">{klassen[g.nr]}</span>{/if}<Hilfe text={ms ? T.mannschaft.systemHilfe : T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
       <div class="rollen">
         <table data-testid="tabelle-{gruppenName(g.nr)}">
           <thead>
@@ -81,7 +85,7 @@
           <tbody>
             {#each t.zeilen as r (r.id)}
               <tr class:raus={r.zurueckgezogen} class:weiter={k.einst.modus === 'gruppen_ko' && !r.zurueckgezogen && r.platz <= k.einst.aufsteiger}>
-                <td class="z">{r.platz}{r.losNoetig && t.fertig ? '*' : ''}</td>
+                <td class="z">{platzGruppe ? g.platzAb! + r.platz - 1 : r.platz}{r.losNoetig && t.fertig ? '*' : ''}</td>
                 <td>
                   <span class="name">{name(z, r.id, k)}</span>
                   {#if z.spieler[r.id]?.verein}<span class="leise verein">{z.spieler[r.id]!.verein}</span>{:else if k.mannschaften[r.id]?.verein}<span class="leise verein">{k.mannschaften[r.id]!.verein}</span>{/if}
@@ -114,7 +118,19 @@
     {#if k.einst.modus === 'gruppen_ko' && !k.gestartet.ko}
       <p class="meldung info">{T.tab.endrundeWartet}</p>
     {/if}
-    {#if k.gestartet.ko && !zeige.ko}
+    {#if k.einst.modus === 'gruppen_platz'}
+      {@const gp = zeige.tabellen ? platzierungen(k) : []}
+      {#if !k.gestartet.ko}
+        <p class="meldung info">{T.konk.platzRundeText}</p>
+      {:else if gp.length}
+        <h3>{T.konk.gesamtPlatzierung}<Hilfe text={T.konk.gesamtPlatzierungText} /></h3>
+        <ol class="plaetze" data-testid="gesamtplatzierung">
+          {#each gp as x (x.id)}
+            <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}</li>
+          {/each}
+        </ol>
+      {/if}
+    {:else if k.gestartet.ko && !zeige.ko}
       <p class="meldung info" data-testid="verdeckt-ko">{T.tab.verdecktKo}</p>
     {:else if k.gestartet.ko}
       <h3>{k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko}</h3>
@@ -156,6 +172,7 @@
   .wahl-konk button { min-height: 44px; background: var(--flaeche); color: var(--text); border: 1px solid var(--linie); white-space: nowrap; }
   .wahl-konk button.aktiv { background: var(--blau); color: #fff; border-color: var(--blau); }
   h3 { margin-top: 16px; display: flex; align-items: center; gap: 8px; }
+  h3.stufe { font-size: 1.15rem; border-bottom: 2px solid var(--linie); padding-bottom: 4px; margin-top: 22px; }
   .klasse { font-weight: 500; }
   .rollen { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }

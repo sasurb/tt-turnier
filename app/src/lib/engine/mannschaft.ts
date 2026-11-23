@@ -1,6 +1,6 @@
 import type { Autor } from '@shared/protokoll';
 import { kampflosErgebnis } from './wertung';
-import type { Ergebnis, ErgebnisEintrag, ErgebnisStand, KonkurrenzEinstellungen, KonkurrenzZustand, Seite, Spiel } from './modell';
+import { einstFuer, type Ergebnis, type ErgebnisEintrag, type ErgebnisStand, type KonkurrenzEinstellungen, type KonkurrenzZustand, type Seite, type Spiel } from './modell';
 
 /**
  * Mannschaftsturniere (ab 0.13, docs/erweiterungen.md). Eine Begegnung ist ein normales Spiel zwischen zwei
@@ -8,7 +8,7 @@ import type { Ergebnis, ErgebnisEintrag, ErgebnisStand, KonkurrenzEinstellungen,
  * Spielsystems. Spielfolgen nach DTTB-Wettspielordnung E 6 (Stand 01.06.2024) bzw. ITTF (Olympisches System).
  */
 
-export type SystemId = 'paarkreuz6' | 'bundes4' | 'scheffler4' | 'swaythling3' | 'swaythling_mod' | 'olympisch3' | 'corbillon2' | 'eigen';
+export type SystemId = 'paarkreuz6' | 'bundes4' | 'scheffler4' | 'braunschweig' | 'swaythling3' | 'swaythling_mod' | 'olympisch3' | 'corbillon2' | 'zweier3' | 'eigen';
 
 /** Ein Teilspiel der Spielfolge: Einzel (Positionen 1…n) oder Doppel (Doppel 1…d) */
 export interface TeilDef {
@@ -75,6 +75,21 @@ export const SYSTEME: Record<Exclude<SystemId, 'eigen'>, SpielSystem> = {
     // Doppel B/C–Y/Z, A–X, C–Z, A–Y, B–X
     folge: [D(1, 1), E(1, 1), E(3, 3), E(1, 2), E(2, 1)],
   },
+  braunschweig: {
+    id: 'braunschweig',
+    name: 'Braunschweiger System (3er oder 4er, immer 10 Spiele)',
+    einzel: 4,
+    doppel: 2,
+    // Spielfolge 3er gegen 3er; die übrigen Fälle (4er–3er, 3er–4er, 4er–4er) siehe braunschweigFolge
+    folge: [D(1, 1), E(1, 2), E(2, 1), E(3, 2), E(2, 3), E(1, 1), E(3, 3), E(2, 2), E(3, 1), E(1, 3)],
+  },
+  zweier3: {
+    id: 'zweier3',
+    name: 'Zweier-System (2 Einzel + Doppel, bis 2 Siege)',
+    einzel: 2,
+    doppel: 1,
+    folge: [E(1, 1), E(2, 2), D(1, 1)],
+  },
   corbillon2: {
     id: 'corbillon2',
     name: 'Corbillon-Cup (2er, bis 3 Siege)',
@@ -84,7 +99,30 @@ export const SYSTEME: Record<Exclude<SystemId, 'eigen'>, SpielSystem> = {
   },
 };
 
-export const SYSTEM_REIHE: SystemId[] = ['bundes4', 'scheffler4', 'paarkreuz6', 'corbillon2', 'olympisch3', 'swaythling3', 'swaythling_mod', 'eigen'];
+export const SYSTEM_REIHE: SystemId[] = ['bundes4', 'scheffler4', 'paarkreuz6', 'braunschweig', 'corbillon2', 'zweier3', 'olympisch3', 'swaythling3', 'swaythling_mod', 'eigen'];
+
+/**
+ * Braunschweiger System (Spielfolge nach BTTV-Merkblatt): Jede Mannschaft tritt in den Einzeln als Dreier- oder
+ * Vierermannschaft an (Einzelposition 4 besetzt oder nicht). Zwei Doppel nur bei 4er gegen 4er, sonst eins.
+ * Immer 10 Spiele, alle werden gespielt (Unentschieden 5:5 möglich).
+ */
+export function braunschweigFolge(vierA: boolean, vierB: boolean): TeilDef[] {
+  if (vierA && vierB) return [D(1, 1), D(2, 2), E(1, 1), E(2, 2), E(3, 3), E(4, 4), E(1, 2), E(2, 1), E(3, 4), E(4, 3)];
+  if (vierA) return [D(1, 1), E(3, 3), E(1, 2), E(2, 1), E(4, 2), E(1, 1), E(4, 3), E(2, 2), E(1, 3), E(3, 1)];
+  if (vierB) return [D(1, 1), E(3, 3), E(2, 1), E(1, 2), E(2, 4), E(1, 1), E(3, 4), E(2, 2), E(3, 1), E(1, 3)];
+  return SYSTEME.braunschweig.folge;
+}
+
+/** Spielfolge einer Begegnung (beim Braunschweiger System abhängig von den Aufstellungen) */
+export function folgeFuer(sys: SpielSystem, aufA: Pick<Aufstellung, 'einzel'> | undefined, aufB: Pick<Aufstellung, 'einzel'> | undefined): TeilDef[] {
+  if (sys.id !== 'braunschweig') return sys.folge;
+  return braunschweigFolge(!!aufA?.einzel[3], !!aufB?.einzel[3]);
+}
+
+/** Werden alle Teilspiele ausgetragen (auch wenn die Begegnung schon entschieden ist)? Braunschweig: immer. */
+export function durchspielenVon(einst: Pick<KonkurrenzEinstellungen, 'mannschaft'>): boolean {
+  return einst.mannschaft?.system === 'braunschweig' || (einst.mannschaft?.durchspielen ?? false);
+}
 
 export interface MannschaftEinstellungen {
   system: SystemId;
@@ -172,6 +210,7 @@ export function bisSiege(sys: SpielSystem): number {
 
 /** Spieler, die je Mannschaft mindestens gebraucht werden */
 export function mindestSpieler(sys: SpielSystem): number {
+  if (sys.id === 'braunschweig') return 3;
   return Math.max(sys.einzel, sys.doppel > 0 ? 2 : 0, 1);
 }
 
@@ -297,12 +336,13 @@ function ausSicht(e: Ergebnis, umdrehen: boolean): Ergebnis {
 
 /** Teilspiele einer Begegnung mit Spielern, Stand und Ergebnis */
 export function teileVon(k: KonkurrenzZustand, s: Spiel): TeilSpiel[] {
-  const sys = systemVon(k.einst);
+  const einst = einstFuer(k, s);
+  const sys = systemVon(einst);
   const b = k.begegnungen[s.id];
   const aufA = s.a ? b?.aufstellung[s.a] : undefined;
   const aufB = s.b ? b?.aufstellung[s.b] : undefined;
   const beide = !!aufA && !!aufB;
-  const teile = sys.folge.map((f, i): TeilSpiel => {
+  const teile = folgeFuer(sys, aufA, aufB).map((f, i): TeilSpiel => {
     const nr = i + 1;
     const t = b?.teile[String(nr)];
     const gueltig = t && t.eintrag && t.aTeam !== undefined && (t.aTeam === s.a || t.aTeam === s.b) ? t : null;
@@ -320,7 +360,7 @@ export function teileVon(k: KonkurrenzZustand, s: Spiel): TeilSpiel[] {
       if (!voll(a) && !voll(bb)) status = 'entfallen';
       else {
         status = 'kampflos';
-        ergebnis = kampflosErgebnis(voll(a) ? 'b' : 'a', k.einst);
+        ergebnis = kampflosErgebnis(voll(a) ? 'b' : 'a', einst);
       }
     } else if (beide) status = 'offen';
     return {
@@ -343,7 +383,7 @@ export function teileVon(k: KonkurrenzZustand, s: Spiel): TeilSpiel[] {
   // Entschieden und nicht durchspielen: offene Teilspiele entfallen
   const st = zwischenstand(teile);
   const ziel = bisSiege(sys);
-  if (!(k.einst.mannschaft?.durchspielen ?? false) && (st.siegeA >= ziel || st.siegeB >= ziel)) {
+  if (!durchspielenVon(einst) && (st.siegeA >= ziel || st.siegeB >= ziel)) {
     for (const t of teile) if (t.status === 'offen' || t.status === 'wartet') t.status = 'entfallen';
   }
   return teile;
@@ -390,11 +430,12 @@ const STAND_RANG: Record<ErgebnisStand, number> = { bestaetigt: 0, eingetragen: 
 export function begegnungAuswerten(k: KonkurrenzZustand, s: Spiel): { eintrag: ErgebnisEintrag | null; stand: ErgebnisStand | null; losNoetig: boolean } {
   const b = k.begegnungen[s.id];
   if (!b || !s.a || !s.b) return { eintrag: null, stand: null, losNoetig: false };
-  const sys = systemVon(k.einst);
+  const einst = einstFuer(k, s);
+  const sys = systemVon(einst);
   const teile = teileVon(k, s);
   const st = zwischenstand(teile);
   const ziel = bisSiege(sys);
-  const durch = k.einst.mannschaft?.durchspielen ?? false;
+  const durch = durchspielenVon(einst);
   const fertig = teile.every((t) => t.status !== 'offen' && t.status !== 'wartet');
   const entschieden = durch ? fertig : st.siegeA >= ziel || st.siegeB >= ziel || fertig;
   if (!entschieden || st.gespielt === 0) return { eintrag: null, stand: null, losNoetig: false };
@@ -444,7 +485,8 @@ export function begegnungUebernehmen(k: KonkurrenzZustand, s: Spiel): void {
 export function kampflosBegegnung(verlierer: Seite, einst: KonkurrenzEinstellungen): Ergebnis {
   const sys = systemVon(einst);
   const e = kampflosErgebnis(verlierer, einst);
-  const n = bisSiege(sys);
+  // Braunschweig: alle 10 Spiele gehen an den Gegner (es wird immer durchgespielt)
+  const n = durchspielenVon(einst) ? sys.folge.length : bisSiege(sys);
   const mal = (x: number | null) => (x === null ? null : x * n);
   return {
     ...e,

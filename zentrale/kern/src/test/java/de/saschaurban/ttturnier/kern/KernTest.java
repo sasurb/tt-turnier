@@ -443,11 +443,21 @@ public final class KernTest {
         pruefe(aufstellungen(gegner) == 0 && aufstellungen(zuschauer) == 0 && gegner.g("filter") == null, "Gegner und Zuschauer sehen die Aufstellung noch nicht");
         A mitglied = rufe(z, "GET", "events", null, a2, q("turnier", tid, "ab", "0"), false);
         pruefe(aufstellungen(selbst) == 1 && aufstellungen(mitglied) == 1 && aufstellungen(leitung) == 1, "Eigene Mannschaft und Leitung sehen sie");
+        // Ab 0.16: Kasse-Helfer (volle Sicht) sehen Aufstellungen erst nach dem Aufdecken
+        A ka = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "helfer", "bezug", "hk", "name", "Kasse", "aufgaben", liste("kasse")))), leit);
+        String kcode = null;
+        for (Object o : ka.l("codes")) if ("hk".equals(Json.alsObjekt(o).get("bezug"))) kcode = (String) Json.alsObjekt(o).get("code");
+        String kasse = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", kcode), null).t("token");
+        A kas = rufe(z, "GET", "events", null, kasse, q("turnier", tid, "ab", "0"), false);
+        pruefe("voll".equals(kas.g("sicht")) && aufstellungen(kas) == 0 && kas.g("filter") != null && leitung.g("filter") == null, "Kasse-Helfer (volle Sicht) sieht die Aufstellung vor dem Aufdecken nicht; eigene Filter-Kennung");
         a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("m-0000009", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-bbbb", "gegner", "m-aaaa", "einzel", liste("b1"))))), b1, q("turnier", tid), false);
         pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Gegner gibt ab");
         gegner = rufe(z, "GET", "events", null, b1, q("turnier", tid, "ab", "0"), false);
         zuschauer = rufe(z, "GET", "events", null, null, q("turnier", tid, "ab", "0"), false);
         pruefe(aufstellungen(gegner) == 2 && aufstellungen(zuschauer) == 2 && Api10.php("aufgedeckt:m|" + spiel).equals(zuschauer.t("filter")), "Beide nennen sich: für alle sichtbar, Filter-Kennung wie PHP");
+        kas = rufe(z, "GET", "events", null, kasse, q("turnier", tid, "ab", "0"), false);
+        leitung = rufe(z, "GET", "events", null, leit, q("turnier", tid, "ab", "0"), false);
+        pruefe(aufstellungen(kas) == 2 && kas.g("filter") != null && aufstellungen(leitung) == 2 && leitung.g("filter") == null, "Kasse-Helfer: nach dem Aufdecken sichtbar, Leitung ohne Filter");
     }
 
     /** Fingerabdruck wie PHP: sha256 der sortierten IDs, 16 Zeichen */
@@ -465,7 +475,7 @@ public final class KernTest {
         z.setzePort(8080);
         String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
         A a = rufe(z, "GET", "info", null, null);
-        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.15.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
+        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.16.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
         a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Kassencup", "datum", "2027-02-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         String leit = a.t("token");

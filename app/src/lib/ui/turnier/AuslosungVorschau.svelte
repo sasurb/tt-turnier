@@ -127,5 +127,5 @@
   .platz .leise { font-weight: 400; font-size: 0.8rem; }
   .ko { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 10px; }
   .paar { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--linie); border-radius: 10px; }
-  .hinweis { color: var(--orange); font-weight: 600; }
+  .hinweis { color: var(--orange-text); font-weight: 600; }
 </style>

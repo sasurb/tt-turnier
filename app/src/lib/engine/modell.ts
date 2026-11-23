@@ -12,8 +12,16 @@ import { vorlageErkennen } from './stufen';
  * (zweite Chance: Verlierer spielen im Verliererbaum weiter, Endspiel Sieger gegen Sieger),
  * Schweizer System oder Kaiserturnier (beide Runde für Runde ausgelost, siehe runden.ts).
  */
-export type Modus = 'jgj' | 'gruppen_ko' | 'ko' | 'doppel_ko' | 'schweizer' | 'cup' | 'kaiser';
-export const MODI: readonly Modus[] = ['gruppen_ko', 'jgj', 'ko', 'doppel_ko', 'schweizer', 'cup', 'kaiser'];
+export type Modus = 'jgj' | 'gruppen_ko' | 'gruppen_platz' | 'ko' | 'doppel_ko' | 'schweizer' | 'cup' | 'kaiser';
+export const MODI: readonly Modus[] = ['gruppen_ko', 'gruppen_platz', 'jgj', 'ko', 'doppel_ko', 'schweizer', 'cup', 'kaiser'];
+/**
+ * Gruppen + Platzierungsgruppen (ab 0.16): Vorrunde in Gruppen (jeder gegen jeden), danach spielen die Gleichplatzierten
+ * aller Gruppen in Platzierungsgruppen neu jeder gegen jeden (z. B. 1. und 2. beider Gruppen um Platz 1–4, 3. und 4. um
+ * Platz 5–8). Ergebnisse der Vorrunde werden nicht mitgenommen. Ergibt eine vollständige Gesamtplatzierung.
+ */
+export function istPlatzModus(m: Modus): boolean {
+  return m === 'gruppen_platz';
+}
 /** Schweizer System oder Cup-System (wie bei den HTTV-Turnierserien mit MKTT): Rangliste mit Buchholz */
 export function istSchweizerArt(m: Modus): boolean {
   return m === 'schweizer' || m === 'cup';
@@ -21,7 +29,34 @@ export function istSchweizerArt(m: Modus): boolean {
 /** Einzel, Doppel (zwei Spieler je Teilnehmer), Mixed (Doppel aus Frau und Mann) oder Mannschaft (ab 0.13) */
 export type KonkurrenzArt = 'einzel' | 'doppel' | 'mixed' | 'mannschaft';
 /** Spielsysteme, die Mannschafts-Konkurrenzen erlauben */
-export const MODI_MANNSCHAFT: readonly Modus[] = ['gruppen_ko', 'jgj', 'ko'];
+export const MODI_MANNSCHAFT: readonly Modus[] = ['gruppen_ko', 'gruppen_platz', 'jgj', 'ko'];
+export const ALLE_ARTEN: readonly KonkurrenzArt[] = ['einzel', 'doppel', 'mixed', 'mannschaft'];
+
+/**
+ * Welche Konkurrenzarten und Spielsysteme das Turnier anbietet (ab 0.16, Startassistent bzw. Einstellungen).
+ * Unter „Konkurrenzen“ stehen nur diese zur Wahl. null im Turnier = alle.
+ */
+export interface KonkurrenzAuswahl {
+  arten: KonkurrenzArt[];
+  modi: Modus[];
+}
+export const ALLES_AUSWAEHLBAR: KonkurrenzAuswahl = { arten: [...ALLE_ARTEN], modi: [...MODI] };
+
+/** Leistungsklassen des Turniers aus dem Startassistenten (Vorgabe für den Klassen-Assistenten) */
+export interface KlassenVorgabe {
+  nach: 'keine' | 'klasse' | 'ttr';
+  /** TTR-Grenzen (nur bei „ttr“), aufsteigend */
+  grenzen: number[];
+}
+
+/**
+ * Abweichende Einstellungen für die zweite Stufe (K.-o.-Endrunde bzw. Platzierungsgruppen, ab 0.16):
+ * eigene Gewinnsätze und – bei Mannschaften – eigenes Spielsystem. null = wie die Vorrunde.
+ */
+export interface EndrundeEinstellungen {
+  bestOf: BestOf | null;
+  mannschaft: MannschaftEinstellungen | null;
+}
 /** Rangfolge in Gruppen: DTTB-Wettspielordnung D 7.5 oder ITTF-Regel 3.7.5 */
 export type Wertung = 'dttb' | 'ittf';
 /** Rückzug während der Gruppe: nach WO D 7.9 (Spiele streichen) oder „Hobby“ (gespielte bleiben, Rest kampflos) */
@@ -150,6 +185,13 @@ export interface KonkurrenzEinstellungen {
   maxTeilnehmer: number | null;
   /** Mannschafts-Konkurrenz: Spielsystem (ab 0.13); null bei Einzel/Doppel */
   mannschaft: MannschaftEinstellungen | null;
+  /** Zweite Stufe (Endrunde/Platzierungsgruppen) mit eigenen Gewinnsätzen bzw. eigenem Spielsystem; null = wie Vorrunde */
+  endrunde: EndrundeEinstellungen | null;
+  /**
+   * Mannschaften: Eine Begegnung belegt zwei Tische (ab 0.16) – Teilspiele laufen parallel, z. B. die beiden
+   * Eingangsdoppel oder Einzel 1 und 2.
+   */
+  zweiTische: boolean;
 }
 
 export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
@@ -190,6 +232,8 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
     startgeld: null,
     maxTeilnehmer: null,
     mannschaft: null,
+    endrunde: null,
+    zweiTische: false,
   };
 }
 
@@ -200,6 +244,23 @@ export interface Paar {
 }
 
 /** Hat die Konkurrenz einen K.-o.-Teil? */
+/**
+ * Einstellungen, die für ein Spiel gelten: in der zweiten Stufe (K.-o.-Endrunde nach Gruppen, Platzierungsgruppen)
+ * ggf. mit eigenen Gewinnsätzen und eigenem Mannschafts-Spielsystem.
+ */
+export function einstFuer(k: Pick<KonkurrenzZustand, 'einst' | 'gruppen'>, s: Pick<Spiel, 'phase' | 'gruppe'> | null | undefined): KonkurrenzEinstellungen {
+  const er = k.einst.endrunde;
+  if (!er || !s || !inEndrunde(k, s)) return k.einst;
+  return { ...k.einst, bestOf: er.bestOf ?? k.einst.bestOf, mannschaft: k.einst.art === 'mannschaft' && er.mannschaft ? er.mannschaft : k.einst.mannschaft };
+}
+
+/** Gehört das Spiel zur zweiten Stufe (K.-o. nach Gruppen oder Platzierungsgruppe)? */
+export function inEndrunde(k: Pick<KonkurrenzZustand, 'einst' | 'gruppen'>, s: Pick<Spiel, 'phase' | 'gruppe'>): boolean {
+  if (k.einst.modus === 'gruppen_ko') return s.phase === 'ko';
+  if (k.einst.modus === 'gruppen_platz') return s.phase === 'gruppen' && s.gruppe !== null && (k.gruppen[s.gruppe]?.platzAb ?? null) !== null;
+  return false;
+}
+
 export function mitKo(modus: Modus): boolean {
   return modus === 'gruppen_ko' || modus === 'ko' || modus === 'doppel_ko';
 }
@@ -363,6 +424,8 @@ export interface Spiel {
   nurWennBGewinnt: boolean;
   /** Spielaufruf: Tisch, Zeit des Aufrufs, Schiedsrichter */
   tisch: number | null;
+  /** Mannschaften mit zwei Tischen je Begegnung: zweiter Tisch (ab 0.16) */
+  tisch2?: number | null;
   aufgerufen: string | null;
   schiri: Schiedsrichter | null;
   /** Vorplanung der Leitung (Ereignis spiel.geplant): Tisch und/oder Uhrzeit „HH:MM“ */
@@ -396,6 +459,11 @@ export interface Gruppe {
   mitglieder: string[];
   /** Losentscheide: je Gruppe von Gleichstehenden (Schlüssel = sortierte IDs) die geloste Reihenfolge */
   los: Record<string, string[]>;
+  /**
+   * Platzierungsgruppe (Modus gruppen_platz, zweite Stufe): erster Platz, um den die Gruppe spielt (z. B. 5 bei
+   * „Plätze 5–8“). Fehlt/null = Gruppe der Vorrunde.
+   */
+  platzAb?: number | null;
 }
 
 export interface AuslosungGruppen {
@@ -455,6 +523,16 @@ export function gruppenName(nr: number): string {
     n = Math.floor(n / 26) - 1;
   } while (n >= 0);
   return s;
+}
+
+/** Überschrift einer Gruppe: „Gruppe A“ bzw. bei Platzierungsgruppen „Plätze 5–8“ */
+export function gruppeTitel(k: Pick<KonkurrenzZustand, 'gruppen'>, nr: number): string {
+  const g = k.gruppen[nr];
+  if (g && typeof g.platzAb === 'number') {
+    const bis = g.platzAb + g.mitglieder.length - 1;
+    return bis > g.platzAb ? `Plätze ${g.platzAb}–${bis}` : `Platz ${g.platzAb}`;
+  }
+  return `Gruppe ${gruppenName(nr)}`;
 }
 
 /** Punkte mit halben Punkten: 2.5 → „2½“, 0.5 → „½“ */

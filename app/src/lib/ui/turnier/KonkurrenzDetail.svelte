@@ -12,7 +12,8 @@
   import { T } from '../../texte';
   import { auslosungErstellen, endrundeErstellen, gruppenKlassen, gruppenZahlVorschlag, klassenDerMeldungen, name, qualifikanten, teilnehmerDaten } from '../../engine/abfragen';
   import { setzreihe } from '../../engine/auslosung';
-  import { type KonkurrenzEinstellungen, type KonkurrenzZustand } from '../../engine/modell';
+  import { inEndrunde, type KonkurrenzEinstellungen, type KonkurrenzZustand } from '../../engine/modell';
+  import { angeboten } from '../../engine/auswahl';
   import { neuerZufallswert } from '../../engine/zufall';
   import {
     auslosungAktuell,
@@ -20,6 +21,7 @@
     erstePhase,
     gruppenAenderungPruefen,
     koPlaetzePruefen,
+    platzGruppenBilden,
     type TurnierZustand,
   } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
@@ -62,6 +64,19 @@
   const doppel = $derived(k.einst.art === 'doppel' || k.einst.art === 'mixed');
   const mannschaft = $derived(k.einst.art === 'mannschaft');
   const quali = $derived(k.einst.modus === 'gruppen_ko' && k.gestartet.gruppen && !k.gestartet.ko ? qualifikanten(k) : null);
+  const platzPlan = $derived(k.einst.modus === 'gruppen_platz' && k.gestartet.gruppen && !k.gestartet.ko ? platzGruppenBilden(k) : null);
+  /** Hat die laufende Stufe schon Ergebnisse? (dann lässt sich ihr Start nicht zurücknehmen) */
+  const stufeMitErgebnis = $derived(
+    Object.values(k.spiele).some((s) => {
+      if (!s.eintrag && !(k.begegnungen[s.id] && Object.keys(k.begegnungen[s.id]!.teile).length)) return false;
+      if (k.einst.modus === 'gruppen_platz') return k.gestartet.ko ? inEndrunde(k, s) : true;
+      return s.phase === (k.gestartet.ko ? 'ko' : 'gruppen');
+    }),
+  );
+  async function platzRundeStarten() {
+    if (!platzPlan?.ok || !confirm(T.konk.startenFrage)) return;
+    await los(ART.phaseGestartet, { konkurrenz: k.id, phase: 'ko', gruppen: platzPlan.gruppen.map((g) => g.mitglieder) });
+  }
   const hatErgebnisse = $derived(Object.values(k.spiele).some((s) => s.eintrag));
   const klassenTrennung = $derived(k.einst.modus === 'gruppen_ko' && k.einst.klassenTrennung !== 'keine');
   const klassenListe = $derived(klassenTrennung ? klassenDerMeldungen(z, k) : []);
@@ -127,7 +142,7 @@
     return aus;
   });
   const aendernArt = $derived<'gruppen' | 'ko' | null>(
-    !gestartet || k.status === 'beendet' || rundenModus ? null : k.gestartet.ko ? 'ko' : phase1 === 'gruppen' && k.gruppen.length > 1 ? 'gruppen' : null,
+    !gestartet || k.status === 'beendet' || rundenModus ? null : k.gestartet.ko ? (k.einst.modus === 'gruppen_platz' ? null : 'ko') : phase1 === 'gruppen' && k.gruppen.length > 1 ? 'gruppen' : null,
   );
   let aendernFehler = $state('');
   async function laufendTauschenGruppen(a: string, b: string) {
@@ -180,7 +195,7 @@
   </summary>
 
   {#if bearbeiten}
-    <KonkurrenzForm start={k.einst} {gestartet} mitMeldungen={n > 0} knopf={T.konk.speichern} {speichern} abbrechen={() => (bearbeiten = false)} />
+    <KonkurrenzForm start={k.einst} {gestartet} endrundeGestartet={k.gestartet.ko} mitMeldungen={n > 0} auswahl={angeboten(z)} knopf={T.konk.speichern} {speichern} abbrechen={() => (bearbeiten = false)} />
   {:else}
     <div class="reihe">
       <button class="zweit klein" onclick={() => (bearbeiten = true)}>{T.tspieler.bearbeiten}</button>
@@ -211,7 +226,7 @@
       <p class="leise">{T.konk.auslosungText}</p>
       {#if klassenTrennung}
         <p class="leise">{T.konk.trennungWahl[k.einst.klassenTrennung]}: {klassenListe.map((kl) => `${kl.name} (${kl.mitglieder.length})`).join(' · ')}</p>
-      {:else if k.einst.modus === 'gruppen_ko'}
+      {:else if k.einst.modus === 'gruppen_ko' || k.einst.modus === 'gruppen_platz'}
         <label for="gz-{k.id}">{T.konk.anzahlGruppen}</label>
         <select id="gz-{k.id}" value={gZahl} onchange={(e) => (gruppenZahl = Number(e.currentTarget.value))}>
           {#each Array.from({ length: Math.max(1, Math.floor(n / 2)) }, (_, i) => i + 1) as g (g)}
@@ -250,6 +265,23 @@
       {/if}
     {/if}
 
+    {#if platzPlan}
+      <h3>{T.konk.platzRunde}<Hilfe text={T.konk.aufsteigerPlatzHilfe} /></h3>
+      <p class="leise">{T.konk.platzRundeText}</p>
+      {#if !platzPlan.ok}
+        <p class="meldung info">{platzPlan.grund}</p>
+      {:else}
+        <h4>{T.konk.platzRundeVorschau}</h4>
+        <ul class="liste" data-testid="platz-vorschau">
+          {#each platzPlan.gruppen as g (g.platzAb)}
+            <li><strong>{g.mitglieder.length > 1 ? `Plätze ${g.platzAb}–${g.platzAb + g.mitglieder.length - 1}` : `Platz ${g.platzAb}`}:</strong> {g.mitglieder.map((id) => name(z, id, k)).join(', ')}</li>
+          {/each}
+        </ul>
+        {#if platzPlan.gruppen.some((g) => g.mitglieder.length > 8)}<p class="meldung info" data-testid="platz-gross">{T.konk.platzGross(Math.max(...platzPlan.gruppen.map((g) => g.mitglieder.length)))}</p>{/if}
+        <button class="breit start" onclick={platzRundeStarten} data-testid="platz-starten">{T.konk.platzRundeStarten}</button>
+      {/if}
+    {/if}
+
     <KonkurrenzMeldungen {z} {k} {poolListe} {eintragen} />
 
     {#if aendernArt}
@@ -265,7 +297,7 @@
       </details>
     {/if}
 
-    {#if !Object.values(k.spiele).some((s) => s.eintrag && s.phase === (k.gestartet.ko ? 'ko' : 'gruppen'))}
+    {#if !stufeMitErgebnis}
       <div class="reihe" style="margin-top:16px"><button class="zweit klein" onclick={zuruecknehmen}>{T.konk.zurueck}</button></div>
     {/if}
   {/if}
@@ -275,6 +307,7 @@
   .konk summary { font-size: 1.05rem; }
   .konk summary > span:first-child { overflow-wrap: anywhere; }
   h3 { margin-top: 18px; display: flex; align-items: center; gap: 6px; }
+  h4 { margin: 10px 0 4px; }
   .setzliste { list-style: none; padding: 0; margin: 0; }
   .setzliste li { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--linie); }
   .nr { width: 2rem; font-variant-numeric: tabular-nums; color: var(--leise); }

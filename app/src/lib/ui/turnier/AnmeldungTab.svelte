@@ -371,7 +371,7 @@
   .meldungen li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   .unbestaetigt { opacity: 0.75; }
   .st-platz { color: var(--gruen); }
-  .st-warteliste { color: var(--orange); }
+  .st-warteliste { color: var(--orange-text); }
   .st-abgemeldet { color: var(--leise); text-decoration: line-through; }
   .hinweise { margin: 8px 0; }
   a { overflow-wrap: anywhere; }

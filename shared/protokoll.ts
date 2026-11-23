@@ -589,6 +589,8 @@ export const ART = {
   mannschaftLos: 'mannschaft.los',
   /** Vor dem Start: Meldung streichen. Nach dem Start: Rückzug. */
   teilnehmerAbgemeldet: 'teilnehmer.abgemeldet',
+  /** Rückzug zurücknehmen (ab 0.16, nur Leitung): Der Teilnehmer spielt wieder mit, sofern dadurch kein Ergebnis verloren geht */
+  teilnehmerZurueck: 'teilnehmer.zurueck',
   /** Manuelle Setzliste */
   setzliste: 'konkurrenz.setzliste',
   /** Ergebnis einer Auslosung (Gruppen oder K.-o.-Baum), mit Zufallswert */

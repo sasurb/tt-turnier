@@ -14,13 +14,19 @@
   import KonkurrenzForm from './KonkurrenzForm.svelte';
   import TurnierAngaben from './TurnierAngaben.svelte';
   import { alsEineAktion } from '../../aktion';
+  import { linkZu } from '../../router.svelte';
+  import { angeboten } from '../../engine/auswahl';
 
-  let { z, eintragen }: { z: TurnierZustand; eintragen: (art: string, d: Record<string, unknown>) => Promise<unknown> } = $props();
+  let { z, turnierId = '', eintragen }: { z: TurnierZustand; turnierId?: string; eintragen: (art: string, d: Record<string, unknown>) => Promise<unknown> } = $props();
   // svelte-ignore state_referenced_locally
   let neu = $state(z.konkurrenzReihe.length === 0);
   let assistent = $state(false);
-  let nach = $state<'klasse' | 'ttr'>('klasse');
-  let grenzen = $state('1200, 1500');
+  // Vorgabe aus dem Startassistenten (Leistungsklassen des Turniers)
+  // svelte-ignore state_referenced_locally
+  let nach = $state<'klasse' | 'ttr'>(z.klassenVorgabe?.nach === 'ttr' ? 'ttr' : 'klasse');
+  // svelte-ignore state_referenced_locally
+  let grenzen = $state(z.klassenVorgabe?.nach === 'ttr' && z.klassenVorgabe.grenzen.length ? z.klassenVorgabe.grenzen.join(', ') : '1200, 1500');
+  const auswahl = $derived(angeboten(z));
   let vorlage = $state<KonkurrenzEinstellungen>(standardEinstellungen());
   let vorlageOffen = $state(false);
   let laeuft = $state(false);
@@ -152,7 +158,8 @@
   <h2>{T.konk.titel}</h2>
   <p class="leise">{T.konk.text}</p>
   {#if neu}
-    <KonkurrenzForm knopf={T.konk.anlegen} speichern={anlegen} abbrechen={() => (neu = false)} />
+    <KonkurrenzForm knopf={T.konk.anlegen} {auswahl} speichern={anlegen} abbrechen={() => (neu = false)} />
+    <p class="leise klein-text">{T.auswahl.text} <a href={linkZu(`t/${turnierId}/einstellungen/auswahl`)} data-testid="auswahl-link">{T.auswahl.titel} →</a></p>
     {#if z.spielerReihe.length}
       <p class="oder"><span class="leise">{T.app.oder}</span> <button class="zweit klein" onclick={() => { neu = false; assistent = true; }} data-testid="klassen-assistent">{T.konk.klassenAssistent}</button></p>
     {/if}
@@ -181,7 +188,7 @@
     <details class="vorlage" bind:open={vorlageOffen}>
       <summary>{T.konk.klassenVorlage}</summary>
       {#if vorlageOffen}
-        <KonkurrenzForm start={vorlage} knopf={T.app.speichern} speichern={async (e) => { vorlage = e; vorlageOffen = false; }} abbrechen={() => (vorlageOffen = false)} />
+        <KonkurrenzForm start={vorlage} {auswahl} knopf={T.app.speichern} speichern={async (e) => { vorlage = e; vorlageOffen = false; }} abbrechen={() => (vorlageOffen = false)} />
       {/if}
     </details>
     <div class="reihe" style="margin-top:12px">

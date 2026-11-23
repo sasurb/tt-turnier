@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.15.0';
+    public const VERSION = '0.16.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_JE_TURNIER = 50000;
@@ -880,7 +880,9 @@ final class Api
         // Mannschaften: noch nicht aufgedeckte Aufstellungen (ab 0.13). In die Filter-Kennung gehen nur aufgedeckte
         // Begegnungen ein: Neu laden müssen die Geräte erst, wenn etwas sichtbar wird.
         $filter = $weg;
-        if ($sicht !== 'voll') {
+        // Kasse-Helfer haben die volle Sicht (Zahlungen), sehen Aufstellungen aber erst nach dem Aufdecken (ab 0.16)
+        $kasseSicht = $sicht === 'voll' && !$this->leitungsSicht($a, $t);
+        if ($sicht !== 'voll' || $kasseSicht) {
             $bezug = null;
             if ($sicht === 'spieler' || $sicht === 'helfer') {
                 try {
@@ -890,12 +892,18 @@ final class Api
                 }
             }
             [$verdeckt, $offen] = $this->verdeckteAufstellungen((string)$t['id'], $bezug === null ? null : (string)$bezug);
-            $liste = array_values(array_map(
-                static fn(array $e): array => self::gefiltert($e, $sicht, $weg),
-                array_filter($liste, static fn(array $e): bool => !in_array($e['art'], self::NUR_VOLLE_SICHT, true) && !isset($verdeckt[$e['id']]))
-            ));
+            $liste = $kasseSicht
+                ? array_values(array_filter($liste, static fn(array $e): bool => !isset($verdeckt[$e['id']])))
+                : array_values(array_map(
+                    static fn(array $e): array => self::gefiltert($e, $sicht, $weg),
+                    array_filter($liste, static fn(array $e): bool => !in_array($e['art'], self::NUR_VOLLE_SICHT, true) && !isset($verdeckt[$e['id']]))
+                ));
             foreach ($offen as $schluessel => $_) {
                 $filter['aufgedeckt:' . $schluessel] = true;
+            }
+            // Eigene Kennung für die Kasse-Sicht: Wechselt ein Gerät zwischen Kasse und Leitung, holt es alles neu ab
+            if ($kasseSicht) {
+                $filter['sicht:kasse'] = true;
             }
         }
         return [
@@ -1155,6 +1163,20 @@ final class Api
      * - zuschauer: zusätzlich ohne Namen von Eintragenden und frei eingetippte Schiedsrichter-Namen
      * - kurz: wie zuschauer, Nachname nur als „M.“ (Einstellung der Leitung „Namen für Zuschauer“)
      */
+    /** Hat diese Anfrage Leitungsrechte im Turnier? (volle Sicht ohne verdeckte Aufstellungen) */
+    private function leitungsSicht(Anfrage $a, array $t): bool
+    {
+        if ($a->token === null) {
+            return false;
+        }
+        try {
+            $s = $this->sitzung($a);
+        } catch (ApiFehler) {
+            return false;
+        }
+        return $s !== null && $this->rechte($s, $t) === 'leitung';
+    }
+
     private function sicht(Anfrage $a, array $t): string
     {
         if ($a->token !== null) {

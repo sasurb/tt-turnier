@@ -47,7 +47,13 @@
   const frei = $derived(freierTisch(z));
   const belegt = $derived(beschaeftigt(z));
 
-  let aufruf = $state<{ spiel: Spiel; tisch: number; schiri: string; schiriName: string } | null>(null);
+  let aufruf = $state<{ spiel: Spiel; tisch: number; tisch2: number; schiri: string; schiriName: string } | null>(null);
+  /** Mannschaft, die laut Einstellung an zwei Tischen spielt */
+  function zweiTische(s: Spiel): boolean {
+    const k = z.konkurrenzen[s.konkurrenz];
+    return !!k && k.einst.art === 'mannschaft' && k.einst.zweiTische;
+  }
+  const freieTische = $derived(liste.filter((t) => !t.spiel && !t.gesperrt).map((t) => t.nr));
   let fehler = $state('');
 
   function ort(s: Spiel) {
@@ -70,7 +76,7 @@
     fehler = '';
     const t = tisch ?? frei ?? 0;
     const v = t ? verliererAmTisch(z, t, beteiligte(s)) : null;
-    aufruf = { spiel: s, tisch: t, schiri: v ?? '', schiriName: '' };
+    aufruf = { spiel: s, tisch: t, tisch2: zweiTische(s) ? (freieTische.find((x) => x !== t) ?? 0) : 0, schiri: v ?? '', schiriName: '' };
   }
   const verlierer = $derived(aufruf && aufruf.tisch ? verliererAmTisch(z, aufruf.tisch, beteiligte(aufruf.spiel)) : null);
   async function aufrufen(e: SubmitEvent) {
@@ -78,7 +84,8 @@
     if (!aufruf || !aufruf.tisch) return;
     const schiri = aufruf.schiri === '_name' ? (aufruf.schiriName.trim() ? { name: aufruf.schiriName.trim() } : null) : aufruf.schiri ? { spieler: aufruf.schiri } : null;
     try {
-      await eintragen(ART.spielAufgerufen, { konkurrenz: aufruf.spiel.konkurrenz, spiel: aufruf.spiel.id, tisch: aufruf.tisch, ...(schiri ? { schiri } : {}) });
+      const t2 = zweiTische(aufruf.spiel) && aufruf.tisch2 && aufruf.tisch2 !== aufruf.tisch ? { tisch2: aufruf.tisch2 } : {};
+      await eintragen(ART.spielAufgerufen, { konkurrenz: aufruf.spiel.konkurrenz, spiel: aufruf.spiel.id, tisch: aufruf.tisch, ...t2, ...(schiri ? { schiri } : {}) });
       aufruf = null;
     } catch (x) {
       fehler = x instanceof Error ? x.message : String(x);
@@ -156,7 +163,8 @@
         if (tischeUnterwegs.has(p.tisch)) continue;
         unterwegs.set(`${p.spiel.konkurrenz}/${p.spiel.id}`, { tisch: p.tisch, seit: t });
         tischeUnterwegs.add(p.tisch);
-        void eintragen(ART.spielAufgerufen, { konkurrenz: p.spiel.konkurrenz, spiel: p.spiel.id, tisch: p.tisch, ...(p.schiri ? { schiri: { spieler: p.schiri } } : {}) }, { still: true }).catch(() => undefined);
+        if (p.tisch2 !== null) tischeUnterwegs.add(p.tisch2);
+        void eintragen(ART.spielAufgerufen, { konkurrenz: p.spiel.konkurrenz, spiel: p.spiel.id, tisch: p.tisch, ...(p.tisch2 !== null ? { tisch2: p.tisch2 } : {}), ...(p.schiri ? { schiri: { spieler: p.schiri } } : {}) }, { still: true }).catch(() => undefined);
       }
     });
   });
@@ -247,7 +255,8 @@
     if (!t.spiel) {
       // freier Tisch: sofort aufrufen (Schiedsrichter wie beim automatischen Belegen)
       const v = geraet.schiriVerlierer ? verliererAmTisch(z, nr, beteiligte(s)) : null;
-      await eintragen(ART.spielAufgerufen, { konkurrenz: s.konkurrenz, spiel: s.id, tisch: nr, ...(v ? { schiri: { spieler: v } } : {}) });
+      const t2 = zweiTische(s) ? freieTische.find((x) => x !== nr) : undefined;
+      await eintragen(ART.spielAufgerufen, { konkurrenz: s.konkurrenz, spiel: s.id, tisch: nr, ...(t2 ? { tisch2: t2 } : {}), ...(v ? { schiri: { spieler: v } } : {}) });
       ablageHinweis = T.tische.abgelegt(nr);
     } else if (leitung) {
       await eintragen(ART.spielGeplant, { konkurrenz: s.konkurrenz, spiel: s.id, tisch: nr, zeit: s.plan?.zeit ?? null });
@@ -296,6 +305,7 @@
         {#if t.spiel}
           {@const s = t.spiel}
           <div class="paarung">{name(z, s.a)} – {name(z, s.b)}</div>
+          {#if s.tisch2}<div class="leise klein">{T.tische.mitTisch(s.tisch === t.nr ? s.tisch2 : s.tisch!)}</div>{/if}
           <div class="leise klein">{ort(s)}{mitSchiri && s.schiri ? ` · ${T.spiele.schiri(s.schiri.name)}` : ''}</div>
           {#if darfAufrufen}
             <div class="reihe knoepfe">
@@ -331,6 +341,13 @@
       {#each liste.filter((t) => !t.spiel && !t.gesperrt) as t (t.nr)}<option value={t.nr}>{T.tische.tisch(t.nr)}</option>{/each}
     </select>
     {#if !liste.some((t) => !t.spiel && !t.gesperrt)}<p class="meldung info">{T.tische.keinTisch}</p>{/if}
+    {#if zweiTische(aufruf.spiel)}
+      <div class="label-zeile"><label for="at2">{T.tische.zweiterTisch}</label><Hilfe text={T.konk.zweiTischeHilfe} /></div>
+      <select id="at2" bind:value={aufruf.tisch2} data-testid="tisch2">
+        <option value={0}>{T.tische.keinZweiter}</option>
+        {#each freieTische.filter((t) => t !== aufruf!.tisch) as t (t)}<option value={t}>{T.tische.tisch(t)}</option>{/each}
+      </select>
+    {/if}
     <div class="label-zeile"><label for="as">{T.tische.schiri}</label><Hilfe text={T.tische.schiriHilfe} /></div>
     <select id="as" bind:value={aufruf.schiri}>
       <option value="">{T.tische.schiriKeiner}</option>

@@ -2,7 +2,8 @@
   import TtrGrenzenWahl from './TtrGrenzenWahl.svelte';
   import { T } from '../../texte';
   import { SYSTEME, SYSTEM_REIHE, bisSiege, folgeLesen, folgeText, standardMannschaft, systemVon, type SystemId } from '../../engine/mannschaft';
-  import { MODI, MODI_MANNSCHAFT, centAus, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzEinstellungen } from '../../engine/modell';
+  import { ALLES_AUSWAEHLBAR, ALLE_ARTEN, MODI, centAus, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzAuswahl, type KonkurrenzEinstellungen } from '../../engine/modell';
+  import { modiFuerArt } from '../../engine/auswahl';
   import { klassen as klassenStore } from '../../klassen.svelte';
   import Hilfe from '../Hilfe.svelte';
   import WertungInfo from './WertungInfo.svelte';
@@ -10,13 +11,19 @@
   let {
     start = standardEinstellungen(),
     gestartet = false,
+    endrundeGestartet = false,
     mitMeldungen = false,
+    auswahl = ALLES_AUSWAEHLBAR,
     knopf,
     speichern,
     abbrechen,
   }: {
     start?: KonkurrenzEinstellungen;
     gestartet?: boolean;
+    /** Zweite Stufe (Endrunde/Platzierungsrunde) läuft schon: deren Einstellungen sind fest */
+    endrundeGestartet?: boolean;
+    /** Angebotene Arten und Spielsysteme des Turniers (ab 0.16); bei bestehenden Konkurrenzen bleibt die eigene immer wählbar */
+    auswahl?: KonkurrenzAuswahl;
     /** Einzel/Doppel lässt sich nur ohne Meldungen umstellen */
     mitMeldungen?: boolean;
     knopf: string;
@@ -25,8 +32,11 @@
   } = $props();
 
   const id = Math.random().toString(36).slice(2, 7);
+  /** Arten zur Wahl: die angebotenen, bei bestehenden Konkurrenzen auch die eigene */
   // svelte-ignore state_referenced_locally
-  let e = $state<KonkurrenzEinstellungen>(JSON.parse(JSON.stringify(start)));
+  const artenListe = ALLE_ARTEN.filter((a) => auswahl.arten.includes(a) || (mitMeldungen || gestartet ? a === start.art : false));
+  // svelte-ignore state_referenced_locally
+  let e = $state<KonkurrenzEinstellungen>(JSON.parse(JSON.stringify({ ...start, art: artenListe.includes(start.art) || !artenListe.length ? start.art : artenListe[0] })));
   // svelte-ignore state_referenced_locally
   let gesetzte = $state(start.gesetzte === null ? '' : String(start.gesetzte));
   // svelte-ignore state_referenced_locally
@@ -61,9 +71,14 @@
   let startgeld = $state(start.startgeld ? (start.startgeld / 100).toFixed(2).replace('.', ',') : '');
   // svelte-ignore state_referenced_locally
   let maxTeilnehmer = $state(start.maxTeilnehmer === null ? '' : String(start.maxTeilnehmer));
-  const mitGruppen = $derived(e.modus === 'jgj' || e.modus === 'gruppen_ko');
-  const mitKo = $derived(e.modus !== 'jgj');
+  const mitGruppen = $derived(e.modus === 'jgj' || e.modus === 'gruppen_ko' || e.modus === 'gruppen_platz');
+  const mitVorrunde = $derived(e.modus === 'gruppen_ko' || e.modus === 'gruppen_platz');
   const einfachesKo = $derived(e.modus === 'ko' || e.modus === 'gruppen_ko');
+  // Zweite Stufe: eigene Gewinnsätze bzw. eigenes Mannschafts-Spielsystem ('' = wie Vorrunde)
+  // svelte-ignore state_referenced_locally
+  let erBestOf = $state<string>(start.endrunde?.bestOf ? String(start.endrunde.bestOf) : '');
+  // svelte-ignore state_referenced_locally
+  let erSystem = $state<string>(start.endrunde?.mannschaft?.system ?? '');
   // Mannschaften: Spielsystem, Durchspielen, eigene Spielfolge
   // svelte-ignore state_referenced_locally
   let system = $state<SystemId>(start.mannschaft?.system ?? 'bundes4');
@@ -79,9 +94,10 @@
         : systemVon({ mannschaft: { system: 'eigen', durchspielen, eigen: eigenGelesen } })
       : SYSTEME[system],
   );
-  const modiListe = $derived(e.art === 'mannschaft' ? MODI.filter((m) => MODI_MANNSCHAFT.includes(m)) : MODI);
+  /** Spielsysteme zur Wahl: die angebotenen, die zur Art passen; bei bestehenden Konkurrenzen auch das eigene */
+  const modiListe = $derived(MODI.filter((m) => modiFuerArt(auswahl, e.art).includes(m) || ((mitMeldungen || gestartet) && m === start.modus && e.art === start.art)));
   $effect(() => {
-    if (e.art === 'mannschaft' && !MODI_MANNSCHAFT.includes(e.modus)) e.modus = 'gruppen_ko';
+    if (modiListe.length && !modiListe.includes(e.modus)) e.modus = modiListe[0]!;
   });
 
   async function absenden(ev: SubmitEvent) {
@@ -112,6 +128,14 @@
       vorgabe: mitVorgabe ? vorgabeJe : null,
       startgeld: geld,
       mannschaft,
+      zweiTische: e.art === 'mannschaft' && e.zweiTische,
+      endrunde:
+        mitVorrunde && (erBestOf || (e.art === 'mannschaft' && erSystem))
+          ? {
+              bestOf: erBestOf ? (Number(erBestOf) as BestOf) : null,
+              mannschaft: e.art === 'mannschaft' && erSystem ? { ...standardMannschaft(), system: erSystem as SystemId, durchspielen } : null,
+            }
+          : null,
       maxTeilnehmer: max !== null && max >= 2 && max <= 1000 ? max : null,
       ttrGrenzen: [...new Set(ttrGrenzen.split(',').map((t) => parseInt(t.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 4000))].sort((a, b) => a - b),
       veroeffentlichung: veroeff === 'turnier' ? null : veroeff === 'offen' ? { tabellen: true, ko: true } : { tabellen: false, ko: false },
@@ -144,7 +168,7 @@
   <fieldset disabled={gestartet || mitMeldungen}>
     <legend>{T.konk.art}<Hilfe text={T.konk.artHilfe} /></legend>
     <div class="reihe arten">
-      {#each ['einzel', 'doppel', 'mixed', 'mannschaft'] as const as a (a)}
+      {#each artenListe as a (a)}
         <label class="wahl klein" class:aktiv={e.art === a}>
           <input type="radio" name="art-{id}" value={a} bind:group={e.art} />
           <span><strong>{T.konk.arten[a]}</strong></span>
@@ -167,12 +191,14 @@
       {#if sysVorschau}
         <p class="leise" data-testid="system-vorschau">{T.mannschaft.vorschau(sysVorschau.einzel, sysVorschau.doppel, sysVorschau.folge.length, bisSiege(sysVorschau))}</p>
       {/if}
-      <label class="haken"><input type="checkbox" bind:checked={durchspielen} /> {T.mannschaft.durchspielen}</label>
+      {#if system !== 'braunschweig'}<label class="haken"><input type="checkbox" bind:checked={durchspielen} /> {T.mannschaft.durchspielen}</label>{/if}
+      <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={e.zweiTische} data-testid="zwei-tische" /> {T.konk.zweiTische}</label><Hilfe text={T.konk.zweiTischeHilfe} /></div>
     </fieldset>
   {/if}
 
   <fieldset disabled={gestartet}>
     <legend>{T.konk.modus}</legend>
+    {#if !modiListe.length}<p class="meldung info">{T.auswahl.keineAuswahl}</p>{/if}
     {#each modiListe as m (m)}
       <label class="wahl" class:aktiv={e.modus === m}>
         <input type="radio" name="modus-{id}" value={m} bind:group={e.modus} />
@@ -208,23 +234,49 @@
         {#each ['punkte', 'saetze'] as x (x)}<option value={x}>{T.konk.eingabeWahl[x]}</option>{/each}
       </select>
     </div>
-    {#if mitGruppen}
-      {#if e.modus === 'gruppen_ko'}
-        <div>
-          <label for="gg-{id}">{T.konk.gruppenGroesse}</label>
-          <select id="gg-{id}" bind:value={e.gruppenGroesse} disabled={gestartet}>
-            {#each [3, 4, 5, 6, 7, 8] as g (g)}<option value={g}>{g}</option>{/each}
-          </select>
-        </div>
-        <div>
+    {#if mitVorrunde}
+      <div>
+        <label for="gg-{id}">{T.konk.gruppenGroesse}</label>
+        <select id="gg-{id}" bind:value={e.gruppenGroesse} disabled={gestartet}>
+          {#each [3, 4, 5, 6, 7, 8] as g (g)}<option value={g}>{g}</option>{/each}
+        </select>
+      </div>
+      <div>
+        {#if e.modus === 'gruppen_platz'}
+          <div class="label-zeile"><label for="au-{id}">{T.konk.aufsteigerPlatz}</label><Hilfe text={T.konk.aufsteigerPlatzHilfe} /></div>
+        {:else}
           <label for="au-{id}">{T.konk.aufsteiger}</label>
-          <select id="au-{id}" bind:value={e.aufsteiger}>
-            {#each [1, 2, 3, 4] as g (g)}<option value={g}>{g}</option>{/each}
-          </select>
-        </div>
-      {/if}
+        {/if}
+        <select id="au-{id}" bind:value={e.aufsteiger} disabled={endrundeGestartet} data-testid="aufsteiger">
+          {#each [1, 2, 3, 4] as g (g)}<option value={g}>{g}</option>{/each}
+        </select>
+      </div>
     {/if}
   </div>
+
+  {#if mitVorrunde}
+    <fieldset class="endrunde" disabled={endrundeGestartet} data-testid="endrunde">
+      <legend>{e.modus === 'gruppen_platz' ? T.konk.endrundeTitelPlatz : T.konk.endrundeTitel}<Hilfe text={T.konk.endrundeHilfe} /></legend>
+      <div class="raster">
+        <div>
+          <label for="eb-{id}">{T.konk.endrundeBestOf}</label>
+          <select id="eb-{id}" bind:value={erBestOf} data-testid="endrunde-bestof">
+            <option value="">{T.konk.wieVorrunde}</option>
+            {#each [1, 3, 5, 7] as b (b)}<option value={String(b)}>{T.konk.bestOfWahl[b]}</option>{/each}
+          </select>
+        </div>
+        {#if e.art === 'mannschaft'}
+          <div>
+            <label for="es-{id}">{T.konk.endrundeSystem}</label>
+            <select id="es-{id}" bind:value={erSystem} data-testid="endrunde-system">
+              <option value="">{T.konk.wieVorrunde}</option>
+              {#each SYSTEM_REIHE.filter((x) => x !== 'eigen') as sid (sid)}<option value={sid}>{SYSTEME[sid as Exclude<SystemId, 'eigen'>].name}</option>{/each}
+            </select>
+          </div>
+        {/if}
+      </div>
+    </fieldset>
+  {/if}
 
   {#if e.modus === 'schweizer'}
     <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={e.beschleunigt} disabled={gestartet} /> {T.konk.beschleunigt}</label><Hilfe text={T.konk.beschleunigtHilfe} /></div>

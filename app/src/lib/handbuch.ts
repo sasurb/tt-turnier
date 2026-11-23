@@ -91,12 +91,28 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Schritt für Schritt',
         text: [
-          '1. Angemeldet „Neues Turnier“ wählen, Name und Datum eintragen.',
+          '1. Angemeldet „Neues Turnier“ wählen, Name und Datum eintragen. „Weiter: Turnier einrichten“ führt in 8 Schritten durch alles Wesentliche (siehe unten); „Turnier anlegen“ legt sofort an und lässt alles offen.',
           '2. Unter „Konkurrenzen“ ganz oben festlegen, welche Angaben du führst (TTR, Klasse, Geschlecht, Jahrgang) und wie viele Tische es gibt; darunter die Konkurrenzen mit Modus, Gewinnsätzen und Wertung anlegen.',
           '3. Unter „Teilnehmer“ alle Teilnehmenden anlegen – aus dem Spielerpool, über die Online-Anmeldung oder von Hand. Mit „Gleich melden für“ landen sie direkt in den angehakten Konkurrenzen.',
           '4. Darunter, unter „Teilnehmer je Konkurrenz“, für jede Konkurrenz festlegen, wer mitspielt – nicht jeder spielt überall mit. Im Doppel bildest du dort die Paare, bei Mannschaften die Teams.',
           '5. Unter „Konkurrenzen“ auslosen, Vorschau prüfen, starten. Was Spieler und Zuschauer sehen, stellst du unter „Einstellungen“ ein.',
           '6. Deinen Spielerpool für alle Turniere pflegst du im Reiter „Spielerpool“ (auch CSV-Import und -Export).',
+        ],
+      },
+      {
+        titel: 'Startassistent',
+        text: [
+          'Der Assistent fragt nacheinander: Angaben (Name, Datum, Ort, Tische, Betriebsart), Konkurrenzarten (Einzel, Doppel, Mixed, Mannschaft), Spielsysteme, Leistungsklassen (keine, eigene Begriffe, TTR mit Vorlage), Online-Anmeldung und Kasse, was Spieler und Zuschauer sehen (Tabellen, K.-o.-Baum, Namen voll oder „Max M.“) und wer mit einträgt. Zum Schluss steht alles in einer Zusammenfassung. Jeder Schritt hat ein ⓘ mit Erklärung.',
+          'Unter „Konkurrenzen“ stehen danach nur die gewählten Arten und Spielsysteme zur Wahl. Das hält die Formulare kurz.',
+        ],
+      },
+      {
+        titel: 'Konkurrenzarten und Spielsysteme ändern',
+        text: [
+          'Unter „Einstellungen“ → „Konkurrenzarten und Spielsysteme“ stehen alle Arten und Systeme zum Anhaken; die gewählten sind angehakt. Bevor etwas übernommen wird, zeigt die App, was passiert:',
+          '• Eine abgewählte Art löscht ihre Konkurrenzen mit Meldungen und Auslosung – nur solange es dort keine Ergebnisse gibt. „Rückgängig“ holt sie zurück.',
+          '• Ein abgewähltes Spielsystem stellt noch nicht gestartete Konkurrenzen auf ein gewähltes um. Laufende Konkurrenzen behalten ihr System; dann lässt es sich nicht abwählen.',
+          '• Die Spieler bleiben im Turnier. Wer danach in keiner Konkurrenz mehr steht, ist unter „Teilnehmer“ markiert und lässt sich dort gesammelt in eine Einzel-Konkurrenz melden.',
         ],
       },
       {
@@ -110,7 +126,7 @@ export const HANDBUCH: HandbuchKapitel[] = [
         titel: 'Hobbyspieler ohne TTR',
         text: [
           'Wer keinen Q-TTR-Wert hat, wird mit 4 Fragen eingestuft („Kein TTR? Einstufen“ beim Anlegen, in der Online-Anmeldung automatisch). Gefragt wird nach Spielpraxis, Aufschlag und Rückschlag, Schlagtechnik und Taktik; jede Antwort zählt 0 bis 3 Punkte. Daraus ergibt sich ein geschätzter Startwert: H1 900 (0–2 Punkte), H2 1025 (3–5), H3 1175 (6–9), H4 1350 (10–12), dazu ein kurzer Text, was die Stufe bedeutet. Gespeichert wird nur der Wert.',
-          'Geschätzte Werte passen sich nach jedem gespielten Einzel an, wie beim TTR (in den ersten 5 App-Spielen doppelt so schnell). Im laufenden Turnier zählen weiter die Startwerte. Unter „Teilnehmer“ → „App-Wertung der Hobbyspieler“ übernimmst du die neuen Werte nach dem Turnier in deinen Spielerpool. Amtliche TTR-Werte ändert die App nie.',
+          'Geschätzte Werte passen sich nach jedem gespielten Einzel an (auch nach den Einzeln einer Mannschaftsbegegnung, nicht nach Doppeln), wie beim TTR (in den ersten 5 App-Spielen doppelt so schnell). Im laufenden Turnier zählen weiter die Startwerte. Unter „Teilnehmer“ → „App-Wertung der Hobbyspieler“ übernimmst du die neuen Werte nach dem Turnier in deinen Spielerpool. Amtliche TTR-Werte ändert die App nie.',
           'Ein reines Hobby-Turnier stellst du je Konkurrenz unter „Weitere Einstellungen“ → „Nur Hobbyspieler“ ein. Ohne dieses Häkchen spielen Hobby- und Vereinsspieler gemischt, getrennt nur über die Obergrenze „TTR bis“.',
         ],
       },
@@ -134,6 +150,8 @@ export const HANDBUCH: HandbuchKapitel[] = [
         text: [
           '• Jeder gegen jeden: eine Gruppe, alle spielen gegeneinander.',
           '• Gruppen und K.-o.: Gruppenphase, die Besten jeder Gruppe kommen ins K.-o.; Gruppensieger sind gesetzt, Spieler aus derselben Gruppe treffen erst spät aufeinander.',
+          '• Gruppen + Platzierungsgruppen: Vorrunde in Gruppen, danach spielen die Gleichplatzierten aller Gruppen neu jeder gegen jeden (bei 2 Gruppen à 4: Erste und Zweite um Platz 1–4, Dritte und Vierte um Platz 5–8). Vorrunden-Ergebnisse zählen nicht mit. Ergibt eine vollständige Gesamtplatzierung für Ergebnisliste, Urkunden und Siegerehrung. Gestartet wird die Platzierungsrunde unter „Konkurrenzen“, sobald alle Vorrundentabellen fertig sind.',
+          '• Zweite Stufe: Bei „Gruppen und K.-o.“ und „Gruppen + Platzierungsgruppen“ lassen sich für die Endrunde eigene Gewinnsätze (und bei Mannschaften ein eigenes Spielsystem) einstellen.',
           '• K.-o.: einfaches Ausscheiden, wahlweise mit Spiel um Platz 3 und Trostrunde für die Verlierer der ersten Runde.',
           '• Doppel-K.-o.: wer zweimal verliert, scheidet aus (Gewinner- und Verliererrunde, Finale ggf. mit Wiederholung).',
           '• Schweizer System: feste Rundenzahl, Gegner mit gleicher Punktzahl, niemand spielt zweimal gegen denselben.',
@@ -146,7 +164,8 @@ export const HANDBUCH: HandbuchKapitel[] = [
         titel: 'Gleichstand in der Tabelle (DTTB D 7.5)',
         text: [
           'Bei Gleichstand entscheiden der Reihe nach: mehr Pluspunkte, weniger Minuspunkte, Satzdifferenz und Balldifferenz aller Gruppenspiele, dann die Spiele der Gleichstehenden untereinander, zuletzt das Los. Nach ITTF zählt der direkte Vergleich zuerst.',
-          'Zieht jemand zurück, werden nach der Wettspielordnung seine Spiele gestrichen (umschaltbar: gespielte bleiben, der Rest gilt als kampflos verloren).',
+          'Zieht jemand zurück, werden nach der Wettspielordnung seine Spiele gestrichen (umschaltbar: gespielte bleiben, der Rest gilt als kampflos verloren). Bei Gruppen + Platzierungsgruppen gilt das je Stufe: Ein Rückzug in der Platzierungsrunde ändert die Vorrundentabellen nicht.',
+          'War der Rückzug ein Versehen, nimmt „Spielt wieder mit“ ihn zurück – solange dadurch kein Spiel mit Ergebnis anders ausginge (im K.-o. also nicht mehr, wenn der Gegner schon weitergespielt hat).',
         ],
       },
     ],
@@ -256,9 +275,10 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Anlegen',
         text: [
-          '1. Unter „Konkurrenzen“ eine neue Konkurrenz mit „Mannschaft“ anlegen und das Spielsystem wählen: Bundessystem, Werner-Scheffler-System, Sechser-Paarkreuz-System, Corbillon-Cup, Olympisches System, Swaythling-Cup oder eine eigene Spielfolge. Möglich sind Gruppen + K.-o., Jeder gegen jeden und K.-o.',
+          '1. Unter „Konkurrenzen“ eine neue Konkurrenz mit „Mannschaft“ anlegen und das Spielsystem wählen: Bundessystem, Werner-Scheffler-System, Sechser-Paarkreuz-System, Braunschweiger System, Corbillon-Cup, Zweier-System (2 Einzel + Doppel), Olympisches System, Swaythling-Cup oder eine eigene Spielfolge. Möglich sind Gruppen + K.-o., Gruppen + Platzierungsgruppen, Jeder gegen jeden und K.-o.',
           '2. Bei der Konkurrenz „Mannschaft melden“: Name, Verein, Spieler (mehr als nötig ist erlaubt) und die Mannschaftsführung wählen.',
-          '3. Auslosen und starten wie bei Einzeln. Jede Begegnung belegt einen Tisch.',
+          '3. Auslosen und starten wie bei Einzeln. Eine Begegnung belegt einen Tisch – mit „Eine Begegnung spielt an zwei Tischen“ zwei; beim Aufruf (auch automatisch) kommt der zweite Tisch dazu.',
+          'Braunschweiger System: Jede Mannschaft tritt als Dreier- oder Vierermannschaft an (Einzelposition 4 leer = Dreier). Die Spielfolge richtet sich danach, zwei Doppel gibt es nur bei Vierer gegen Vierer. Es werden immer alle 10 Spiele gespielt, 5:5 ist ein Unentschieden.',
         ],
       },
       {

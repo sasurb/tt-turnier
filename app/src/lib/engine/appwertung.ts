@@ -3,6 +3,8 @@
  * gespielten Einzel an – wie beim TTR mit Gewinnerwartung E = 1 / (1 + 10^((Gegner − Spieler) / 150))
  * und Änderung K · (S − E), gerundet je Spiel. K = 32 in den ersten 5 App-Spielen, danach 16.
  *
+ * Bei Mannschaften zählen die Einzel der Begegnungen mit (ab 0.16), Doppel nicht.
+ *
  * Amtliche TTR-Werte bleiben unverändert (sie dienen nur als Maßstab). Gerechnet wird nur zur Anzeige
  * und für die Übernahme in den Spielerpool: Setzung und Klassen im laufenden Turnier nutzen weiter den
  * Startwert, damit alle Geräte gleich rechnen und sich nichts mitten im Turnier verschiebt.
@@ -10,6 +12,7 @@
 import type { PoolSpieler } from '@shared/protokoll';
 import { WERTUNG_MAX, WERTUNG_MIN } from './stufen';
 import type { TurnierZustand } from './zustand';
+import { teileVon } from './mannschaft';
 
 export const K_NEU = 32;
 export const K_STANDARD = 16;
@@ -46,6 +49,21 @@ export function appWertungen(z: TurnierZustand, bisher: (spieler: string) => num
   const spiele: { zeit: string; id: string; a: string; b: string; s: number }[] = [];
   for (const kid of z.konkurrenzReihe) {
     const k = z.konkurrenzen[kid]!;
+    // Mannschaften (ab 0.16): die Einzel der Begegnungen zählen wie normale Einzel (Doppel nicht)
+    if (k.einst.art === 'mannschaft') {
+      for (const sp of Object.values(k.spiele)) {
+        if (!sp.a || !sp.b || !k.begegnungen[sp.id]) continue;
+        for (const t of teileVon(k, sp)) {
+          const e = t.ergebnis;
+          if (t.art !== 'einzel' || t.status !== 'gespielt' || !e || e.art === 'kampflos' || t.a.length !== 1 || t.b.length !== 1) continue;
+          const a = t.a[0]!;
+          const b = t.b[0]!;
+          if (!aus[a] && !aus[b]) continue;
+          spiele.push({ zeit: t.eintrag?.zeit ?? '', id: `${kid}|${t.id}`, a, b, s: e.gewinner === 'a' ? 1 : e.gewinner === 'b' ? 0 : 0.5 });
+        }
+      }
+      continue;
+    }
     if (k.einst.art !== 'einzel') continue;
     for (const sp of Object.values(k.spiele)) {
       const e = sp.ergebnis;

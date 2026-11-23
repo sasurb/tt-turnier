@@ -36,7 +36,7 @@ export function ansageText(z: TurnierZustand, a: Aufruf): string {
   const n = (id: string | null) => tnName(z, id, k).replace(/\//g, ' und ');
   const runde = k ? rundeVon(k, a.spiel).replace(k.gruppen.length === 1 ? /^Gruppe A · / : /^$/, '') : '';
   const wo = k ? `${k.einst.name}, ${runde.replace(/ · /g, ', ')}` : '';
-  return `Tisch ${a.tisch}: ${n(a.spiel.a)} gegen ${n(a.spiel.b)}.${wo ? ` ${wo}.` : ''}`;
+  return `${a.spiel.tisch2 ? `Tische ${a.tisch} und ${a.spiel.tisch2}` : `Tisch ${a.tisch}`}: ${n(a.spiel.a)} gegen ${n(a.spiel.b)}.${wo ? ` ${wo}.` : ''}`;
 }
 
 type Synth = Pick<SpeechSynthesis, 'getVoices' | 'speak' | 'cancel'> & Partial<Pick<SpeechSynthesis, 'addEventListener'>>;

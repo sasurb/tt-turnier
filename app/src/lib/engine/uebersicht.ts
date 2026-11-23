@@ -1,7 +1,7 @@
 import { name, platzierungen, runden, tabelle } from './abfragen';
 import { ergebnisText } from './ergebnis';
 import { rundenName, baumRunden, trostPlatzierungen } from './ko';
-import { gruppenName, istSchweizerArt, punkteText, type KonkurrenzZustand, type Spiel } from './modell';
+import { gruppeTitel, istSchweizerArt, punkteText, type KonkurrenzZustand, type Spiel } from './modell';
 import { istRundenModus, kaiserTabelle, letzteRunde, schweizerTabelle } from './runden';
 import { zurueckgezogen, type TurnierZustand } from './zustand';
 
@@ -45,7 +45,7 @@ function konkurrenzText(z: TurnierZustand, k: KonkurrenzZustand): string {
   }
   for (const g of k.gruppen) {
     const t = tabelle(k, g.nr);
-    l.push('', `Gruppe ${gruppenName(g.nr)}`);
+    l.push('', gruppeTitel(k, g.nr));
     l.push(`  ${'Pl'.padEnd(3)}${links('Name', 26)}${rechts('Sp', 3)}${rechts('S:N', 7)}${rechts('Sätze', 8)}${rechts('Bälle', 10)}`);
     for (const r of t.zeilen) {
       l.push(

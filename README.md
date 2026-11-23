@@ -36,6 +36,13 @@ die Satzdauer aus den gespielten Spielen, rechnet Folgerunden mit ein), Spiele v
 auf Tische legen. Neue Spielsysteme: *Cup-System* (wie die Turnierserien mit MKTT), beschleunigtes
 Schweizer System, feste Satzzahl mit Unentschieden. Lasttest: 128 Spieler, rund 770 Einträge, Neuberechnung ca. 11 ms.
 
+**0.16 – Startassistent und Platzierungsgruppen:** Ein Assistent führt beim Anlegen durch alles Wesentliche
+(Konkurrenzarten, Spielsysteme, Leistungsklassen, Kasse, Sichtbarkeit, Zugänge); unter „Einstellungen“ lassen sich
+Arten und Systeme später ändern – mit Vorschau, was mit bestehenden Konkurrenzen und Teilnehmern passiert. Neuer Modus
+*Gruppen + Platzierungsgruppen* (Vorrunde, dann die Gleichplatzierten neu jeder gegen jeden, vollständige
+Gesamtplatzierung), eigene Gewinnsätze bzw. eigenes Mannschafts-Spielsystem für die zweite Stufe, Braunschweiger
+System, Zweier-System, Begegnungen an zwei Tischen, Rückzug zurücknehmen.
+
 - Demo (nur Einzelgerät-Modus): https://sasurb.github.io/tt-turnier/
 - Eigene Installation: [docs/strato-einrichtung.md](docs/strato-einrichtung.md) (funktioniert auf jedem PHP-Webspace)
 

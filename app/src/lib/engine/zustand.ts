@@ -4,7 +4,7 @@ import { eingabeTauschen, ergebnisGleich, ergebnisWerten } from './ergebnis';
 import { abhaengigeMitErgebnis, koAktualisieren, koAnlegen } from './ko';
 import { rundenplan } from './rundenplan';
 import { ersteRundeAnlegen, istRundenModus, letzteRunde, rundeFertig, rundenAktualisieren } from './runden';
-import { kampflosErgebnis } from './wertung';
+import { gruppenTabelle, kampflosErgebnis } from './wertung';
 import {
   aufstellungenKomplett,
   begegnungAuswerten,
@@ -22,13 +22,22 @@ import {
 } from './mannschaft';
 import {
   ALLE_ANGABEN,
+  ALLE_ARTEN,
   ALLES_OEFFENTLICH,
   FEST_NACH_START,
   MODI,
   MODI_MANNSCHAFT,
+  einstFuer,
+  inEndrunde,
+  istPlatzModus,
+  type BestOf,
+  type KlassenVorgabe,
+  type KonkurrenzArt,
+  type KonkurrenzAuswahl,
   STANDARD_ANGABEN,
   UHRZEIT_MUSTER,
   festeSaetzeVon,
+  gruppenName,
   mitKo,
   standardEinstellungen,
   type Angabe,
@@ -77,6 +86,10 @@ export interface TurnierZustand {
   kasse: KasseEinstellungen | null;
   /** App-Wertung der Hobbyspieler in den Spielerpool übernommen (Zeitpunkt, ab 0.15) – gegen doppeltes Übernehmen */
   wertungUebernommen: string | null;
+  /** Angebotene Konkurrenzarten und Spielsysteme (ab 0.16, Startassistent/Einstellungen); null = alle */
+  konkurrenzarten: KonkurrenzAuswahl | null;
+  /** Leistungsklassen laut Startassistent (Vorgabe für den Klassen-Assistenten); null = nicht festgelegt */
+  klassenVorgabe: KlassenVorgabe | null;
   /** Check-in am Turniertag: Spieler-ID → da (nur volle Sicht) */
   checkin: Record<string, boolean>;
   /** Startgeld-Buchungen in Reihenfolge (Quittungsnummer = nr; nur volle Sicht) */
@@ -126,6 +139,8 @@ export function leererZustand(): TurnierZustand {
     zurueckgenommen: [],
     kasse: null,
     wertungUebernommen: null,
+    konkurrenzarten: null,
+    klassenVorgabe: null,
     checkin: leer(),
     buchungen: [],
     abgeschlossen: false,
@@ -176,6 +191,27 @@ function kasseLesen(v: unknown, alt: KasseEinstellungen | null): KasseEinstellun
     iban: t('iban', 34).replace(/\s+/g, '').toUpperCase(),
     bic: t('bic', 11).replace(/\s+/g, '').toUpperCase(),
   };
+}
+
+/** Auswahl der Konkurrenzarten/Spielsysteme: mindestens eine Art und ein System, sonst bleibt die alte */
+function auswahlLesen(v: unknown, alt: KonkurrenzAuswahl | null): KonkurrenzAuswahl | null {
+  if (v === null) return null;
+  if (!v || typeof v !== 'object') return alt;
+  const x = v as Record<string, unknown>;
+  const arten = Array.isArray(x.arten) ? ALLE_ARTEN.filter((a) => (x.arten as unknown[]).includes(a)) : [];
+  const modi = Array.isArray(x.modi) ? MODI.filter((m) => (x.modi as unknown[]).includes(m)) : [];
+  return arten.length && modi.length ? { arten: arten as KonkurrenzArt[], modi: modi as Modus[] } : alt;
+}
+
+function klassenVorgabeLesen(v: unknown, alt: KlassenVorgabe | null): KlassenVorgabe | null {
+  if (v === null) return null;
+  if (!v || typeof v !== 'object') return alt;
+  const x = v as Record<string, unknown>;
+  if (x.nach !== 'keine' && x.nach !== 'klasse' && x.nach !== 'ttr') return alt;
+  const grenzen = Array.isArray(x.grenzen)
+    ? [...new Set(x.grenzen.filter((g): g is number => typeof g === 'number' && Number.isInteger(g) && g > 0 && g <= 4000))].sort((a, b) => a - b).slice(0, 10)
+    : [];
+  return { nach: x.nach, grenzen: x.nach === 'ttr' ? grenzen : [] };
 }
 
 function veroeffentlichungLesen(v: unknown): Veroeffentlichung | null | undefined {
@@ -283,11 +319,25 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
     if (typeof z.nurHobby === 'boolean') e.zulassung.nurHobby = z.nurHobby;
     if (Array.isArray(z.geschlecht)) e.zulassung.geschlecht = z.geschlecht.filter((g): g is 'm' | 'w' | 'd' => g === 'm' || g === 'w' || g === 'd');
   }
+  if (typeof x.zweiTische === 'boolean') e.zweiTische = x.zweiTische;
+  if (x.endrunde === null) e.endrunde = null;
+  else if (x.endrunde && typeof x.endrunde === 'object') {
+    const er = x.endrunde as Record<string, unknown>;
+    const bo = er.bestOf === 1 || er.bestOf === 3 || er.bestOf === 5 || er.bestOf === 7 ? (er.bestOf as BestOf) : null;
+    const m = er.mannschaft ? mannschaftEinstLesen(er.mannschaft, null) : null;
+    e.endrunde = bo !== null || m !== null ? { bestOf: bo, mannschaft: m } : null;
+  }
   // Mannschaften: Spielsystem immer vorhanden, nur Gruppen/Jeder gegen jeden/K.-o.
   if (e.art === 'mannschaft') {
     e.mannschaft ??= standardMannschaft();
     if (!MODI_MANNSCHAFT.includes(e.modus)) e.modus = 'gruppen_ko';
-  } else e.mannschaft = null;
+  } else {
+    e.mannschaft = null;
+    e.zweiTische = false;
+    if (e.endrunde) e.endrunde = e.endrunde.bestOf !== null ? { bestOf: e.endrunde.bestOf, mannschaft: null } : null;
+  }
+  // Eine zweite Stufe gibt es nur bei Gruppen + K.-o. und Gruppen + Platzierungsgruppen
+  if (e.modus !== 'gruppen_ko' && e.modus !== 'gruppen_platz') e.endrunde = null;
   return e;
 }
 
@@ -348,13 +398,21 @@ export function teilnehmerVon(k: KonkurrenzZustand, spieler: string): string | n
   );
 }
 
-/** Teilnehmer, die zurückgezogen haben (ausdrücklich oder – WO D 7.9 – durch kampflos/Aufgabe in der Gruppe), in Reihenfolge */
-export function zurueckgezogen(k: KonkurrenzZustand): string[] {
-  const liste = [...k.rueckzuege].sort((a, b) => a.nr - b.nr).map((r) => ({ id: r.teilnehmer, zeit: r.zeit }));
+/**
+ * Teilnehmer, die zurückgezogen haben (ausdrücklich oder – WO D 7.9 – durch kampflos/Aufgabe in der Gruppe), in Reihenfolge.
+ * `nurVorrunde` (Gruppen + Platzierungsgruppen): nur, was in der Vorrunde geschah – ein Rückzug in der
+ * Platzierungsrunde ändert die Tabellen der Vorrunde nicht (WO D 7.9 gilt je Stufe).
+ */
+export function zurueckgezogen(k: KonkurrenzZustand, nurVorrunde = false): string[] {
+  const liste = [...k.rueckzuege]
+    .filter((r) => !nurVorrunde || r.phase !== 'ko')
+    .sort((a, b) => a.nr - b.nr)
+    .map((r) => ({ id: r.teilnehmer, zeit: r.zeit }));
   if (k.einst.rueckzug === 'wo' && !istRundenModus(k.einst.modus)) {
     for (const id of k.reihenfolge) {
       const s = k.spiele[id]!;
       if (s.phase !== 'gruppen' || !s.eintrag) continue;
+      if (nurVorrunde && inEndrunde(k, s)) continue;
       const e = s.eintrag.ergebnis;
       if (e.art === 'normal') continue;
       const verlierer = e.gewinner === 'a' ? s.b : s.a;
@@ -368,10 +426,11 @@ export function zurueckgezogen(k: KonkurrenzZustand): string[] {
     .map((x) => x.id);
 }
 
-function gruppenAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>) {
+function gruppenAktualisieren(k: KonkurrenzZustand, alleZurueck: Set<string>, zurueckVorrunde?: Set<string>) {
   for (const id of k.reihenfolge) {
     const s = k.spiele[id]!;
     if (s.phase !== 'gruppen') continue;
+    const zurueck = zurueckVorrunde && !inEndrunde(k, s) ? zurueckVorrunde : alleZurueck;
     const za = !!s.a && zurueck.has(s.a);
     const zb = !!s.b && zurueck.has(s.b);
     s.kampflosDurchRueckzug = null;
@@ -387,7 +446,7 @@ function gruppenAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>) {
       } else {
         const v: Seite = za ? 'a' : 'b';
         s.kampflosDurchRueckzug = v;
-        s.ergebnis = kampflosFuer(k, v);
+        s.ergebnis = kampflosFuer(k, v, s);
         s.status = 'gespielt';
       }
     } else {
@@ -399,8 +458,9 @@ function gruppenAktualisieren(k: KonkurrenzZustand, zurueck: Set<string>) {
 }
 
 /** Kampflos-Ergebnis (Rückzug): Einzel/Doppel nach WO D 7.10, Mannschaft alle nötigen Teilspiele */
-export function kampflosFuer(k: KonkurrenzZustand, verlierer: Seite): Ergebnis {
-  return istMannschaft(k) ? kampflosBegegnung(verlierer, k.einst) : kampflosErgebnis(verlierer, k.einst);
+export function kampflosFuer(k: KonkurrenzZustand, verlierer: Seite, s?: Pick<Spiel, 'phase' | 'gruppe'>): Ergebnis {
+  const einst = einstFuer(k, s);
+  return istMannschaft(k) ? kampflosBegegnung(verlierer, einst) : kampflosErgebnis(verlierer, einst);
 }
 
 function statusAktualisieren(k: KonkurrenzZustand) {
@@ -412,9 +472,19 @@ function statusAktualisieren(k: KonkurrenzZustand) {
     k.status = rundeFertig(k, letzteRunde(k)) ? 'beendet' : 'gruppen';
     return;
   }
+  if (istPlatzModus(k.einst.modus)) {
+    // Gruppen + Platzierungsgruppen: beide Stufen sind Gruppen; „ko“ = Platzierungsrunde läuft
+    if (k.gestartet.gruppen) gruppenAktualisieren(k, zurueck, new Set(zurueckgezogen(k, true)));
+    const offen = Object.values(k.spiele).some((s) => s.status === 'offen' || s.stand === 'angefochten' || s.stand === 'konflikt');
+    k.status = !begonnen(k) ? 'meldung' : !k.gestartet.ko ? 'gruppen' : offen ? 'ko' : 'beendet';
+    return;
+  }
   if (k.gestartet.gruppen) gruppenAktualisieren(k, zurueck);
   if (k.gestartet.ko)
-    koAktualisieren(k, zurueck, istMannschaft(k) ? { vorher: (s) => begegnungUebernehmen(k, s), kampflos: (v) => kampflosFuer(k, v) } : undefined);
+    koAktualisieren(k, zurueck, {
+      vorher: istMannschaft(k) ? (s) => begegnungUebernehmen(k, s) : undefined,
+      kampflos: (v) => kampflosFuer(k, v, { phase: 'ko', gruppe: null }),
+    });
   if (!begonnen(k)) k.status = 'meldung';
   else if (k.gestartet.ko) {
     const offen = Object.values(k.spiele).some(
@@ -425,6 +495,70 @@ function statusAktualisieren(k: KonkurrenzZustand) {
     const offen = Object.values(k.spiele).some((s) => s.status === 'offen' || s.stand === 'angefochten' || s.stand === 'konflikt');
     k.status = !offen && k.einst.modus === 'jgj' ? 'beendet' : 'gruppen';
   }
+}
+
+/* ---------------- Gruppen + Platzierungsgruppen ---------------- */
+
+/** Tabelle einer Gruppe (Vorrunde: nur Rückzüge der Vorrunde) */
+export function gruppenTabelleVon(k: KonkurrenzZustand, nr: number) {
+  const g = k.gruppen[nr]!;
+  const spiele = k.reihenfolge.map((id) => k.spiele[id]!).filter((s) => s.phase === 'gruppen' && s.gruppe === nr);
+  const platz = typeof g.platzAb === 'number';
+  return gruppenTabelle(g, spiele, platz ? einstFuer(k, { phase: 'gruppen', gruppe: nr }) : k.einst, zurueckgezogen(k, istPlatzModus(k.einst.modus) && !platz));
+}
+
+/** Gruppen der Vorrunde (ohne Platzierungsgruppen) */
+export function vorrundenGruppen(k: KonkurrenzZustand) {
+  return k.gruppen.filter((g) => typeof g.platzAb !== 'number');
+}
+
+export type PlatzGruppenPlan = { ok: true; gruppen: { platzAb: number; mitglieder: string[] }[] } | { ok: false; grund: string };
+
+/**
+ * Platzierungsgruppen aus den fertigen Tabellen der Vorrunde: Je `aufsteiger` Plätze aller Gruppen bilden eine
+ * Platzierungsgruppe (bei 2 Gruppen à 4 und 2: 1.+2. → Plätze 1–4, 3.+4. → Plätze 5–8). Wer zurückgezogen hat, fällt
+ * heraus. Reihenfolge in der Gruppe: erst alle Gruppenersten (A, B, …), dann alle Zweiten usw.
+ */
+export function platzGruppenBilden(k: KonkurrenzZustand): PlatzGruppenPlan {
+  if (!istPlatzModus(k.einst.modus) || !k.gestartet.gruppen) return { ok: false, grund: 'Die Vorrunde hat noch nicht begonnen.' };
+  const reihen: string[][] = [];
+  for (const g of vorrundenGruppen(k)) {
+    const t = gruppenTabelleVon(k, g.nr);
+    if (!t.fertig) return { ok: false, grund: `In Gruppe ${gruppenName(g.nr)} sind noch Spiele offen oder strittig.` };
+    if (t.losGruppen.length) return { ok: false, grund: `In Gruppe ${gruppenName(g.nr)} muss ein Los entscheiden.` };
+    reihen.push(t.zeilen.filter((r) => !r.zurueckgezogen).map((r) => r.id));
+  }
+  const je = Math.max(1, k.einst.aufsteiger);
+  const tiefe = Math.max(0, ...reihen.map((r) => r.length));
+  const gruppen: { platzAb: number; mitglieder: string[] }[] = [];
+  let platz = 1;
+  for (let ab = 0; ab < tiefe; ab += je) {
+    const mitglieder: string[] = [];
+    for (let p = ab; p < ab + je; p++) for (const r of reihen) if (r[p]) mitglieder.push(r[p]!);
+    if (!mitglieder.length) continue;
+    gruppen.push({ platzAb: platz, mitglieder });
+    platz += mitglieder.length;
+  }
+  if (gruppen.length < 1 || gruppen.every((g) => g.mitglieder.length < 2)) return { ok: false, grund: 'Für die Platzierungsrunde braucht es mindestens 2 Teilnehmer.' };
+  return { ok: true, gruppen };
+}
+
+/** Platzierungsgruppen anlegen (Gruppennummern nach denen der Vorrunde, Spiel-IDs „g<nr>-<A>-<B>“) */
+function platzGruppenAnlegen(k: KonkurrenzZustand, plan: { platzAb: number; mitglieder: string[] }[]): string[] {
+  const neu: string[] = [];
+  const basis = k.gruppen.length;
+  plan.forEach((p, i) => k.gruppen.push({ nr: basis + i, mitglieder: [...p.mitglieder], los: leer(), platzAb: p.platzAb }));
+  const plaene = plan.map((p) => rundenplan(p.mitglieder.length));
+  const maxRunden = Math.max(0, ...plaene.map((x) => x.length));
+  let index = Math.max(-1, ...Object.values(k.spiele).map((s) => s.index)) + 1;
+  const vorher = k.reihenfolge.length;
+  for (let r = 0; r < maxRunden; r++) {
+    plan.forEach((p, i) => {
+      for (const [x, y] of plaene[i]![r] ?? []) gruppenSpielAnlegen(k, basis + i, p.mitglieder[x]!, p.mitglieder[y]!, r + 1, index++);
+    });
+  }
+  neu.push(...k.reihenfolge.slice(vorher));
+  return neu;
 }
 
 function gleicheMenge(a: string[], b: string[]) {
@@ -530,6 +664,28 @@ export function koPlaetzePruefen(k: KonkurrenzZustand, neu: (string | null)[]): 
     if (s.phase !== 'ko' || !festgelegt(s)) continue;
     const t = k2.spiele[s.id]!;
     if (t.a !== s.a || t.b !== s.b) return 'Ein betroffenes Spiel hat schon ein Ergebnis oder ist aufgerufen.';
+  }
+  return null;
+}
+
+/**
+ * Rückzug zurücknehmen (der Teilnehmer spielt wieder mit): nur ein ausdrücklicher Rückzug, und nur, wenn dadurch
+ * kein Spiel mit Ergebnis eine andere Besetzung oder einen anderen Sieger bekäme. null = möglich, sonst Grund.
+ */
+export function rueckzugZuruecknehmenPruefen(k: KonkurrenzZustand, id: string): string | null {
+  if (!k.rueckzuege.some((r) => r.teilnehmer === id)) return 'Dieser Teilnehmer hat nicht zurückgezogen.';
+  if (k.status === 'beendet') return 'Die Konkurrenz ist schon beendet.';
+  // Rückzug aus der Gruppenphase, die zweite Stufe läuft schon: die Tabellen der Vorrunde (und damit, wer weiterkam) stehen fest
+  if (k.gestartet.ko && k.rueckzuege.some((r) => r.teilnehmer === id && r.phase === 'gruppen') && (k.einst.modus === 'gruppen_ko' || k.einst.modus === 'gruppen_platz'))
+    return 'Der Rückzug war in der Vorrunde, die Endrunde läuft schon – die Vorrundentabellen bleiben, wie sie sind.';
+  const k2 = kopie(k);
+  k2.rueckzuege = k2.rueckzuege.filter((r) => r.teilnehmer !== id);
+  statusAktualisieren(k2);
+  if (zurueckgezogen(k2).includes(id)) return 'Der Rückzug ergibt sich aus einem kampflos oder durch Aufgabe gewerteten Spiel – dafür bitte dieses Ergebnis ändern.';
+  for (const s of Object.values(k.spiele)) {
+    if (!s.eintrag) continue;
+    const t = k2.spiele[s.id];
+    if (!t || t.a !== s.a || t.b !== s.b || t.gewinner !== s.gewinner || t.status !== s.status) return 'Dadurch würde sich ein Spiel mit Ergebnis ändern (z. B. ein Folgespiel im K.-o.).';
   }
   return null;
 }
@@ -774,6 +930,8 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       const sm = zahl(d.satzMinuten, 2, 15);
       if (sm !== undefined) z.satzMinuten = sm;
       if ('kasse' in d) z.kasse = kasseLesen(d.kasse, z.kasse);
+      if ('konkurrenzarten' in d) z.konkurrenzarten = auswahlLesen(d.konkurrenzarten, z.konkurrenzarten);
+      if ('klassenVorgabe' in d) z.klassenVorgabe = klassenVorgabeLesen(d.klassenVorgabe, z.klassenVorgabe);
       // Einmalig: lässt sich nicht zurücksetzen (auch nicht per Rückgängig), damit kein Turnier doppelt zählt
       if (typeof d.wertungUebernommen === 'string' && d.wertungUebernommen.length <= 40 && !z.wertungUebernommen) z.wertungUebernommen = d.wertungUebernommen;
       // „Ergebnisse veröffentlichen“: Abweichungen der Konkurrenzen zurücknehmen
@@ -857,6 +1015,8 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
           neu.platz3 = k.einst.platz3;
           neu.trostrunde = k.einst.trostrunde;
           neu.finaleWiederholung = k.einst.finaleWiederholung;
+          neu.endrunde = k.einst.endrunde;
+          neu.aufsteiger = k.einst.aufsteiger;
         }
       }
       if (neu.art !== k.einst.art && (k.meldungen.length || Object.keys(k.paare).length)) {
@@ -992,6 +1152,20 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       statusAktualisieren(k);
       break;
     }
+    case ART.teilnehmerZurueck: {
+      if (!nurLeitung()) break;
+      const k = konkurrenz();
+      const id = typeof d.id === 'string' ? d.id : '';
+      if (!k) break;
+      const f = rueckzugZuruecknehmenPruefen(k, id);
+      if (f) {
+        warnen(f);
+        break;
+      }
+      k.rueckzuege = k.rueckzuege.filter((r) => r.teilnehmer !== id);
+      statusAktualisieren(k);
+      break;
+    }
     case ART.setzliste: {
       if (!nurLeitung()) break;
       const k = konkurrenz();
@@ -1068,6 +1242,28 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
           k.reihenfolge.push(...ersteRundeAnlegen(k));
         } else gruppenAnlegen(k);
         k.gestartet.gruppen = true;
+      } else if (d.phase === 'ko' && istPlatzModus(k.einst.modus)) {
+        if (k.gestartet.ko || !k.gestartet.gruppen) break;
+        const plan = platzGruppenBilden(k);
+        if (!plan.ok) {
+          warnen(plan.grund);
+          break;
+        }
+        // Das Gerät schickt die Einteilung mit; sie muss zu den Tabellen passen (alle Geräte rechnen gleich)
+        const gesendet = Array.isArray(d.gruppen) ? (d.gruppen as unknown[]) : null;
+        const passt =
+          !!gesendet &&
+          gesendet.length === plan.gruppen.length &&
+          plan.gruppen.every((g, i) => {
+            const x = gesendet[i];
+            return Array.isArray(x) && x.length === g.mitglieder.length && x.every((y, j) => y === g.mitglieder[j]);
+          });
+        if (!passt) {
+          warnen('Die Platzierungsgruppen passen nicht mehr zu den Tabellen der Vorrunde – bitte neu starten.');
+          break;
+        }
+        platzGruppenAnlegen(k, plan.gruppen);
+        k.gestartet.ko = true;
       } else if (d.phase === 'ko') {
         if (k.gestartet.ko || !mitKo(k.einst.modus) || !k.auslosungKo) break;
         if (erstePhase(k) === 'ko' && !auslosungAktuell(k)) {
@@ -1089,15 +1285,20 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         warnen('Bitte zuerst die Endrunde zurücknehmen.');
         break;
       }
-      const spiele = Object.values(k.spiele).filter((s) => s.phase === phase);
-      if (spiele.some((s) => s.eintrag)) {
+      const platzRunde = istPlatzModus(k.einst.modus) && phase === 'ko';
+      const spiele = Object.values(k.spiele).filter((s) => (platzRunde ? inEndrunde(k, s) : s.phase === phase && !(istPlatzModus(k.einst.modus) && inEndrunde(k, s))));
+      if (spiele.some((s) => s.eintrag || (istMannschaft(k) && Object.keys(k.begegnungen[s.id]?.teile ?? {}).length))) {
         warnen('Es gibt schon Ergebnisse – der Start lässt sich nicht mehr zurücknehmen.');
         break;
       }
-      for (const s of spiele) delete k.spiele[s.id];
+      for (const s of spiele) {
+        delete k.spiele[s.id];
+        delete k.begegnungen[s.id];
+      }
       k.reihenfolge = k.reihenfolge.filter((id) => k.spiele[id]);
       k.gestartet[phase] = false;
       if (phase === 'gruppen') k.gruppen = [];
+      if (platzRunde) k.gruppen = k.gruppen.filter((g) => typeof g.platzAb !== 'number');
       if (phase === 'ko' && k.einst.modus === 'gruppen_ko') k.auslosungKo = null;
       k.rueckzuege = k.rueckzuege.filter((r) => r.phase !== phase);
       statusAktualisieren(k);
@@ -1195,6 +1396,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       }
       if (e.art === ART.spielAufrufZurueck) {
         s.tisch = null;
+        s.tisch2 = null;
         s.aufgerufen = null;
         s.schiri = null;
         break;
@@ -1213,10 +1415,18 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         break;
       }
       const laufend = alleOffenenAufgerufenen(z).filter((x) => !(x.id === s.id && x.konkurrenz === s.konkurrenz));
-      const belegt = laufend.find((x) => x.tisch === tisch);
+      const belegt = laufend.find((x) => x.tisch === tisch || x.tisch2 === tisch);
       if (belegt) {
         warnen(`Tisch ${tisch} ist belegt.`);
         break;
+      }
+      // Mannschaften mit zwei Tischen je Begegnung: zweiter Tisch (frei, nicht gesperrt, nicht derselbe)
+      const t2 = istMannschaft(k) && k.einst.zweiTische ? zahl(d.tisch2, 1, 200) : null;
+      if (t2 !== undefined && t2 !== null) {
+        if (t2 === tisch || z.tischeGesperrt.includes(t2) || laufend.some((x) => x.tisch === t2 || x.tisch2 === t2)) {
+          warnen(`Tisch ${t2} ist nicht frei.`);
+          break;
+        }
       }
       // Niemand spielt an zwei Tischen zugleich (z. B. zwei Geräte rufen gleichzeitig auf)
       const beteiligt = [...spielerVon(k, s.a), ...spielerVon(k, s.b)];
@@ -1229,6 +1439,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         break;
       }
       s.tisch = tisch;
+      s.tisch2 = t2 ?? null;
       s.aufgerufen = e.zeit;
       s.schiri = schiriLesen(z, d.schiri);
       break;
@@ -1381,7 +1592,7 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
   const schonEingereicht = !!b0.versuche[mid];
   b0.versuche[mid] = true;
   if (!leitung && schonEingereicht && gegner && b0.versuche[gegner]) return 'Beide Aufstellungen stehen – ändern kann sie jetzt nur die Turnierleitung.';
-  const sys = systemVon(k.einst);
+  const sys = systemVon(einstFuer(k, s));
   const roh = (v: unknown) => (typeof v === 'string' && m.spieler.includes(v) ? v : null);
   const einzel = Array.from({ length: sys.einzel }, (_, i) => roh(Array.isArray(d.einzel) ? d.einzel[i] : null));
   const doppel = Array.from({ length: sys.doppel }, (_, i): [string, string] | null => {
@@ -1400,6 +1611,9 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
   const alt = b.aufstellung[mid];
   if (alt && !leitung && aufstellungenKomplett(k, s)) return 'Beide Aufstellungen stehen – ändern kann sie jetzt nur die Turnierleitung.';
   if (alt) {
+    // Braunschweiger System: Ob 3er oder 4er, steht mit dem ersten gespielten Teilspiel fest (die Spielfolge hängt davon ab)
+    if (sys.id === 'braunschweig' && Object.values(b.teile).some((t) => t.eintrag) && !!alt.einzel[3] !== !!einzel[3])
+      return 'Ob Dreier- oder Vierermannschaft, lässt sich nach dem ersten gespielten Spiel nicht mehr ändern.';
     // Positionen gespielter Teilspiele bleiben, wie sie waren
     const teile = teileVon(k, s);
     for (const t of teile) {
@@ -1467,9 +1681,9 @@ function teilEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, nr: num
     alternativen: ziel.alternativen,
     angefochtenVon: ziel.angefochtenVon,
   };
-  const einst = k.einst;
+  const einst = einstFuer(k, s);
   const vorher = s.gewinner;
-  const f = spielEreignis(z, { ...k, einst: { ...einst, festeSaetze: null } }, pseudo, e, d, leitung, aufgaben);
+  const f = spielEreignis(z, { ...k, einst: { ...einst, festeSaetze: null, endrunde: null } }, pseudo, e, d, leitung, aufgaben);
   if (f) return f.replace('Dieses Spiel kann noch nicht eingetragen werden.', 'Dieses Spiel kann erst eingetragen werden, wenn beide Aufstellungen stehen.');
   const sicherung = b.teile[String(nr)];
   b.teile[String(nr)] = { eintrag: pseudo.eintrag, stand: pseudo.stand, alternativen: pseudo.alternativen, angefochtenVon: pseudo.angefochtenVon, aTeam: s.a ?? '' };
@@ -1540,7 +1754,7 @@ function spielEreignis(
       if (!eingabe || typeof eingabe !== 'object') return 'Ergebnis fehlt.';
       if (d.a === s.b && d.b === s.a) eingabe = eingabeTauschen(eingabe);
       else if (d.a !== s.a || d.b !== s.b) return 'Die Spieler passen nicht zu diesem Spiel.';
-      const w = ergebnisWerten(eingabe, k.einst.bestOf, k.einst.eingabe, festeSaetzeVon(k.einst));
+      const w = ergebnisWerten(eingabe, einstFuer(k, s).bestOf, k.einst.eingabe, festeSaetzeVon(k.einst));
       if (w.ok && w.ergebnis.gewinner === null && s.phase === 'ko') return 'Im K.-o.-System gibt es kein Unentschieden.';
       if (!w.ok) return `Ergebnis ungültig: ${w.fehler}`;
       const blockiert = folgeBlockiert(k, s, w.ergebnis.gewinner);

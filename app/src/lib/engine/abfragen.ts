@@ -1,7 +1,9 @@
 import { anzahlGesetzte, anzahlGruppen, gruppenAuslosen, koAuslosen, naechsteZweierpotenz, setzreihe } from './auslosung';
 import { koPlatzierungen, koRunden, rundenName, trostPlatzierungen, type Platzierung } from './ko';
 import {
+  gruppeTitel,
   gruppenName,
+  istPlatzModus,
   istSchweizerArt,
   uhrzeitMs,
   istKurzname,
@@ -17,10 +19,10 @@ import {
   type Veroeffentlichung,
   type Zulassung,
 } from './modell';
-import { gruppenTabelle, type Tabelle } from './wertung';
+import { type Tabelle } from './wertung';
 import { istRundenModus, rundenPlatzierungen } from './runden';
 import { mischen, zufallAus } from './zufall';
-import { alleOffenenAufgerufenen, begonnen, erstePhase, spielerVon, teilnehmerVon, zurueckgezogen, type TurnierZustand } from './zustand';
+import { alleOffenenAufgerufenen, begonnen, erstePhase, gruppenTabelleVon, spielerVon, teilnehmerVon, vorrundenGruppen, zurueckgezogen, type TurnierZustand } from './zustand';
 
 /** Abfragen für die Oberfläche (rechnen nur, ändern nichts). */
 
@@ -92,9 +94,7 @@ export function teilnehmerDaten(z: TurnierZustand, k: KonkurrenzZustand): Record
 }
 
 export function tabelle(k: KonkurrenzZustand, nr: number): Tabelle {
-  const g = k.gruppen[nr]!;
-  const spiele = k.reihenfolge.map((id) => k.spiele[id]!).filter((s) => s.phase === 'gruppen' && s.gruppe === nr);
-  return gruppenTabelle(g, spiele, k.einst, zurueckgezogen(k));
+  return gruppenTabelleVon(k, nr);
 }
 
 export type Qualifikation = { ok: true; gruppen: string[][] } | { ok: false; grund: string };
@@ -103,7 +103,7 @@ export type Qualifikation = { ok: true; gruppen: string[][] } | { ok: false; gru
 export function qualifikanten(k: KonkurrenzZustand): Qualifikation {
   if (!k.gestartet.gruppen) return { ok: false, grund: 'Die Gruppenphase hat noch nicht begonnen.' };
   const aus: string[][] = [];
-  for (const g of k.gruppen) {
+  for (const g of vorrundenGruppen(k)) {
     const t = tabelle(k, g.nr);
     if (!t.fertig)
       return {
@@ -265,7 +265,7 @@ export function rundeVon(k: KonkurrenzZustand, s: Spiel): string {
   if (istSchweizerArt(k.einst.modus) && s.phase === 'gruppen') return `Runde ${s.runde}`;
   if (k.einst.modus === 'kaiser' && s.phase === 'gruppen')
     return s.bFrei ? `Runde ${s.runde} · setzt aus` : `Runde ${s.runde} · ${s.index === 0 ? 'Kaisertisch' : `Stufe ${s.index + 1}`}`;
-  if (s.phase === 'gruppen') return `Gruppe ${gruppenName(s.gruppe ?? 0)} · Runde ${s.runde}`;
+  if (s.phase === 'gruppen') return `${gruppeTitel(k, s.gruppe ?? 0)} · Runde ${s.runde}`;
   if (s.platz3) return 'Spiel um Platz 3';
   const R = s.baum === 'haupt' ? runden(k) : s.baum === 'trost' ? runden(k) - 1 : 0;
   return rundenName(s.runde, R, s.baum);
@@ -273,7 +273,24 @@ export function rundeVon(k: KonkurrenzZustand, s: Spiel): string {
 
 export function platzierungen(k: KonkurrenzZustand): Platzierung[] {
   if (istRundenModus(k.einst.modus)) return rundenPlatzierungen(k, zurueckgezogen(k)).map((x) => ({ ...x, bezeichnung: `${x.platz}.` }));
+  if (istPlatzModus(k.einst.modus)) return gesamtPlatzierung(k).map((x) => ({ ...x, bezeichnung: `${x.platz}.` }));
   return koPlatzierungen(k);
+}
+
+/**
+ * Gruppen + Platzierungsgruppen: Gesamtplatzierung aus den fertigen Platzierungsgruppen (Platz = erster Platz der
+ * Gruppe + Tabellenplatz − 1). Noch offene Gruppen (oder ein ausstehendes Los) fehlen; zurückgezogene stehen hinten.
+ */
+export function gesamtPlatzierung(k: KonkurrenzZustand): { id: string; platz: number }[] {
+  if (!istPlatzModus(k.einst.modus) || !k.gestartet.ko) return [];
+  const aus: { id: string; platz: number }[] = [];
+  for (const g of k.gruppen) {
+    if (typeof g.platzAb !== 'number') continue;
+    const t = tabelle(k, g.nr);
+    if (!t.fertig || t.losGruppen.length) continue;
+    for (const r of t.zeilen) if (!r.zurueckgezogen) aus.push({ id: r.id, platz: g.platzAb + r.platz - 1 });
+  }
+  return aus.sort((a, b) => a.platz - b.platz);
 }
 
 /**
@@ -302,6 +319,7 @@ export function vorgabeVon(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel): {
  */
 export function endstand(k: KonkurrenzZustand): Platzierung[] {
   if (istRundenModus(k.einst.modus)) return rundenPlatzierungen(k, zurueckgezogen(k)).map((x) => ({ ...x, bezeichnung: String(x.platz) }));
+  if (istPlatzModus(k.einst.modus)) return gesamtPlatzierung(k).map((x) => ({ ...x, bezeichnung: String(x.platz) }));
   if (k.einst.modus !== 'jgj') return koPlatzierungen(k).map((x) => ({ ...x, bezeichnung: x.bezeichnung.replace(/\.$/, '') }));
   if (k.gruppen.length !== 1 || !k.gestartet.gruppen) return [];
   const t = tabelle(k, 0);
@@ -352,7 +370,7 @@ export function tische(z: TurnierZustand): TischStand[] {
   const n = z.tische ?? Math.max(1, ...laufend.map((s) => s.tisch ?? 0), ...z.tischeGesperrt);
   return Array.from({ length: n }, (_, i) => {
     const nr = i + 1;
-    return { nr, gesperrt: z.tischeGesperrt.includes(nr), spiel: laufend.find((s) => s.tisch === nr) ?? null };
+    return { nr, gesperrt: z.tischeGesperrt.includes(nr), spiel: laufend.find((s) => s.tisch === nr || s.tisch2 === nr) ?? null };
   });
 }
 
@@ -433,7 +451,7 @@ export function anstehendeSpiele(z: TurnierZustand, jetzt = Date.now()): Anstehe
 export function verliererAmTisch(z: TurnierZustand, nr: number, ausser: string[] = []): string | null {
   let letztes: Spiel | null = null;
   for (const s of alleSpiele(z)) {
-    if (s.tisch !== nr || s.status !== 'gespielt' || !s.eintrag || !s.gewinner || s.ergebnis?.art === 'kampflos') continue;
+    if ((s.tisch !== nr && s.tisch2 !== nr) || s.status !== 'gespielt' || !s.eintrag || !s.gewinner || s.ergebnis?.art === 'kampflos') continue;
     if (!letztes || letztes.eintrag!.zeit < s.eintrag.zeit) letztes = s;
   }
   if (!letztes) return null;
@@ -456,10 +474,11 @@ export function automatischeAufrufe(
   ich: string | null = null,
   /** Spiele, die gerade nicht aufgerufen werden sollen (Schlüssel „konkurrenz/spiel“) */
   zurueckgestellt: ReadonlySet<string> = new Set(),
-): { spiel: Spiel; tisch: number; schiri: string | null }[] {
+): { spiel: Spiel; tisch: number; tisch2: number | null; schiri: string | null }[] {
   const frei = tische(z).filter((t) => !t.gesperrt && !t.spiel).map((t) => t.nr);
   if (!frei.length) return [];
-  const aus: { spiel: Spiel; tisch: number; schiri: string | null }[] = [];
+  const aus: { spiel: Spiel; tisch: number; tisch2: number | null; schiri: string | null }[] = [];
+  const tischWeg = new Set<number>();
   const vergeben = new Set<string>();
   const kandidaten = anstehendeSpiele(z, jetzt).filter((a) => {
     if (!a.bereit) return false;
@@ -469,6 +488,7 @@ export function automatischeAufrufe(
   });
   const genommen = new Set<Spiel>();
   for (const tisch of frei) {
+    if (tischWeg.has(tisch)) continue;
     const passt = (a: Anstehend) => {
       if (genommen.has(a.spiel)) return false;
       const k = z.konkurrenzen[a.spiel.konkurrenz]!;
@@ -482,7 +502,11 @@ export function automatischeAufrufe(
     const schiri = schiriVerlierer ? verliererAmTisch(z, tisch, [...beteiligt, ...vergeben]) : null;
     for (const id of beteiligt) vergeben.add(id);
     if (schiri) vergeben.add(schiri);
-    aus.push({ spiel: a.spiel, tisch, schiri });
+    tischWeg.add(tisch);
+    // Mannschaft mit zwei Tischen: nächsten freien Tisch dazunehmen (sonst spielt sie an einem)
+    const tisch2 = k.einst.art === 'mannschaft' && k.einst.zweiTische ? (frei.find((t) => t !== tisch && !tischWeg.has(t)) ?? null) : null;
+    if (tisch2 !== null) tischWeg.add(tisch2);
+    aus.push({ spiel: a.spiel, tisch, tisch2, schiri });
   }
   return aus;
 }

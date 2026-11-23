@@ -12,10 +12,12 @@
   import { kannTeilen, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben } from '../sicherung';
   import Hilfe from './Hilfe.svelte';
   import { istZentrale } from '../zentrale.svelte';
+  import KonkurrenzAuswahlWahl from './turnier/KonkurrenzAuswahlWahl.svelte';
 
   let {
     id,
     lokal,
+    abschnitt = null,
     token,
     einst = $bindable(),
     z,
@@ -27,6 +29,8 @@
   }: {
     id: string;
     lokal: boolean;
+    /** Abschnitt, der aufgeklappt und angesprungen wird (z. B. „auswahl“) */
+    abschnitt?: string | null;
     token: string | null;
     einst: TurnierEinstellungen | null;
     z: TurnierZustand;
@@ -229,6 +233,10 @@
       <button type="submit" class="zweit" disabled={tName.trim().length < 2}>{T.app.speichern}</button>
     </form>
     {@render hinweis('kopf')}
+  </section>
+
+  <section>
+    <KonkurrenzAuswahlWahl {z} turnierId={id} offen={abschnitt === 'auswahl'} eintragen={(art, d) => eintragen(art, d)} />
   </section>
 
   <section>

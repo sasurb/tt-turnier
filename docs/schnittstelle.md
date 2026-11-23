@@ -335,3 +335,19 @@ das Turnierdatum nicht entfernen. Die Bankverbindung liefert nur der Stand einer
   Konto schließt die Anmeldeseite (`moeglich: false`). `GET anmeldungen` liefert `freigabe {erlaubt, ab}`.
   `Konto.anmeldung` = `auto | frei | gesperrt`.
 
+
+### Ab 0.16
+
+- **Aufstellungen für die Kasse:** Helfer mit Aufgabe `kasse` haben weiter die Sicht `voll`, bekommen aber noch nicht
+  aufgedeckte `mannschaft.aufgestellt` erst nach dem Aufdecken (wie Helfer ohne Mannschaft); die Antwort trägt dann
+  `filter` mit den aufgedeckten Begegnungen. Nur Leitung (Eigentümer-Konto, Leitungskennung, Admin) sieht alles
+  ungefiltert. PHP `Api::leitungsSicht`, Java `Zentrale.leitungsSicht`.
+- **Neue Ereignisarten und Felder (nur App, Server unverändert außer obigem Filter):**
+  `teilnehmer.zurueck` (`{konkurrenz, id}`, nur Leitung) nimmt einen ausdrücklichen Rückzug zurück, wenn dadurch kein
+  Spiel mit Ergebnis anders ausginge. `spiel.aufgerufen` kann `tisch2` tragen (Mannschafts-Konkurrenz mit
+  `zweiTische`). `phase.gestartet` mit `phase: "ko"` startet bei Modus `gruppen_platz` die Platzierungsrunde und
+  trägt `gruppen` (Teilnehmer je Platzierungsgruppe; muss zu den Vorrundentabellen passen, Spiel-IDs
+  `g<nr>-<A>-<B>` mit Gruppennummern nach denen der Vorrunde). Konkurrenz-Einstellungen: Modus `gruppen_platz`,
+  `endrunde` (`{bestOf, mannschaft}` für die zweite Stufe, null = wie Vorrunde), `zweiTische`; Mannschafts-Spielsysteme
+  `braunschweig` und `zweier3`. `turnier.daten`: `konkurrenzarten` (`{arten, modi}`, angebotene Arten/Systeme, null =
+  alle) und `klassenVorgabe` (`{nach: keine|klasse|ttr, grenzen}`). Alles ohne personenbezogene Daten.

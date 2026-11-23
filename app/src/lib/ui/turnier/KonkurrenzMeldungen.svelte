@@ -12,7 +12,7 @@
   import { kurzId } from '../../engine/ids';
   import { gruppenName, spielerName, type KonkurrenzZustand } from '../../engine/modell';
   import { mischen, zufallAus, neuerZufallswert } from '../../engine/zufall';
-  import { begonnen, erstePhase, nachmeldePlaetzeKo, teilnehmerVon, zurueckgezogen, type TurnierZustand } from '../../engine/zustand';
+  import { begonnen, erstePhase, nachmeldePlaetzeKo, rueckzugZuruecknehmenPruefen, teilnehmerVon, zurueckgezogen, type TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
   import { istRundenModus } from '../../engine/runden';
   import { alsEineAktion } from '../../aktion';
@@ -150,6 +150,11 @@
     nachWer = '';
     nachWer2 = '';
     nachPlatz = null;
+  }
+  /** Ausdrücklich Zurückgezogene, deren Rückzug sich zurücknehmen lässt (mit Grund, falls nicht) */
+  const zurueckholbar = $derived(k.rueckzuege.map((r) => ({ id: r.teilnehmer, grund: rueckzugZuruecknehmenPruefen(k, r.teilnehmer) })));
+  async function wiederDabei(id: string) {
+    if (confirm(T.konk.rueckzugZurueckFrage(name(z, id)))) await los(ART.teilnehmerZurueck, { konkurrenz: k.id, id });
   }
   async function zurueckziehen() {
     if (rueckzugWer && confirm(T.konk.rueckzugFrage(name(z, rueckzugWer)))) {
@@ -295,9 +300,24 @@
       <button class="gefahr" disabled={!rueckzugWer} onclick={zurueckziehen}>{T.konk.rueckzugKnopf}</button>
     </div>
   {/if}
+  {#if zurueckholbar.length}
+    <ul class="liste zurueckholen" data-testid="rueckzug-zurueck">
+      {#each zurueckholbar as r (r.id)}
+        <li>
+          <span class="wachsen">{name(z, r.id)} <span class="marke">{T.konk.zurueckgezogen}</span>{#if r.grund}<span class="leise"> · {r.grund}</span>{/if}</span>
+          <span class="mit-hilfe">
+            <button class="zweit klein" disabled={!!r.grund} onclick={() => wiederDabei(r.id)}>{T.konk.rueckzugZurueck}</button>
+            <Hilfe text={T.konk.rueckzugZurueckHilfe} />
+          </span>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 {/if}
 
 <style>
+  .zurueckholen li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+  .mit-hilfe { display: inline-flex; align-items: center; }
   h3 { margin-top: 18px; display: flex; align-items: center; gap: 6px; }
   .haken { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; margin: 0; padding: 8px 0; }
   .haken input { width: 22px; height: 22px; min-height: 0; flex: none; margin-top: 1px; }
@@ -315,7 +335,7 @@
   @media (max-width: 560px) {
     .paar-form { grid-template-columns: 1fr; }
   }
-  .marke.warn { color: var(--orange); border-color: var(--orange); margin-left: 6px; white-space: normal; }
+  .marke.warn { color: var(--orange-text); border-color: var(--orange); margin-left: 6px; white-space: normal; }
   .nach-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 8px; align-items: end; margin: 8px 0; }
   .aendern { margin-top: 16px; }
   .aendern summary { font-weight: 700; }

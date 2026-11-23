@@ -52,7 +52,7 @@
 
 <button class="spiel" class:amtisch={amTisch} class:fertig={spiel.status === 'gespielt'} class:hinweis={bitteBestaetigen || spiel.stand === 'angefochten' || spiel.stand === 'konflikt'} onclick={oeffnen} data-testid="spiel">
   <span class="ort leise">
-    {#if amTisch}<strong class="tisch">{T.spiele.tisch(spiel.tisch!)}</strong> ·{/if}
+    {#if amTisch}<strong class="tisch">{T.spiele.tisch(spiel.tisch!, spiel.tisch2)}</strong> ·{/if}
     {mitKonkurrenz ? `${k.einst.name} · ` : ''}{ort}{#if amTisch && mitSchiri && spiel.schiri} · {T.spiele.schiri(spiel.schiri.name)}{/if}{#if vorgabe}{' · '}<strong>{T.spiele.vorgabeKurz(name(z, vorgabe.seite === 'a' ? spiel.a : spiel.b), vorgabe.punkte)}</strong>{/if}
   </span>
   <span class="namen">
@@ -104,7 +104,7 @@
   .sieger { color: var(--gruen); }
   .ich { text-decoration: underline; text-underline-offset: 3px; }
   .erg { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; }
-  .marke.warn { color: var(--orange); border-color: var(--orange); }
+  .marke.warn { color: var(--orange-text); border-color: var(--orange); }
   .marke.plan { color: var(--blau); border-color: var(--blau); }
   .zeit { font-weight: 600; color: var(--blau); }
 </style>

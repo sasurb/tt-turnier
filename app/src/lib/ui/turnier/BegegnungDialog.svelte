@@ -4,7 +4,7 @@
   import { linkZu } from '../../router.svelte';
   import { name } from '../../engine/abfragen';
   import { ergebnisText } from '../../engine/ergebnis';
-  import { spielerName, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
+  import { einstFuer, spielerName, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
   import { aufstellungenKomplett, begegnungAuswerten, positionsName, systemVon, teileVon, zwischenstand, type TeilSpiel } from '../../engine/mannschaft';
   import type { TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
@@ -39,7 +39,7 @@
   } = $props();
 
   const leitung = $derived(rolle === 'leitung' || rolle === 'admin' || rolle === 'veranstalter');
-  const sys = $derived(systemVon(k.einst));
+  const sys = $derived(systemVon(einstFuer(k, spiel)));
   const teams = $derived({ a: spiel.a ? k.mannschaften[spiel.a] : undefined, b: spiel.b ? k.mannschaften[spiel.b] : undefined });
   /** Eigene Mannschaft (Spielerkennung) */
   const meineSeite = $derived<Seite | null>(ich ? (teams.a?.spieler.includes(ich) ? 'a' : teams.b?.spieler.includes(ich) ? 'b' : null) : null);
@@ -191,6 +191,7 @@
     {@const team = form === 'a' ? teams.a : teams.b}
     <form class="aufform" onsubmit={aufstellungSenden} data-testid="aufstellung-form">
       <h4>{T.mannschaft.aufstellungAbgeben(team?.name ?? '')}</h4>
+      {#if sys.id === 'braunschweig'}<p class="leise">{T.mannschaft.braunschweigHinweis}</p>{/if}
       {#each einzel as _, i (i)}
         <label class="zeile"><span class="pos-name">{positionsName(sys, 'einzel', form, i + 1)}</span>
           <select bind:value={einzel[i]} aria-label="{T.mannschaft.position} {positionsName(sys, 'einzel', form, i + 1)}">
@@ -310,6 +311,6 @@
   .wer { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
   .erg { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-variant-numeric: tabular-nums; text-align: right; }
   .sieger { color: var(--gruen); font-weight: 700; }
-  .marke.warn { color: var(--orange); border-color: var(--orange); }
+  .marke.warn { color: var(--orange-text); border-color: var(--orange); }
   .fuss { margin-top: 16px; }
 </style>

@@ -265,7 +265,7 @@
   .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
   .einzug { margin-left: 32px; }
   .st-platz { color: var(--gruen); }
-  .st-warteliste { color: var(--orange); }
+  .st-warteliste { color: var(--orange-text); }
   .st-abgemeldet { color: var(--leise); }
   .fang { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
   .ttr-frage { border: 0; padding: 0; margin: 12px 0 0; }

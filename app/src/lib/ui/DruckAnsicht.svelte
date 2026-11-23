@@ -9,7 +9,7 @@
   import { berechnen, spielerVon, type TurnierZustand } from '../engine/zustand';
   import { anstehendeSpiele, endstand, name, nameLang, platzText, rundeVon, sichtbar, tabelle, trostPlaetze, vorgabeVon } from '../engine/abfragen';
   import { baumRunden, koRunden, rundenName } from '../engine/ko';
-  import { gruppenName, istSchweizerArt, mitKo, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
+  import { einstFuer, gruppeTitel, istSchweizerArt, mitKo, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
   import { istRundenModus, kaiserTabelle, letzteRunde, schweizerTabelle } from '../engine/runden';
   import { ergebnisText } from '../engine/ergebnis';
   import { zurueckgezogen } from '../engine/zustand';
@@ -187,7 +187,7 @@
     return aus;
   }
   function baeume(k: KonkurrenzZustand): Baum[] {
-    if (!k.gestartet.ko) return [];
+    if (!k.gestartet.ko || !mitKo(k.einst.modus)) return [];
     return ['haupt', ...(baumRunden(k, 'verlierer') ? (['verlierer', 'finale'] as const) : []), ...(baumRunden(k, 'trost') ? (['trost'] as const) : [])];
   }
   function satz(s: Spiel, seite: 'a' | 'b') {
@@ -341,13 +341,14 @@
     {#if berichtArt}
       {#if !berichte.length}<p class="leise">{T.druck.keineBegegnungen}</p>{/if}
       {#each berichte as { k, s } (`${k.id}/${s.id}`)}
-        {@const sys = systemVon(k.einst)}
+        {@const ek = einstFuer(k, s)}
+        {@const sys = systemVon(ek)}
         {@const teile = teileVon(k, s)}
         {@const st = zwischenstand(teile)}
         {@const offen = allesSichtbar || aufstellungenKomplett(k, s)}
         <section class="seite bericht" data-testid="spielbericht">
           <h1>{T.druck.spielbericht}</h1>
-          <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {k.einst.name} · {rundeVon(k, s)}{s.tisch ? ` · ${T.spiele.tisch(s.tisch)}` : ''} · {sys.name}</p>
+          <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {k.einst.name} · {rundeVon(k, s)}{s.tisch ? ` · ${T.spiele.tisch(s.tisch, s.tisch2)}` : ''} · {sys.name}</p>
           <div class="teams">
             {#each ['a', 'b'] as const as seite (seite)}
               {@const tid = seite === 'a' ? s.a : s.b}
@@ -371,7 +372,7 @@
             <thead>
               <tr>
                 <th>#</th><th>{T.druck.paarung}</th><th>{T.druck.heim}</th><th>{T.druck.gast}</th>
-                {#each Array.from({ length: k.einst.bestOf }, (_, i) => i) as i (i)}<th class="z">{i + 1}</th>{/each}
+                {#each Array.from({ length: ek.bestOf }, (_, i) => i) as i (i)}<th class="z">{i + 1}</th>{/each}
                 <th class="z">{T.druck.saetze}</th><th class="z">{T.druck.spieleSpalte}</th>
               </tr>
             </thead>
@@ -382,12 +383,12 @@
                   <td>{positionsName(sys, t.art, 'a', t.posA)}–{positionsName(sys, t.art, 'b', t.posB)}</td>
                   <td>{offen ? t.a.map((x) => nameLang(z!, x)).join(' / ') : ''}</td>
                   <td>{offen ? t.b.map((x) => nameLang(z!, x)).join(' / ') : ''}</td>
-                  {#each Array.from({ length: k.einst.bestOf }, (_, i) => i) as i (i)}<td class="z">{t.ergebnis?.saetze?.[i] ? `${t.ergebnis.saetze[i]![0]}:${t.ergebnis.saetze[i]![1]}` : ''}</td>{/each}
+                  {#each Array.from({ length: ek.bestOf }, (_, i) => i) as i (i)}<td class="z">{t.ergebnis?.saetze?.[i] ? `${t.ergebnis.saetze[i]![0]}:${t.ergebnis.saetze[i]![1]}` : ''}</td>{/each}
                   <td class="z">{t.ergebnis ? `${t.ergebnis.satzA}:${t.ergebnis.satzB}` : t.status === 'entfallen' ? '–' : ''}</td>
                   <td class="z">{t.gewinner === 'a' ? '1:0' : t.gewinner === 'b' ? '0:1' : ''}</td>
                 </tr>
               {/each}
-              <tr class="summe"><td colspan={4 + k.einst.bestOf}>{T.druck.endstand}</td><td class="z">{st.satzA}:{st.satzB}</td><td class="z"><strong>{st.siegeA}:{st.siegeB}</strong></td></tr>
+              <tr class="summe"><td colspan={4 + ek.bestOf}>{T.druck.endstand}</td><td class="z">{st.satzA}:{st.satzB}</td><td class="z"><strong>{st.siegeA}:{st.siegeB}</strong></td></tr>
             </tbody>
           </table>
           <div class="unterschriften">
@@ -455,7 +456,7 @@
           {#each zettel as s (s.konkurrenz + s.id)}
             {@const k = z.konkurrenzen[s.konkurrenz]!}
             {@const vg = vorgabeVon(z, k, s)}
-            {@const saetze = k.einst.eingabe === 'saetze' ? 0 : k.einst.bestOf}
+            {@const saetze = k.einst.eingabe === 'saetze' ? 0 : einstFuer(k, s).bestOf}
             <article class="zettel" data-spiel={lokal ? null : spielLink(s)}>
               <header>
                 <div>
@@ -508,7 +509,7 @@
             {@const t = tabelle(k, g.nr)}
             {@const m = t.zeilen.map((r) => r.id)}
             <section class="block gruppe">
-              <h2>{z.name} · {k.einst.name}{k.gruppen.length > 1 ? ` · ${T.konk.gruppe(gruppenName(g.nr))}` : ''}</h2>
+              <h2>{z.name} · {k.einst.name}{k.gruppen.length > 1 ? ` · ${gruppeTitel(k, g.nr)}` : ''}</h2>
               <table class="kreuz">
                 <thead>
                   <tr>
@@ -545,7 +546,7 @@
         <p class="leer">{T.druck.keineGruppen}</p>
       {/each}
     {:else if aktiv === 'baum'}
-      {#each gestartet.filter((k) => k.gestartet.ko) as k (k.id)}
+      {#each gestartet.filter((k) => k.gestartet.ko && mitKo(k.einst.modus)) as k (k.id)}
         {#if !zeige(k).ko}
           <p class="leer">{k.einst.name}: {T.tab.verdecktKo}</p>
         {:else}
@@ -615,7 +616,7 @@
             {:else if v.tabellen}
               {#each k.gruppen as g (g.nr)}
                 {@const t = tabelle(k, g.nr)}
-                <h3>{k.gruppen.length > 1 ? T.konk.gruppe(gruppenName(g.nr)) : T.konk.modi.jgj}</h3>
+                <h3>{k.gruppen.length > 1 ? gruppeTitel(k, g.nr) : T.konk.modi.jgj}</h3>
                 <table class="liste">
                   <tbody>
                     {#each t.zeilen as r (r.id)}<tr class:raus={r.zurueckgezogen}><td class="z">{r.platz}</td><td>{name(z, r.id, k)} <span class="klein">{verein(k, r.id)}</span></td><td class="z">{r.siege}:{r.niederlagen}</td><td class="z">{r.saetzeG}:{r.saetzeV}</td></tr>{/each}

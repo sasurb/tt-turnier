@@ -9,7 +9,7 @@
   import { berechnen, zurueckgezogen, type TurnierZustand } from '../engine/zustand';
   import { alleSpiele, anstehendeSpiele, name, oeffentlich, platzierungen, rundeVon, sichtbar, tabelle, tische, trostPlaetze } from '../engine/abfragen';
   import { baumRunden, koRunden, rundenName } from '../engine/ko';
-  import { gruppenName, istSchweizerArt, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
+  import { gruppeTitel, istSchweizerArt, mitKo, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
   import { istRundenModus, kaiserTabelle, letzteRunde, rundenZahl, schweizerTabelle } from '../engine/runden';
   import { ergebnisText } from '../engine/ergebnis';
   import { geraetId, gemerktesTurnier } from '../einstellungen';
@@ -165,12 +165,12 @@
           for (let i = 0; i < teile; i++) aus.push({ art: 'gruppen', k, nrs: k.gruppen.slice(i * jeSeite, (i + 1) * jeSeite).map((g) => g.nr), teil: i + 1, von: teile });
         }
       }
-      if (e.baeume && v.ko && k.gestartet.ko) {
+      if (e.baeume && v.ko && k.gestartet.ko && mitKo(k.einst.modus)) {
         aus.push({ art: 'baum', k, baum: 'haupt' });
         if (baumRunden(k, 'verlierer')) aus.push({ art: 'baum', k, baum: 'verlierer' }, { art: 'baum', k, baum: 'finale' });
         if (baumRunden(k, 'trost')) aus.push({ art: 'baum', k, baum: 'trost' });
       }
-      if (e.staende && v.tabellen && k.status === 'beendet' && !istRundenModus(k.einst.modus)) aus.push({ art: 'plaetze', k });
+      if (e.staende && v.tabellen && (k.status === 'beendet' || (k.einst.modus === 'gruppen_platz' && platzierungen(k).length > 0)) && !istRundenModus(k.einst.modus)) aus.push({ art: 'plaetze', k });
     }
     if (!aus.length) aus.push({ art: 'ablauf' });
     return aus;
@@ -371,7 +371,7 @@
           {#each aktuell.nrs as nr (nr)}
             {@const t = tabelle(k, nr)}
             <section class="block">
-              <h3>{k.gruppen.length > 1 ? T.konk.gruppe(gruppenName(nr)) : T.konk.modi.jgj}</h3>
+              <h3>{k.gruppen.length > 1 ? gruppeTitel(k, nr) : T.konk.modi.jgj}</h3>
               <table>
                 <thead><tr><th class="z">{T.tab.platz}</th><th>{T.tab.spieler}</th><th class="z">{T.tab.sn}</th><th class="z">{T.tab.saetze}</th></tr></thead>
                 <tbody>

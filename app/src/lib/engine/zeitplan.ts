@@ -1,8 +1,8 @@
 import { anzahlGruppen, gruppenGroessen, naechsteZweierpotenz } from './auslosung';
 import { erwarteteSaetze } from './ergebnis';
-import { bisSiege, systemVon } from './mannschaft';
+import { bisSiege, durchspielenVon, systemVon } from './mannschaft';
 import { fruehestensUm, tische as tischListe } from './abfragen';
-import { festeSaetzeVon, mitKo, uhrzeitMs, type BestOf, type KonkurrenzZustand, type Spiel } from './modell';
+import { einstFuer, festeSaetzeVon, inEndrunde, mitKo, uhrzeitMs, type BestOf, type KonkurrenzEinstellungen, type KonkurrenzZustand, type Spiel } from './modell';
 import { rundenplan } from './rundenplan';
 import { istRundenModus, letzteRunde, rundenAuto, rundenZahl } from './runden';
 import { erstePhase, spielerVon, zurueckgezogen, type TurnierZustand } from './zustand';
@@ -100,15 +100,37 @@ export function gelernteSatzMinuten(z: TurnierZustand): number | null {
   return Math.min(12, Math.max(2, Math.round(median(werte) * 2) / 2));
 }
 
-export function spielDauerMin(k: KonkurrenzZustand, satzMinuten: number): number {
-  const satz = erwarteteSaetze(k.einst.bestOf as BestOf, festeSaetzeVon(k.einst)) * satzMinuten;
-  if (k.einst.art === 'mannschaft') {
-    // Begegnung an einem Tisch: im Mittel zwischen „entschieden“ und „alle Spiele“
-    const sys = systemVon(k.einst);
-    const teile = k.einst.mannschaft?.durchspielen ? sys.folge.length : Math.round((bisSiege(sys) + sys.folge.length) / 2);
-    return EINSPIELEN_MIN + teile * satz;
+/**
+ * Geschätzte Dauer eines Spiels in Minuten. `stufe2` = Spiel der zweiten Stufe (Endrunde/Platzierungsgruppe) mit
+ * ggf. eigenen Gewinnsätzen bzw. eigenem Spielsystem; bei vorhandenen Spielen ergibt sie sich aus dem Spiel.
+ */
+export function spielDauerMin(k: KonkurrenzZustand, satzMinuten: number, spielOderStufe2?: Pick<Spiel, 'phase' | 'gruppe'> | boolean): number {
+  const er = k.einst.endrunde;
+  const einst: KonkurrenzEinstellungen =
+    typeof spielOderStufe2 !== 'boolean'
+      ? einstFuer(k, spielOderStufe2)
+      : spielOderStufe2 && er
+        ? { ...k.einst, bestOf: er.bestOf ?? k.einst.bestOf, mannschaft: k.einst.art === 'mannschaft' ? (er.mannschaft ?? k.einst.mannschaft) : null }
+        : k.einst;
+  const satz = erwarteteSaetze(einst.bestOf as BestOf, festeSaetzeVon(einst)) * satzMinuten;
+  if (einst.art === 'mannschaft') {
+    // Begegnung: im Mittel zwischen „entschieden“ und „alle Spiele“; an zwei Tischen etwa halb so lang
+    const sys = systemVon(einst);
+    const teile = durchspielenVon(einst) ? sys.folge.length : Math.round((bisSiege(sys) + sys.folge.length) / 2);
+    return EINSPIELEN_MIN + (einst.zweiTische ? Math.ceil(teile / 2) : teile) * satz;
   }
   return EINSPIELEN_MIN + satz;
+}
+
+/** Größen der Platzierungsgruppen aus den Gruppengrößen der Vorrunde (je `je` Plätze aller Gruppen) */
+function platzGruppenGroessen(groessen: number[], je: number): number[] {
+  const tiefe = Math.max(0, ...groessen);
+  const aus: number[] = [];
+  for (let ab = 0; ab < tiefe; ab += je) {
+    const n = groessen.reduce((s, g) => s + Math.max(0, Math.min(je, g - ab)), 0);
+    if (n) aus.push(n);
+  }
+  return aus;
 }
 
 /** Spiele je K.-o.-Runde bei q Teilnehmern (Freilose in Runde 1 abgezogen) */
@@ -137,7 +159,7 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
     const s = t.spiel;
     if (!s) continue;
     const k = z.konkurrenzen[s.konkurrenz]!;
-    const dauer = spielDauerMin(k, satzMinuten) * MIN;
+    const dauer = spielDauerMin(k, satzMinuten, s) * MIN;
     const ende = Math.max(Date.parse(s.aufgerufen ?? '') + dauer || jetzt + dauer, jetzt + MIN);
     const e: PlanEintrag = { schluessel: `${k.id}/${s.id}`, konkurrenz: k.id, spiel: s.id, tisch: t.nr, start: Date.parse(s.aufgerufen ?? '') || jetzt, ende, laeuft: true, titel: '' };
     ergebnis.set(e.schluessel, e);
@@ -154,10 +176,11 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
 
   z.konkurrenzReihe.forEach((kid, kIndex) => {
     const k = z.konkurrenzen[kid]!;
-    const dauer = spielDauerMin(k, satzMinuten) * MIN;
+    const dauer = spielDauerMin(k, satzMinuten, false) * MIN;
+    const dauer2 = spielDauerMin(k, satzMinuten, true) * MIN;
     const kBeginn = k.einst.beginn ? uhrzeitMs(k.einst.beginn, jetzt) : 0;
-    const neu = (p: Omit<Posten, 'konkurrenz' | 'dauer' | 'fruehestens'> & { fruehestens?: number }) => {
-      posten.push({ konkurrenz: kid, dauer, ...p, fruehestens: Math.max(kBeginn, p.fruehestens ?? 0) });
+    const neu = (p: Omit<Posten, 'konkurrenz' | 'dauer' | 'fruehestens'> & { fruehestens?: number; dauer?: number }) => {
+      posten.push({ konkurrenz: kid, ...p, dauer: p.dauer ?? dauer, fruehestens: Math.max(kBeginn, p.fruehestens ?? 0) });
       if (p.inStufe) stufeOffen.set(p.inStufe, (stufeOffen.get(p.inStufe) ?? 0) + 1);
     };
     const offen = (s: Spiel) => s.status === 'offen' || s.status === 'wartet';
@@ -185,6 +208,7 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
       neu({
         schluessel: schl,
         spiel: sid,
+        dauer: inEndrunde(k, s) ? dauer2 : dauer,
         titel: '',
         spieler: [...spielerVon(k, s.a), ...spielerVon(k, s.b)],
         vor,
@@ -192,15 +216,21 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
         inStufe: vorhandeneStufe,
         fruehestens: ab ? uhrzeitMs(ab, jetzt) : 0,
         tisch: s.plan?.tisch ?? null,
-        rang: [phaseRang(s.phase), s.runde, kIndex, pos],
+        rang: [inEndrunde(k, s) ? 1 : phaseRang(s.phase), s.runde, kIndex, pos],
       });
     });
     // laufende Spiele dieser Konkurrenz gehören zur Stufe „vorhanden“: ihr Ende zählt für die Sperre
     for (const e of ergebnis.values()) if (e.konkurrenz === kid && e.laeuft) stufeEnde.set(vorhandeneStufe, Math.max(stufeEnde.get(vorhandeneStufe) ?? 0, e.ende));
 
     // noch nicht angelegte Stufen
-    const aktiv = k.meldungen.filter((id) => !zurueckgezogen(k).includes(id)).length;
-    const stufen: { titel: string; spiele: number; gruppen?: number[][] }[] = [];
+    const raus = new Set(zurueckgezogen(k));
+    const aktiv = k.meldungen.filter((id) => !raus.has(id)).length;
+    const stufen: { titel: string; spiele: number; gruppen?: number[][]; platz?: boolean }[] = [];
+    /** Platzierungsgruppen (Gruppen + Platzierungsgruppen) als eigene Stufe nach der Vorrunde */
+    const platzStufe = (groessen: number[]) => {
+      const pg = platzGruppenGroessen(groessen, Math.max(1, k.einst.aufsteiger));
+      if (pg.some((n) => n >= 2)) stufen.push({ titel: 'Platzierungsrunde', spiele: 0, gruppen: pg.map((n) => Array.from({ length: n }, (_, i) => i)), platz: true });
+    };
     if (!k.gestartet.gruppen && !k.gestartet.ko) {
       if (aktiv < 2) return;
       if (istRundenModus(k.einst.modus)) {
@@ -211,6 +241,7 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
         const groessen = gruppenGroessen(aktiv, g);
         stufen.push({ titel: 'Gruppen', spiele: 0, gruppen: groessen.map((n) => Array.from({ length: n }, (_, i) => i)) });
         if (k.einst.modus === 'gruppen_ko') koRundenGroessen(groessen.reduce((s, n) => s + Math.min(n, k.einst.aufsteiger), 0)).forEach((n, i) => stufen.push({ titel: `Endrunde ${i + 1}`, spiele: n }));
+        if (k.einst.modus === 'gruppen_platz') platzStufe(groessen);
       } else {
         const r = koRundenGroessen(aktiv);
         r.forEach((n, i) => stufen.push({ titel: `K.-o. Runde ${i + 1}`, spiele: n }));
@@ -225,11 +256,13 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
     } else if (k.einst.modus === 'gruppen_ko' && k.gestartet.gruppen && !k.gestartet.ko) {
       const q = k.gruppen.reduce((s, g) => s + Math.min(g.mitglieder.length, k.einst.aufsteiger), 0);
       koRundenGroessen(q).forEach((n, i) => stufen.push({ titel: `Endrunde ${i + 1}`, spiele: n }));
+    } else if (k.einst.modus === 'gruppen_platz' && k.gestartet.gruppen && !k.gestartet.ko) {
+      platzStufe(k.gruppen.map((g) => g.mitglieder.filter((id) => !raus.has(id)).length));
     }
     let vorige = hatVorhandene ? vorhandeneStufe : null;
     stufen.forEach((st, si) => {
       const name = `${kid}#${si}`;
-      const rangPhase = st.gruppen ? 0 : mitKo(k.einst.modus) && !st.titel.startsWith('Runde') ? 1 : 0;
+      const rangPhase = st.platz ? 1 : st.gruppen ? 0 : mitKo(k.einst.modus) && !st.titel.startsWith('Runde') ? 1 : 0;
       if (st.gruppen) {
         // Gruppen einer noch nicht gestarteten Konkurrenz: Rundenplan mit Platzhaltern
         let nr = 0;
@@ -237,22 +270,23 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
           rundenplan(m.length).forEach((runde, r) => {
             for (const [x, y] of runde) {
               neu({
-                schluessel: `${kid}/~g${g}-${x}-${y}`,
+                schluessel: `${kid}/~${st.platz ? 'p' : 'g'}${g}-${x}-${y}`,
                 spiel: null,
-                titel: `Gruppe ${String.fromCharCode(65 + (g % 26))}`,
-                spieler: [`~${kid}-${g}-${x}`, `~${kid}-${g}-${y}`],
+                titel: st.platz ? `Platzierungsgruppe ${g + 1}` : `Gruppe ${String.fromCharCode(65 + (g % 26))}`,
+                spieler: [`~${kid}-${st.platz ? 'p' : ''}${g}-${x}`, `~${kid}-${st.platz ? 'p' : ''}${g}-${y}`],
                 vor: [],
                 stufe: vorige,
                 inStufe: name,
                 tisch: null,
-                rang: [0, r + 1, kIndex, nr++],
+                dauer: st.platz ? dauer2 : dauer,
+                rang: [rangPhase, st.platz ? 100 + si + r : r + 1, kIndex, nr++],
               });
             }
           });
         });
       } else {
         for (let i = 0; i < st.spiele; i++) {
-          neu({ schluessel: `${kid}/~${si}-${i}`, spiel: null, titel: st.titel, spieler: [], vor: [], stufe: vorige, inStufe: name, tisch: null, rang: [rangPhase, 100 + si, kIndex, i] });
+          neu({ schluessel: `${kid}/~${si}-${i}`, spiel: null, titel: st.titel, spieler: [], vor: [], stufe: vorige, inStufe: name, tisch: null, dauer: rangPhase === 1 ? dauer2 : dauer, rang: [rangPhase, 100 + si, kIndex, i] });
         }
       }
       vorige = name;
@@ -279,18 +313,31 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
   // Laufende Spiele: ihr Ende gilt für Folgespiele
   for (const e of ergebnis.values()) fertigAm.set(e.schluessel, e.ende);
 
-  let rest = [...posten];
+  // Offene Posten in Rang-Reihenfolge; verteilte werden auf null gesetzt (kein Umkopieren), `kopf` überspringt
+  // den verteilten Anfang. Das hält auch große Turniere (Tausende Spiele) schnell, bei gleichem Ergebnis.
+  const rest: (Posten | null)[] = [...posten];
+  let offenAnzahl = rest.length;
+  let kopf = 0;
   let schritte = 0;
   const gesperrt = new Set<number>();
-  while (rest.length && schritte++ < 50_000) {
-    const kandidaten = [...frei.entries()].filter(([nr]) => !gesperrt.has(nr));
-    if (!kandidaten.length) break;
-    const [nr, ab] = kandidaten.reduce((m, x) => (x[1] < m[1] || (x[1] === m[1] && x[0] < m[0]) ? x : m));
+  const grenze = Math.max(50_000, posten.length * 4);
+  while (offenAnzahl > 0 && schritte++ < grenze) {
+    let nr = -1;
+    let ab = Infinity;
+    for (const [t, f] of frei) {
+      if (gesperrt.has(t)) continue;
+      if (f < ab || (f === ab && t < nr)) {
+        nr = t;
+        ab = f;
+      }
+    }
+    if (nr < 0) break;
     let gewaehlt = -1;
     let naechster = Infinity;
-    for (let i = 0; i < rest.length; i++) {
-      const p = rest[i]!;
-      if (p.tisch !== null && p.tisch !== nr) continue;
+    while (kopf < rest.length && rest[kopf] === null) kopf++;
+    for (let i = kopf; i < rest.length; i++) {
+      const p = rest[i];
+      if (!p || (p.tisch !== null && p.tisch !== nr)) continue;
       const b = bereitAb(p);
       if (b <= ab) {
         gewaehlt = i;
@@ -303,7 +350,9 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
       else frei.set(nr, naechster);
       continue;
     }
-    const p = rest.splice(gewaehlt, 1)[0]!;
+    const p = rest[gewaehlt]!;
+    rest[gewaehlt] = null;
+    offenAnzahl--;
     const e: PlanEintrag = { schluessel: p.schluessel, konkurrenz: p.konkurrenz, spiel: p.spiel, tisch: nr, start: ab, ende: ab + p.dauer, laeuft: false, titel: p.titel };
     ergebnis.set(p.schluessel, e);
     proTisch.get(nr)!.push(e);
@@ -325,7 +374,8 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
     konkurrenzEnde.set(e.konkurrenz, Math.max(konkurrenzEnde.get(e.konkurrenz) ?? 0, e.ende));
     ende = Math.max(ende ?? 0, e.ende);
   }
-  for (const p of rest) konkurrenzEnde.set(p.konkurrenz, null);
+  const uebrig = rest.filter((p): p is Posten => p !== null);
+  for (const p of uebrig) konkurrenzEnde.set(p.konkurrenz, null);
   return {
     spiele: ergebnis,
     tische: [...proTisch.entries()].map(([nr, eintraege]) => ({ nr, eintraege: eintraege.sort((a, b) => a.start - b.start) })),
@@ -333,7 +383,7 @@ export function zeitplan(z: TurnierZustand, jetzt: number = Date.now()): Zeitpla
     ende,
     satzMinuten,
     gelernt: gelernt !== null,
-    nichtPlanbar: rest.length,
+    nichtPlanbar: uebrig.length,
   };
 }
 

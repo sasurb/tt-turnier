@@ -5,7 +5,7 @@
   import { name, vorgabeVon } from '../../engine/abfragen';
   import { istRundenModus } from '../../engine/runden';
   import { ergebnisText, ergebnisWerten, gewinnSaetze, satzAusVerliererpunkten } from '../../engine/ergebnis';
-  import { festeSaetzeVon, type ErgebnisEingabe, type ErgebnisEintrag, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
+  import { einstFuer, festeSaetzeVon, type ErgebnisEingabe, type ErgebnisEintrag, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
   import type { TurnierZustand } from '../../engine/zustand';
 
   let {
@@ -49,7 +49,9 @@
   const nurSaetze = $derived(k.einst.eingabe === 'saetze');
   /** Feste Satzzahl (Schweizer/Cup): alle Sätze werden gespielt, Unentschieden möglich */
   const feste = $derived(festeSaetzeVon(k.einst));
-  const gewinn = $derived(gewinnSaetze(k.einst.bestOf));
+  /** Gewinnsätze dieses Spiels (zweite Stufe ggf. abweichend) */
+  const bestOf = $derived(einstFuer(k, spiel).bestOf);
+  const gewinn = $derived(gewinnSaetze(bestOf));
   const vorgabe = $derived(namen ? null : vorgabeVon(z, k, spiel));
   const nameA = $derived((namen ? namen[0] : name(z, spiel.a)) + (meineSeite === 'a' ? ` (${T.erg.du})` : ''));
   const nameB = $derived((namen ? namen[1] : name(z, spiel.b)) + (meineSeite === 'b' ? ` (${T.erg.du})` : ''));
@@ -92,7 +94,7 @@
     }
     return nurSaetze ? (stand ? { stand } : {}) : { saetze: saetzeAusZeilen() };
   });
-  const wertung = $derived(ergebnisWerten(eingabe, k.einst.bestOf, k.einst.eingabe, feste));
+  const wertung = $derived(ergebnisWerten(eingabe, bestOf, k.einst.eingabe, feste));
 
   /** Wie viele Satzzeilen zeigen: bis entschieden, höchstens Best of */
   const satzStand = $derived.by(() => {
@@ -105,7 +107,7 @@
     if (art !== 'normal' && art !== 'aufgabe') return;
     const voll = zeilen.every((z) => z.gewinner && z.verlierer !== '');
     const entschieden = feste ? saetzeAusZeilen().length >= feste : satzStand[0] >= gewinn || satzStand[1] >= gewinn;
-    if (voll && !entschieden && zeilen.length < (feste ?? k.einst.bestOf)) zeilen.push({ gewinner: null, verlierer: '' });
+    if (voll && !entschieden && zeilen.length < (feste ?? bestOf)) zeilen.push({ gewinner: null, verlierer: '' });
     // überflüssige leere Zeilen nach der Entscheidung entfernen
     if (entschieden && zeilen.length > saetzeAusZeilen().length) zeilen = zeilen.slice(0, saetzeAusZeilen().length);
   });

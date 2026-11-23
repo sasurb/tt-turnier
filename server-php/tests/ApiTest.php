@@ -283,7 +283,7 @@ $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
-pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.15.0' && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
+pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.16.0' && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1'], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
@@ -1240,6 +1240,13 @@ pruefe(count($d['angenommen']) === 1, 'Mannschaftsführung gibt die Aufstellung 
 [, $leit] = rufe($api, 'GET', 'events', null, $mLeit, ['turnier' => $mtid, 'ab' => 0]);
 pruefe($anzahlAuf($gegner) === 0 && $anzahlAuf($zusch) === 0 && !isset($zusch['filter']), 'Gegner und Zuschauer sehen die Aufstellung noch nicht (verdeckte ändern die Filter-Kennung nicht)');
 pruefe($anzahlAuf($selbst) === 1 && $anzahlAuf($leit) === 1, 'Eigene Mannschaft und Leitung sehen sie');
+// Ab 0.16: Kasse-Helfer haben die volle Sicht (Zahlungen), sehen Aufstellungen aber erst nach dem Aufdecken
+[, $d] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $mtid, 'eintraege' => [['rolle' => 'helfer', 'bezug' => 'hk', 'name' => 'Kasse', 'aufgaben' => ['kasse']]]], $mLeit);
+$kasseCode = array_values(array_filter($d['codes'], fn($c) => $c['bezug'] === 'hk'))[0]['code'] ?? '';
+[, $z] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $mtid, 'code' => $kasseCode], null, [], '10.11.0.8');
+$kasseTok = $z['token'] ?? '';
+[, $kas] = rufe($api, 'GET', 'events', null, $kasseTok, ['turnier' => $mtid, 'ab' => 0]);
+pruefe(($kas['sicht'] ?? '') === 'voll' && $anzahlAuf($kas) === 0 && isset($kas['filter']) && !isset($leit['filter']), 'Kasse-Helfer (volle Sicht) sieht die Aufstellung vor dem Aufdecken nicht; eigene Filter-Kennung, Leitung ohne');
 // Eine Aufstellung, die den Gegner nicht nennt (oder einen anderen), deckt nichts auf
 [$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('m-0000020', 'mannschaft.aufgestellt', ['konkurrenz' => 'm', 'spiel' => 'ko-1-0', 'mannschaft' => 'm-bbbb', 'gegner' => 'm-aaaa', 'einzel' => ['b1']])]], $mTok['b1'], ['turnier' => $mtid]);
 [, $zusch] = rufe($api, 'GET', 'events', null, null, ['turnier' => $mtid, 'ab' => 0]);
@@ -1249,6 +1256,9 @@ pruefe(count($d['angenommen']) === 1, 'Gegner gibt ab');
 [, $gegner] = rufe($api, 'GET', 'events', null, $mTok['b1'], ['turnier' => $mtid, 'ab' => 0]);
 [, $zusch] = rufe($api, 'GET', 'events', null, null, ['turnier' => $mtid, 'ab' => 0]);
 pruefe($anzahlAuf($gegner) === 3 && $anzahlAuf($zusch) === 2 && isset($zusch['filter']), 'Beide nennen sich gegenseitig: aufgedeckt, Filter-Kennung geändert');
+[, $kas] = rufe($api, 'GET', 'events', null, $kasseTok, ['turnier' => $mtid, 'ab' => 0]);
+[, $leit] = rufe($api, 'GET', 'events', null, $mLeit, ['turnier' => $mtid, 'ab' => 0]);
+pruefe($anzahlAuf($kas) === 2 && isset($kas['filter']) && $anzahlAuf($leit) === 3 && !isset($leit['filter']), 'Kasse-Helfer: nach dem Aufdecken sichtbar (Filter-Kennung), Leitung sieht alles ohne Filter');
 for ($i = 0; $i < 4; $i++) {
     rufe($api, 'POST', 'events', $aufst('m-00001' . $i . '0', 'm-bbbb', 'm-aaaa', ['b1']), $mTok['b1'], ['turnier' => $mtid]);
 }

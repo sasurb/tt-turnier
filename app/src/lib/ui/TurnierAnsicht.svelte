@@ -767,7 +767,7 @@
     {:else if aktiv === 'kasse'}
       <KasseTab z={zustand} turnierId={id} {leitung} {eintragen} />
     {:else if aktiv === 'konkurrenzen'}
-      <KonkurrenzenTab z={zustand} {eintragen} />
+      <KonkurrenzenTab z={zustand} turnierId={id} {eintragen} />
     {:else if aktiv === 'drucken'}
       <DruckExport z={zustand} {id} {leitung} {lokal} />
     {:else if aktiv === 'zugaenge'}
@@ -795,6 +795,7 @@
       <TurnierEinstellungen
         {id}
         {lokal}
+        abschnitt={weitere[0] ?? null}
         token={schreibToken}
         bind:einst
         z={zustand}
