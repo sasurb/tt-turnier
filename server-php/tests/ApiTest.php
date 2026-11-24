@@ -1675,7 +1675,7 @@ $piaExtra = '';
 foreach ($d['codes'] as $c) {
     $piaExtra = $c['bezug'] === 'l-extra' ? $c['code'] : $piaExtra;
 }
-pruefe($s === 200 && $piaExtra !== '', 'Konto legt weitere Leitungskennung an');
+pruefe($s === 200 && $piaExtra !== '', 'Konto legt Leitungskennung für eine andere Person an');
 [$s] = rufe($api, 'POST', 'zentrale.uebernehmen', ['turnier' => $pc, 'zentrale' => 'Zentrale Pia', 'zentraleId' => 'z-pia0000001'], $pia);
 [$s2] = rufe($api, 'POST', 'zentrale.freigeben', ['turnier' => $pc, 'zentraleId' => 'z-pia0000001',
     'codes' => [['rolle' => 'leitung', 'bezug' => $piaBezug, 'name' => 'Pia', 'code' => $piaKennung, 'gesperrt' => false],
@@ -1686,7 +1686,7 @@ rufe($api, 'POST', 'mitglied.entfernen', ['sparte' => $lsp, 'konto' => $piaId], 
 [$s] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $pc, 'code' => $piaKennung]);
 [$s2] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $pc, 'code' => $piaExtra]);
 [$s3] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $pc, 'code' => '58392174']);
-pruefe($s === 401 && $s2 === 401 && $s3 === 200, 'Nach Rückgabe von der Zentrale: Kennungen des entfernten Kontos gesperrt (andere gelten weiter)');
+pruefe($s === 401 && $s2 === 200 && $s3 === 200, 'Nach Rückgabe von der Zentrale: eigene Kennung des entfernten Kontos gesperrt, für andere angelegte gelten weiter');
 // Neue Sparte: fremde Sicherungsempfänger weder beim Anlegen noch über die Zentrale
 [, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Nina', 'email' => 'nina@example.org', 'passwort' => 'ninanina123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Nina e. V.'], null, [], '10.18.0.5');
 $nina = $d['token'];

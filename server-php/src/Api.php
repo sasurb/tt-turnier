@@ -2709,8 +2709,6 @@ final class Api
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
         self::nichtAufZentrale($t);
-        $sitz = $this->sitzung($a);
-        $kontoId = $sitz !== null && ($sitz['konto_id'] ?? null) !== null ? (int)$sitz['konto_id'] : null;
         $liste = $a->rumpf['eintraege'] ?? null;
         if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_CODES) {
             throw new ApiFehler('ungueltig', 'Feld „eintraege“ muss eine Liste sein.');
@@ -2737,8 +2735,9 @@ final class Api
                 if ($auf !== null && (!is_array($auf) || !array_is_list($auf) || self::aufgabenLesen($auf) === [])) {
                     throw new ApiFehler('ungueltig', 'Bitte mindestens eine Aufgabe wählen.');
                 }
-                // Leitungskennungen, die eine Konto-Sitzung anlegt, hängen am Konto (Sperre bei Austritt/Löschung)
-                $this->codeAnlegen($t, $rolle, $bezug, $name, $auf, $rolle === 'leitung' && $kontoId !== null ? $kontoId : null);
+                // Kennungen für andere Personen hängen an keinem Konto: sie bleiben gültig, wenn die anlegende Person
+                // die Sparte verlässt (nur die eigene Kennung aus turnier.anlegen wird dann gesperrt)
+                $this->codeAnlegen($t, $rolle, $bezug, $name, $auf);
             }
             $this->db->festschreiben();
         } catch (\Throwable $x) {
