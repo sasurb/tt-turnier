@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { angabenSetzen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { letzteMail } from './mails';
+import { ADMIN } from './einrichten';
 
 /**
  * Kompletter Ablauf, wie ihn eine fremde Person ohne Anleitung erlebt –
@@ -148,10 +149,14 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await page.getByLabel('Wie oft?').selectOption({ label: 'Alle 15 Minuten' });
   await page.getByLabel('Empfänger (bis zu 3) 2').fill(`helfer-${geraet}@example.org`);
   await page.locator('form', { has: page.getByLabel('Wie oft?') }).getByRole('button', { name: 'Speichern' }).click();
+  // ab 0.17: neue Sparten senden in den ersten 7 Tagen nur an eigene Adressen – der Admin gibt die Sparte frei
+  await expect(page.getByText(/in den ersten 7 Tagen nur an die eigenen Adressen/)).toBeVisible();
+  await spartFreigeben(page, `TTC ${geraet} e. V.`);
+  await page.locator('form', { has: page.getByLabel('Wie oft?') }).getByRole('button', { name: 'Speichern' }).click();
   await expect(page.getByText('Gespeichert.')).toBeVisible();
   // ab 0.17: neue Adresse außerhalb der Leitung bestätigt erst per Link (Frage 14A)
   await expect(page.getByTestId('sicherung-unbestaetigt')).toContainText(`helfer-${geraet}@example.org`);
-  const bestaetigen = /#\/sicherung\/[A-Z0-9-]+\/[a-f0-9]{64}/.exec(letzteMail(`helfer-${geraet}@example.org`, /Bitte bestätigen: Sicherungen/)?.text ?? '')?.[0];
+  const bestaetigen = /#\/sicherung\/[A-Z0-9-]+\/[a-f0-9]{64}/.exec(letzteMail(`helfer-${geraet}@example.org`, /Bitte bestätigen: Empfang von Turnier-Sicherungen/)?.text ?? '')?.[0];
   expect(bestaetigen).toBeTruthy();
   const turnierSeite = page.url();
   await page.goto(`./${bestaetigen}`);
@@ -689,3 +694,14 @@ test('Etappe 6: Schweizer System mit Vorgabe, Kaiserturnier', async ({ page }) =
   await expect(page.getByTestId('rangleiter').locator('tbody tr').first()).toContainText('Kaiser');
   await bild(page, '30-kaiser');
 });
+
+/** Admin gibt die Online-Anmeldung/Sicherung einer neuen Sparte frei (über die Schnittstelle) */
+async function spartFreigeben(page: Page, verein: string) {
+  const api = new URL('api/index.php', page.url()).toString();
+  const login = await page.request.post(`${api}?r=login`, { data: ADMIN });
+  const token = (await login.json()).token as string;
+  const sparten = (await (await page.request.get(`${api}?r=sparten`, { headers: { 'X-TT-Token': token } })).json()).sparten as { id: number; verein: string }[];
+  const id = sparten.find((x) => x.verein === verein)!.id;
+  const r = await page.request.post(`${api}?r=sparte.anmeldung`, { headers: { 'X-TT-Token': token }, data: { id, anmeldung: 'frei' } });
+  expect(r.ok()).toBe(true);
+}
