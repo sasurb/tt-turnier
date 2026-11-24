@@ -895,6 +895,11 @@ final class Api
         $empfaenger = array_key_exists('sicherungAn', $a->rumpf ?? [])
             ? $this->empfaengerFeld($a->rumpf['sicherungAn'])
             : [(string)($konto['email'] ?? '')];
+        // Fremde Empfänger nur bei freigegebener Sparte (vor dem Anlegen prüfen, nichts halb anlegen)
+        $fremd = array_diff(array_map('mb_strtolower', array_filter($empfaenger)), [mb_strtolower((string)($konto['email'] ?? ''))]);
+        if ($fremd !== [] && !$this->anmeldungFreigabe(['sparte_id' => (int)$sp['id'], 'konto_id' => (int)$s['konto_id']])['erlaubt']) {
+            throw new ApiFehler('keine_berechtigung', 'Neue Sparten können Sicherungen in den ersten ' . self::ANMELDUNG_NACH_TAGEN . ' Tagen nur an die eigene Adresse senden.');
+        }
         $wunsch = $a->rumpf['kennung'] ?? null;
         $id = is_string($wunsch) && trim($wunsch) !== '' ? $this->wunschKennung($wunsch) : $this->neueTurnierId();
         try {
@@ -1978,7 +1983,8 @@ final class Api
             if ($this->anzahlVersuche($kAdresse, self::TAG) >= self::BESTAETIGUNGEN_JE_ADRESSE
                 || $this->anzahlVersuche($kTurnier, self::TAG) >= self::BESTAETIGUNGEN_JE_TURNIER
                 || $this->anzahlVersuche($kSparte, self::TAG) >= self::BESTAETIGUNGEN_JE_SPARTE) {
-                throw new ApiFehler('zu_viele_versuche', 'Heute wurden schon viele Bestätigungsmails für Sicherungen verschickt. Bitte morgen erneut versuchen.');
+                // Grenze erreicht: Adresse bleibt unbestätigt (kein Abbruch – sonst ginge beim Zurückrollen die Zählung verloren)
+                continue;
             }
             $this->fehlversuch($kAdresse);
             $this->fehlversuch($kTurnier);
@@ -1997,6 +2003,20 @@ final class Api
                     . 'Kennst du das Turnier nicht? Dann ignoriere diese Mail – du bekommst nichts.');
             }
         }
+    }
+
+    /**
+     * Fremde neue Empfänger (außerhalb der Leitungsadressen) nur bei freigegebener Sparte (sonst entfernt) –
+     * gegen Mailversand an Fremde über neue Sparten. Bereits eingetragene Adressen bleiben.
+     */
+    private function erlaubteEmpfaenger(array $t, array $neu, array $alt): array
+    {
+        if ($this->anmeldungFreigabe($t)['erlaubt']) {
+            return $neu;
+        }
+        $leitung = $this->leitungsAdressen($t);
+        $altKlein = array_map('mb_strtolower', $alt);
+        return array_values(array_filter($neu, static fn(string $e): bool => in_array(mb_strtolower($e), $leitung, true) || in_array(mb_strtolower($e), $altKlein, true)));
     }
 
     /** POST sicherung.bestaetigen { turnier, schluessel } – öffentlich, gebremst */
@@ -2455,10 +2475,16 @@ final class Api
                     }
                 }
                 $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ?', [$t['id']]);
-                foreach ($neu as [$rolle, $bezug, $name, $code, $gesperrt, $helfer, $auf]) {
+                foreach ($neu as $k => [$rolle, $bezug, $name, $code, $gesperrt, $helfer, $auf]) {
+                    // Konto, für das die Kennung angelegt wurde, bleibt erhalten (Sperre beim Entfernen des Kontos);
+                    // online schon gesperrte Kennungen eines Kontos bleiben gesperrt
+                    $kontoId = isset($alt[$k]) && $alt[$k]['konto_id'] !== null ? (int)$alt[$k]['konto_id'] : null;
+                    if ($kontoId !== null && (int)$alt[$k]['gesperrt'] === 1) {
+                        $gesperrt = 1;
+                    }
                     $this->db->ausfuehren(
-                        'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt, helfer, aufgaben) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        [$t['id'], $rolle, $bezug, $name, $code, $gesperrt, $this->jetzt(), $helfer, $auf]
+                        'INSERT INTO codes (turnier_id, rolle, bezug, name, code, gesperrt, angelegt, helfer, aufgaben, konto_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        [$t['id'], $rolle, $bezug, $name, $code, $gesperrt, $this->jetzt(), $helfer, $auf, $kontoId]
                     );
                 }
             }
@@ -2466,9 +2492,9 @@ final class Api
             $ein = $ein instanceof \stdClass ? get_object_vars($ein) : $ein;
             if (is_array($ein)) {
                 if (array_key_exists('sicherungAn', $ein)) {
-                    $liste = $this->empfaengerFeld($ein['sicherungAn']);
+                    $liste = $this->erlaubteEmpfaenger($t, $this->empfaengerFeld($ein['sicherungAn']), self::empfaengerAus($t));
                     $this->db->ausfuehren('UPDATE turniere SET sicherung_an = ? WHERE id = ?', [json_encode($liste), $t['id']]);
-                    $this->empfaengerVormerken($t, $liste, $s);
+                    $vormerken = $liste;
                 }
                 if (isset($ein['sicherungTakt']) && is_int($ein['sicherungTakt']) && in_array($ein['sicherungTakt'], self::SICHERUNG_TAKTE, true)) {
                     $this->db->ausfuehren('UPDATE turniere SET sicherung_takt = ? WHERE id = ?', [$ein['sicherungTakt'], $t['id']]);
@@ -2484,6 +2510,9 @@ final class Api
         } catch (\Throwable $x) {
             $this->db->zurueckrollen();
             throw $x;
+        }
+        if (isset($vormerken)) {
+            $this->empfaengerVormerken($t, $vormerken, $s);
         }
         return ['turnier' => self::turnierAusgabe($this->turnierLaden((string)$t['id']))];
     }
@@ -2680,6 +2709,8 @@ final class Api
         $t = $this->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
         $this->leitungPruefen($a, $t);
         self::nichtAufZentrale($t);
+        $sitz = $this->sitzung($a);
+        $kontoId = $sitz !== null && ($sitz['konto_id'] ?? null) !== null ? (int)$sitz['konto_id'] : null;
         $liste = $a->rumpf['eintraege'] ?? null;
         if (!is_array($liste) || !array_is_list($liste) || count($liste) > self::MAX_CODES) {
             throw new ApiFehler('ungueltig', 'Feld „eintraege“ muss eine Liste sein.');
@@ -2706,7 +2737,8 @@ final class Api
                 if ($auf !== null && (!is_array($auf) || !array_is_list($auf) || self::aufgabenLesen($auf) === [])) {
                     throw new ApiFehler('ungueltig', 'Bitte mindestens eine Aufgabe wählen.');
                 }
-                $this->codeAnlegen($t, $rolle, $bezug, $name, $auf);
+                // Leitungskennungen, die eine Konto-Sitzung anlegt, hängen am Konto (Sperre bei Austritt/Löschung)
+                $this->codeAnlegen($t, $rolle, $bezug, $name, $auf, $rolle === 'leitung' && $kontoId !== null ? $kontoId : null);
             }
             $this->db->festschreiben();
         } catch (\Throwable $x) {

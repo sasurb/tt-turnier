@@ -1633,7 +1633,7 @@ for ($i = 0; $i < 20; $i++) {
     $fehler429 = $fehler429 || $s === 429;
 }
 $anOpfer = count(array_filter($mailerS->mails, fn($m) => $m->an === 'opfer@example.org'));
-pruefe($fehler429 && count($mailerS->mails) - $mails <= 10 && $anOpfer <= 3, 'Bestätigungsmails je Turnier (10) und Adresse (3) am Tag begrenzt');
+pruefe(!$fehler429 && count($mailerS->mails) - $mails <= 10 && $anOpfer <= 3, 'Bestätigungsmails je Turnier (10) und Adresse (3) am Tag begrenzt (ohne Abbruch)');
 // Entfernen: Kennung gesperrt, Einladungen verfallen
 rufe($api, 'POST', 'mitglied.entfernen', ['sparte' => $lsp, 'konto' => $oleId], $lea);
 [$s] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $oc, 'code' => $oleKennung]);
@@ -1656,6 +1656,59 @@ rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('jj-0000001', 'turnier.d
 [, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $jt, 'ab' => 0]);
 $sp = array_values(array_filter($d['ereignisse'], fn($e) => $e['art'] === 'spieler.angelegt'))[0] ?? null;
 pruefe(($sp['daten']['nachname'] ?? '') === 'M.', 'Jugendturnier: Zuschauer sehen ohne Einstellung die Kurzform');
+
+echo "Paket 0.17: zweite Sicherheitsprüfung\n";
+// Kennungen eines Kontos bleiben nach der Rückgabe von der Zentrale am Konto
+rufe($api, 'POST', 'sparte.einladen', ['sparte' => $lsp, 'email' => 'pia@example.org', 'name' => 'Pia', 'rolle' => 'turnierleitung'], $lea);
+preg_match('~#/einladung/([a-f0-9]{64})~', (string)mailAn($mailerS, 'pia@example.org')?->text, $px);
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Pia', 'email' => 'pia@example.org', 'passwort' => 'piapia123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $px[1] ?? ''], null, [], '10.18.0.4');
+$pia = $d['token'];
+$piaId = $d['konto']['id'];
+rufe($api, 'POST', 'mitglied.aendern', ['sparte' => $lsp, 'konto' => $piaId, 'anlegen' => true], $lea);
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Pias Cup', 'datum' => null], $pia);
+$pc = $d['turnier']['id'];
+$piaKennung = $d['leitung']['code'];
+$piaBezug = $d['leitung']['bezug'];
+[$s] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $pc, 'eintraege' => [['rolle' => 'leitung', 'bezug' => 'l-extra', 'name' => 'Pia 2']]], $pia);
+[, $d] = rufe($api, 'GET', 'codes', null, $pia, ['turnier' => $pc]);
+$piaExtra = '';
+foreach ($d['codes'] as $c) {
+    $piaExtra = $c['bezug'] === 'l-extra' ? $c['code'] : $piaExtra;
+}
+pruefe($s === 200 && $piaExtra !== '', 'Konto legt weitere Leitungskennung an');
+[$s] = rufe($api, 'POST', 'zentrale.uebernehmen', ['turnier' => $pc, 'zentrale' => 'Zentrale Pia', 'zentraleId' => 'z-pia0000001'], $pia);
+[$s2] = rufe($api, 'POST', 'zentrale.freigeben', ['turnier' => $pc, 'zentraleId' => 'z-pia0000001',
+    'codes' => [['rolle' => 'leitung', 'bezug' => $piaBezug, 'name' => 'Pia', 'code' => $piaKennung, 'gesperrt' => false],
+                ['rolle' => 'leitung', 'bezug' => 'l-extra', 'name' => 'Pia 2', 'code' => $piaExtra, 'gesperrt' => false],
+                ['rolle' => 'leitung', 'bezug' => 'l-z', 'name' => 'Zentrale', 'code' => '58392174', 'gesperrt' => false]]], $pia);
+pruefe($s === 200 && $s2 === 200, 'Pias Turnier: Übernahme und Rückgabe');
+rufe($api, 'POST', 'mitglied.entfernen', ['sparte' => $lsp, 'konto' => $piaId], $lea);
+[$s] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $pc, 'code' => $piaKennung]);
+[$s2] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $pc, 'code' => $piaExtra]);
+[$s3] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $pc, 'code' => '58392174']);
+pruefe($s === 401 && $s2 === 401 && $s3 === 200, 'Nach Rückgabe von der Zentrale: Kennungen des entfernten Kontos gesperrt (andere gelten weiter)');
+// Neue Sparte: fremde Sicherungsempfänger weder beim Anlegen noch über die Zentrale
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Nina', 'email' => 'nina@example.org', 'passwort' => 'ninanina123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Nina e. V.'], null, [], '10.18.0.5');
+$nina = $d['token'];
+$vorher = count($mailerS->mails);
+[$s] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Fremdcup', 'datum' => null, 'sicherungAn' => ['fremd9@example.org']], $nina);
+[, $d] = rufe($api, 'GET', 'turniere', null, $nina);
+pruefe($s === 403 && count($d['turniere']) === 0 && mailAn($mailerS, 'fremd9@example.org') === null, 'Neue Sparte: fremde Empfänger beim Anlegen abgewiesen, kein Turnier halb angelegt');
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Ninas Cup', 'datum' => null], $nina);
+$nc = $d['turnier']['id'];
+rufe($api, 'POST', 'zentrale.uebernehmen', ['turnier' => $nc, 'zentrale' => 'Zentrale Nina', 'zentraleId' => 'z-nina000001'], $nina);
+[$s] = rufe($api, 'POST', 'zentrale.freigeben', ['turnier' => $nc, 'zentraleId' => 'z-nina000001',
+    'einstellungen' => ['sicherungAn' => ['nina@example.org', 'fremd8@example.org']]], $nina);
+[, $d] = rufe($api, 'GET', 'turnier.einstellungen', null, $nina, ['id' => $nc]);
+pruefe($s === 200 && !str_contains(json_encode($d), 'fremd8') && mailAn($mailerS, 'fremd8@example.org') === null, 'Neue Sparte: Rückgabe von der Zentrale trägt keine fremden Empfänger ein');
+// Freigegebene Sparte: Rückgabe mit fremdem Empfänger verschickt die Bestätigung (nach dem Festschreiben)
+$zeit += 86_400 * 2;
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Leas Cup', 'datum' => null], $lea);
+$lc = $d['turnier']['id'];
+[$s] = rufe($api, 'POST', 'zentrale.uebernehmen', ['turnier' => $lc, 'zentrale' => 'Zentrale Lea', 'zentraleId' => 'z-lea0000001'], $lea);
+[$s2] = rufe($api, 'POST', 'zentrale.freigeben', ['turnier' => $lc, 'zentraleId' => 'z-lea0000001',
+    'einstellungen' => ['sicherungAn' => ['neu7@example.org']]], $lea);
+pruefe($s === 200 && $s2 === 200 && mailAn($mailerS, 'neu7@example.org') !== null, 'Rückgabe von der Zentrale: Bestätigungsmail an neuen Empfänger');
 
 echo "\n$anzahl Prüfungen, $fehler Fehler\n";
 exit($fehler === 0 ? 0 : 1);
