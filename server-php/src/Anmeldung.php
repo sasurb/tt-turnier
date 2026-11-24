@@ -28,6 +28,8 @@ final class Anmeldung
     private const LOESCHEN_SPAETESTENS_TAGE = 180;
     private const ANGABEN = ['ttr', 'klasse', 'geschlecht', 'jahrgang'];
     private const ID_ZEICHEN = 'abcdefghijkmnpqrstuvwxyz23456789';
+    /** Doppel/Mixed mit Partnerin oder Partner je Anmeldung (jede/r bekommt eine Bestätigungsmail) */
+    private const MAX_PARTNER = 5;
     /** Spätere Mails enthalten keinen neuen Link (es gibt einen Schlüssel je Anmeldung, gespeichert nur als Hash) */
     private const LINK_HINWEIS = 'Den Stand siehst du jederzeit über den Link aus deiner Bestätigungsmail; dort kannst du dich auch abmelden.';
 
@@ -73,7 +75,7 @@ final class Anmeldung
             return false;
         }
         // Konto gesperrt oder (noch) nicht für die Online-Anmeldung freigegeben (Etappe 10)
-        if (!$this->api->anmeldungFreigabe((int)$t['konto_id'])['erlaubt']) {
+        if (!$this->api->anmeldungFreigabe($t)['erlaubt']) {
             return false;
         }
         $schluss = $e['schluss'] ?? null;
@@ -189,6 +191,8 @@ final class Anmeldung
                 'name' => $kk['name'] ?? $k['id'],
                 'status' => $k['status'],
                 'position' => ($k['status'] ?? '') === 'warteliste' ? self::position($zeilen, $k['id'], (string)$z['id']) : null,
+                'partner' => $k['partner'] ?? null,
+                'partnerStatus' => self::partnerStatus($k),
             ];
         }
         return [
@@ -302,7 +306,9 @@ final class Anmeldung
         return [
             'turnier' => ['id' => (string)$t['id'], 'name' => (string)$t['name'], 'datum' => $t['datum'], 'veranstalter' => (string)($t['veranstalter'] ?? '')],
             'einstellungen' => self::ausgabe($e),
-            'moeglich' => $this->moeglich($t, $e) && $this->api->mailBereit(),
+            'moeglich' => $this->moeglich($t, $e) && $this->api->mailBereit() && !$this->api->jugendturnier((string)$t['id']),
+            // ab 0.17: Jugendturnier – keine Einzelanmeldung online (Frage 8C)
+            'jugend' => $this->api->jugendturnier((string)$t['id']),
             'belegung' => self::belegung($e, $this->zeilen((string)$t['id'])),
         ];
     }
@@ -318,6 +324,9 @@ final class Anmeldung
         $e = self::einst($t);
         if ($e === null || !$this->moeglich($t, $e)) {
             throw new ApiFehler('abgelaufen', 'Die Anmeldung für dieses Turnier ist geschlossen.');
+        }
+        if ($this->api->jugendturnier((string)$t['id'])) {
+            throw new ApiFehler('abgelaufen', 'Bei Jugendturnieren gibt es keine Einzelanmeldung online. Bitte meldet euch über euren Verein bzw. die Mannschaftsleitung bei der Turnierleitung.');
         }
         $this->unbestaetigteLoeschen();
         $r = $a->rumpf ?? [];
@@ -367,15 +376,11 @@ final class Anmeldung
         if (($r['datenschutz'] ?? false) !== true) {
             throw new ApiFehler('ungueltig', 'Bitte den Datenschutzhinweis bestätigen.');
         }
-        $minderjaehrig = ($r['minderjaehrig'] ?? false) === true;
-        // Jahrgang deutet auf unter 18 (im Zweifel: wird in diesem Jahr 18) → Einverständnis nötig
-        if ($d['jahrgang'] !== null && $jahr - $d['jahrgang'] <= 18) {
-            $minderjaehrig = true;
+        // Ab 0.17 (Frage 8C): online nur Volljährige; Minderjährige meldet der Verein bzw. eine Mannschaftsleitung
+        if (($r['volljaehrig'] ?? false) !== true || ($d['jahrgang'] !== null && $jahr - $d['jahrgang'] < 18)) {
+            throw new ApiFehler('ungueltig', 'Online anmelden können sich nur Volljährige. Unter 18 meldet euch bitte über euren Verein bzw. eine Mannschaftsleitung bei der Turnierleitung.');
         }
-        if ($minderjaehrig && ($r['einverstanden'] ?? false) !== true) {
-            throw new ApiFehler('ungueltig', 'Unter 18 Jahren müssen die Erziehungsberechtigten einverstanden sein.');
-        }
-        $d['minderjaehrig'] = $minderjaehrig;
+        $d['volljaehrig'] = true;
         $wahl = $r['konkurrenzen'] ?? null;
         if (!is_array($wahl) || !array_is_list($wahl) || $wahl === [] || count($wahl) > self::MAX_KONKURRENZEN) {
             throw new ApiFehler('ungueltig', 'Bitte mindestens eine Konkurrenz wählen.');
@@ -390,8 +395,25 @@ final class Anmeldung
                 throw new ApiFehler('ungueltig', 'Unbekannte Konkurrenz gewählt.');
             }
             $gesehen[$kid] = true;
-            $partner = $kk['art'] !== 'einzel' && is_string($w['partner'] ?? null) ? mb_substr(trim($w['partner']), 0, 80) : '';
-            $d['konkurrenzen'][] = ['id' => $kid, 'status' => null, 'partner' => $partner === '' ? null : $partner, 'seit' => null];
+            $partner = $kk['art'] !== 'einzel' && is_string($w['partner'] ?? null) ? mb_substr(trim((string)preg_replace('/[\x00-\x1F\x7F]/u', '', $w['partner'])), 0, 80) : '';
+            $eintrag = ['id' => $kid, 'status' => null, 'partner' => $partner === '' ? null : $partner, 'seit' => null];
+            // Ab 0.17 (Frage 11B): Partner/in bestätigt selbst per Mail – Adresse nur dafür, nie in der Liste der Leitung
+            if ($partner !== '') {
+                $pm = is_string($w['partnerEmail'] ?? null) ? mb_strtolower(trim($w['partnerEmail'])) : '';
+                if (!filter_var($pm, FILTER_VALIDATE_EMAIL) || mb_strlen($pm) > 190) {
+                    throw new ApiFehler('ungueltig', 'Bitte die E-Mail-Adresse von ' . $partner . ' angeben – die Partnerin bzw. der Partner bestätigt die Meldung selbst.');
+                }
+                if ($pm === $email) {
+                    throw new ApiFehler('ungueltig', 'Die Partnerin bzw. der Partner braucht eine eigene E-Mail-Adresse.');
+                }
+                $eintrag['partnerEmail'] = $pm;
+                $eintrag['partnerOk'] = null;
+                $mitPartner = ($mitPartner ?? 0) + 1;
+                if ($mitPartner > self::MAX_PARTNER) {
+                    throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_PARTNER . ' Doppel bzw. Mixed mit Partnerin oder Partner je Anmeldung.');
+                }
+            }
+            $d['konkurrenzen'][] = $eintrag;
         }
 
         $zeilen = $this->zeilen((string)$t['id']);
@@ -418,7 +440,7 @@ final class Anmeldung
             throw new ApiFehler('zu_viele_versuche', 'Für dieses Turnier sind gerade keine weiteren Anmeldungen möglich. Bitte später erneut versuchen.');
         }
         $this->api->begrenzen('anmeldung-turnier|' . $t['id'], self::MAX_JE_TURNIER_STUNDE, 3600, 'Für dieses Turnier kamen gerade sehr viele Anmeldungen. Bitte später erneut versuchen.');
-        $this->api->begrenzen('anmeldung-konto|' . $t['konto_id'], self::MAX_JE_KONTO_TAG, 86400, 'Gerade sind keine weiteren Anmeldungen möglich. Bitte später erneut versuchen.');
+        $this->api->begrenzen('anmeldung-sparte|' . (int)$t['sparte_id'], self::MAX_JE_KONTO_TAG, 86400, 'Gerade sind keine weiteren Anmeldungen möglich. Bitte später erneut versuchen.');
         $id = $this->neueId((string)$t['id']);
         $schluessel = bin2hex(random_bytes(32));
         $this->db->ausfuehren(
@@ -558,8 +580,122 @@ final class Anmeldung
                 . "\nStand ansehen oder abmelden: " . $this->link($t, (string)$a->rumpf['schluessel']) . "\n"
                 . "Bitte hebe diese Mail auf. Rückst du von der Warteliste nach, bekommst du eine Mail.");
             $this->leitungHinweisen($t, $e, $z, $zeilen);
+            $this->partnerEinladen($t, $e, $z);
         }
         return $this->stand($t, $e, $z, $zeilen);
+    }
+
+    /**
+     * Nach der Bestätigung der eigenen Adresse: Partner/innen per Mail um Bestätigung bitten (Frage 11B).
+     * Erst danach, damit über unbestätigte Anmeldungen keine Mails an Dritte gehen.
+     */
+    private function partnerEinladen(array $t, array $e, array $z): void
+    {
+        $geaendert = false;
+        foreach ($z['d']['konkurrenzen'] as $i => $k) {
+            $pm = $k['partnerEmail'] ?? null;
+            if (!is_string($pm) || ($k['partnerOk'] ?? null) !== null || isset($k['partnerHash'])) {
+                continue;
+            }
+            $schluessel = bin2hex(random_bytes(32));
+            $z['d']['konkurrenzen'][$i]['partnerHash'] = hash('sha256', $schluessel);
+            $geaendert = true;
+            $mk = 'anmeldung-mail|' . hash('sha256', $pm);
+            if ($this->api->anzahlVersuche($mk, 3600) >= 5) {
+                continue;
+            }
+            $this->api->fehlversuch($mk);
+            $kk = self::konkurrenzVon($e, (string)$k['id']);
+            $this->mailen($t, $pm, "Bitte bestätigen: Doppelmeldung {$t['name']}", "Hallo {$k['partner']},\n\n"
+                . self::name($z) . ' hat dich bei „' . $t['name'] . '“ (' . self::datumText($t) . ') als Partner/in für „'
+                . ($kk['name'] ?? $k['id']) . "“ gemeldet.\n\n"
+                . "Bitte bestätige oder lehne ab:\n\n" . $this->api->appUrl() . '#/partner/' . $t['id'] . '/' . $schluessel . "\n\n"
+                . "Deine E-Mail-Adresse wird nur dafür verwendet und mit der Anmeldung gelöscht.\n"
+                . 'Datenschutzhinweis: ' . $this->api->appUrl() . '#/datenschutz');
+        }
+        if ($geaendert) {
+            $this->gesperrt((string)$t['id'], function () use ($t, $z): void {
+                $frisch = $this->zeile($t, (string)$z['id']);
+                foreach ($frisch['d']['konkurrenzen'] as $i => $k) {
+                    foreach ($z['d']['konkurrenzen'] as $n) {
+                        if ($n['id'] === $k['id'] && isset($n['partnerHash']) && !isset($k['partnerHash'])) {
+                            $frisch['d']['konkurrenzen'][$i]['partnerHash'] = $n['partnerHash'];
+                        }
+                    }
+                }
+                $this->speichern($frisch);
+            });
+        }
+    }
+
+    /**
+     * POST anmeldung.partner { turnier, schluessel, antwort?: ja|nein, volljaehrig? } – öffentlich, gebremst.
+     * Ohne Antwort: was bestätigt werden soll. „ja“ braucht die Bestätigung „mindestens 18“.
+     */
+    public function partner(Anfrage $a): array
+    {
+        $bremse = 'anmeldung-link|' . $a->ip;
+        $this->api->bremse($bremse);
+        $t = $this->api->turnierLaden((string)($a->rumpf['turnier'] ?? ''));
+        $schluessel = $a->rumpf['schluessel'] ?? '';
+        $hash = is_string($schluessel) && preg_match('/^[a-f0-9]{64}$/', $schluessel) ? hash('sha256', $schluessel) : null;
+        $treffer = null;
+        foreach ($hash === null ? [] : $this->zeilen((string)$t['id']) as $z) {
+            foreach ($z['d']['konkurrenzen'] as $i => $k) {
+                if (isset($k['partnerHash']) && hash_equals((string)$k['partnerHash'], $hash)) {
+                    $treffer = [$z, $i];
+                }
+            }
+        }
+        if ($treffer === null) {
+            $this->api->fehlversuch($bremse);
+            throw new ApiFehler('abgelaufen', 'Der Link ist ungültig oder die Anmeldung wurde gelöscht.');
+        }
+        [$z, $i] = $treffer;
+        $e = self::einst($t) ?? self::leer();
+        $antwort = $a->rumpf['antwort'] ?? null;
+        if ($antwort === 'ja' || $antwort === 'nein') {
+            if ($antwort === 'ja' && ($a->rumpf['volljaehrig'] ?? false) !== true) {
+                throw new ApiFehler('ungueltig', 'Online bestätigen können nur Volljährige. Unter 18 meldet euch bitte über euren Verein bei der Turnierleitung.');
+            }
+            $frei = null;
+            $this->gesperrt((string)$t['id'], function () use ($t, &$z, $i, $antwort, &$frei): void {
+                $z = $this->zeile($t, (string)$z['id']);
+                $k = $z['d']['konkurrenzen'][$i];
+                $z['d']['konkurrenzen'][$i]['partnerOk'] = $antwort === 'ja';
+                if ($antwort === 'nein' && $k['status'] !== 'abgemeldet') {
+                    $frei = $k['status'] === 'platz' ? (string)$k['id'] : null;
+                    $z['d']['konkurrenzen'][$i]['status'] = 'abgemeldet';
+                }
+                $this->speichern($z);
+            });
+            if ($frei !== null) {
+                $this->nachruecken($t, $e, $frei);
+            }
+            $kk = self::konkurrenzVon($e, (string)$z['d']['konkurrenzen'][$i]['id']);
+            $this->mailen($t, (string)$z['email'], ($antwort === 'ja' ? 'Partner/in hat bestätigt: ' : 'Partner/in hat abgelehnt: ') . $t['name'],
+                "Hallo {$z['d']['vorname']},\n\n" . (string)$z['d']['konkurrenzen'][$i]['partner']
+                . ($antwort === 'ja' ? ' hat die Meldung für „' . ($kk['name'] ?? '') . '“ bestätigt.'
+                    : ' hat die Meldung für „' . ($kk['name'] ?? '') . '“ abgelehnt. Diese Meldung ist damit zurückgezogen.')
+                . "\n\n" . self::LINK_HINWEIS);
+        }
+        $k = $z['d']['konkurrenzen'][$i];
+        $kk = self::konkurrenzVon($e, (string)$k['id']);
+        return [
+            'turnier' => ['id' => (string)$t['id'], 'name' => (string)$t['name'], 'datum' => $t['datum']],
+            'von' => self::name($z),
+            'partner' => (string)($k['partner'] ?? ''),
+            'konkurrenz' => (string)($kk['name'] ?? $k['id']),
+            'status' => ($k['partnerOk'] ?? null) === null ? 'offen' : (($k['partnerOk'] === true) ? 'bestaetigt' : 'abgelehnt'),
+        ];
+    }
+
+    private static function partnerStatus(array $k): ?string
+    {
+        if (!isset($k['partnerEmail'])) {
+            return null;
+        }
+        return ($k['partnerOk'] ?? null) === null ? 'offen' : ($k['partnerOk'] === true ? 'bestaetigt' : 'abgelehnt');
     }
 
     public function abmelden(Anfrage $a): array
@@ -678,7 +814,6 @@ final class Anmeldung
                 'klasse' => $d['klasse'] ?? null,
                 'geschlecht' => $d['geschlecht'] ?? null,
                 'jahrgang' => $d['jahrgang'] ?? null,
-                'minderjaehrig' => (bool)($d['minderjaehrig'] ?? false),
                 'angelegt' => Api::iso((int)$z['angelegt']),
                 'bestaetigt' => $z['bestaetigt'] === null ? null : Api::iso((int)$z['bestaetigt']),
                 'konkurrenzen' => array_map(fn(array $k): array => [
@@ -686,12 +821,13 @@ final class Anmeldung
                     'status' => $k['status'] ?? 'warteliste',
                     'position' => ($k['status'] ?? '') === 'warteliste' ? self::position($zeilen, $k['id'], (string)$z['id']) : null,
                     'partner' => $k['partner'] ?? null,
+                    'partnerStatus' => self::partnerStatus($k),
                 ], $d['konkurrenzen'] ?? []),
                 'spieler' => $z['spieler'] === null ? null : (string)$z['spieler'],
             ];
         }
         // Für die Leitung mit „vorab“ (von Hand Gemeldete), damit die App Änderungen erkennt
-        return ['einstellungen' => $e, 'anmeldungen' => $aus, 'freigabe' => $this->api->anmeldungFreigabe((int)$t['konto_id'])];
+        return ['einstellungen' => $e, 'anmeldungen' => $aus, 'freigabe' => $this->api->anmeldungFreigabe($t)];
     }
 
     public function liste(Anfrage $a): array
@@ -760,7 +896,7 @@ final class Anmeldung
             'hinweisMail' => array_key_exists('hinweisMail', $r) ? $r['hinweisMail'] !== false : ((self::einst($t)['hinweisMail'] ?? true) !== false),
         ];
         // Freigabe zuletzt prüfen (erst die Eingaben, damit Fehler darin sofort auffallen)
-        $frei = $this->api->anmeldungFreigabe((int)$t['konto_id']);
+        $frei = $this->api->anmeldungFreigabe($t);
         if ($offen && !$frei['erlaubt']) {
             throw new ApiFehler('keine_berechtigung', $frei['ab'] !== null
                 ? 'Die Online-Anmeldung steht neuen Konten ab ' . gmdate('d.m.Y', (int)strtotime($frei['ab'])) . ' zur Verfügung (Schutz vor Missbrauch). Der Administrator kann sie früher freischalten.'

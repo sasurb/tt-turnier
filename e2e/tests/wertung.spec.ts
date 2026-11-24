@@ -45,7 +45,7 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await page.getByLabel('Datum').fill('2027-12-11');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
-  const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
+  const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
 
   // Reines Hobby-Turnier: Jeder gegen jeden, nur Spieler ohne amtlichen TTR
   await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
@@ -166,6 +166,7 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await p.getByLabel('Nachname').fill('Online');
   await p.getByLabel('E-Mail-Adresse').fill(`olli-${geraet}@example.org`);
   await p.getByTestId('meldung-datenschutz').check();
+  await p.getByTestId('meldung-volljaehrig').check();
   await expect(p.getByTestId('meldung-senden')).toBeDisabled();
   await p.getByRole('radio', { name: 'Nein, ich spiele hobbymäßig' }).check();
   await einstufen(p.locator('main'), [2, 2, 1, 1]);

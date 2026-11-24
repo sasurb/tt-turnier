@@ -13,6 +13,9 @@
   import Hilfe from './Hilfe.svelte';
   import { istZentrale } from '../zentrale.svelte';
   import KonkurrenzAuswahlWahl from './turnier/KonkurrenzAuswahlWahl.svelte';
+  import Textbaustein from './turnier/Textbaustein.svelte';
+  import { appWertungAn, minderjaehrigeLautJahrgang } from '../engine/zustand';
+  import { aktiveSparteId } from '../sparte.svelte';
 
   let {
     id,
@@ -90,7 +93,7 @@
   async function kasseAusKonto() {
     if (!app.sitzung) return;
     try {
-      const k = (await api.kontoEinstellungen(app.sitzung.token)).kasse;
+      const k = (await api.kontoEinstellungen(app.sitzung.token, aktiveSparteId())).kasse;
       if (k) kasse = { ...kasseLeer, ...k, iban: k.iban ? ibanAnzeige(k.iban) : '' };
     } catch (x) {
       zeige('kasse', false, fehlerText(x, T.app.fehlerAllgemein));
@@ -103,7 +106,7 @@
     const k: KasseEinstellungen = { ...$state.snapshot(kasse), iban: ibanNormal(kasse.iban), bic: kasse.bic.replace(/\s+/g, '').toUpperCase() };
     try {
       await eintragen(ART.turnierDaten, { kasse: k });
-      if (alsVorgabe && app.sitzung) await api.kontoEinstellungenSetzen(app.sitzung.token, { kasse: k });
+      if (alsVorgabe && app.sitzung) await api.kontoEinstellungenSetzen(app.sitzung.token, { kasse: k }, aktiveSparteId());
       zeige('kasse', true, T.kasseEinst.gespeichert);
     } catch (x) {
       zeige('kasse', false, fehlerText(x, T.app.fehlerAllgemein));
@@ -113,12 +116,47 @@
   /* Namen für Zuschauer (Datenschutz) */
   async function namenSetzen(n: 'voll' | 'kurz') {
     if (n === z.namen) return;
+    if (n === 'voll' && z.jugend && !confirm(T.jugend.vollWarnung)) return;
     try {
       await eintragen(ART.turnierDaten, { namen: n });
       zeige('namen', true, T.app.gespeichert);
     } catch (x) {
       zeige('namen', false, fehlerText(x, T.app.fehlerAllgemein));
     }
+  }
+
+  /* Jugendturnier und App-Wertung (Fragen 7A, 16A) */
+  const unter18 = $derived(minderjaehrigeLautJahrgang(z));
+  async function jugendSetzen(an: boolean) {
+    try {
+      await eintragen(ART.turnierDaten, an ? { jugend: true, namen: 'kurz' } : { jugend: false });
+      zeige('jugend', true, T.app.gespeichert);
+    } catch (x) {
+      zeige('jugend', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
+  async function appWertungSetzen(an: boolean) {
+    try {
+      await eintragen(ART.turnierDaten, { appWertung: an });
+      zeige('jugend', true, T.app.gespeichert);
+    } catch (x) {
+      zeige('jugend', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
+
+  /* Löschfrist (ab 0.17, nur online) */
+  const loeschfristMoeglich = $derived(!lokal && !istZentrale() && !!einst && einst.loeschenNach !== undefined);
+  async function loeschfristSetzen(n: 12 | 24) {
+    if (!token) return;
+    try {
+      einst = await api.einstellungenSetzen(token, { turnier: id, loeschenNach: n });
+      zeige('frist', true, T.loeschfrist.gespeichert);
+    } catch (x) {
+      zeige('frist', false, fehlerText(x, T.app.fehlerAllgemein));
+    }
+  }
+  function tag(iso: string | null | undefined) {
+    return iso ? new Date(iso).toLocaleDateString('de-DE') : '';
   }
 
   /* Turnier löschen: online über das Konto (mit Passwort), lokal/Zentrale nur vom Gerät */
@@ -265,6 +303,33 @@
     {@render hinweis('namen')}
   </section>
 
+  <section data-testid="abschnitt-jugend">
+    <h3>{T.jugend.schalter}<Hilfe text={T.jugend.hilfe} /></h3>
+    <label class="haken"><input type="checkbox" checked={z.jugend} onchange={(e) => jugendSetzen(e.currentTarget.checked)} data-testid="jugend-schalter" /> {T.jugend.schalter}</label>
+    {#if !z.jugend && unter18 > 0}<div class="meldung info" data-testid="hinweis-unter18">{T.jugend.unter18(unter18)}</div>{/if}
+    <label class="haken"><input type="checkbox" checked={appWertungAn(z)} onchange={(e) => appWertungSetzen(e.currentTarget.checked)} data-testid="appwertung-schalter" /> {T.appwertung.schalter}</label>
+    <p class="leise">{T.appwertung.profiling}</p>
+    {@render hinweis('jugend')}
+    <Textbaustein verein={app.sitzung?.konto.sparten?.find((s) => s.id === aktiveSparteId())?.verein ?? ''} />
+  </section>
+
+  {#if loeschfristMoeglich && einst}
+    <section data-testid="abschnitt-loeschfrist">
+      <h3>{T.loeschfrist.titel}<Hilfe text={T.loeschfrist.hilfe} /></h3>
+      <fieldset>
+        <legend class="sr">{T.loeschfrist.titel}</legend>
+        {#each [12, 24] as const as n (n)}
+          <label class="wahl" class:aktiv={einst.loeschenNach === n}>
+            <input type="radio" name="loeschfrist" value={n} checked={einst.loeschenNach === n} onchange={() => loeschfristSetzen(n)} data-testid="loeschfrist-{n}" />
+            <span><strong>{T.loeschfrist.monate(n)}</strong></span>
+          </label>
+        {/each}
+      </fieldset>
+      {#if einst.loeschungAm}<p class="leise" data-testid="loeschung-am">{T.loeschfrist.am(tag(einst.loeschungAm))}</p>{/if}
+      {@render hinweis('frist')}
+    </section>
+  {/if}
+
   {#if !lokal && einst}
     <section>
       <h3>{T.einstellungen.sicherungTitel}</h3>
@@ -291,6 +356,10 @@
               aria-label={`${T.einstellungen.empfaenger} ${i + 1}`}
             />
           {/each}
+          {#if einst.unbestaetigt?.length}
+            <div class="meldung info" data-testid="sicherung-unbestaetigt">{T.einstellungen.unbestaetigt(einst.unbestaetigt.join(', '))}</div>
+          {/if}
+          <p class="leise">{T.einstellungen.ohneKontakt}</p>
           <p class="leise">{T.einstellungen.letzte}: {zeit(einst.letzteSicherung)}</p>
           <div class="reihe">
             <button type="submit">{T.app.speichern}</button>
@@ -306,8 +375,8 @@
     <h3>{T.kasseEinst.titel}<Hilfe text={T.kasseEinst.hilfe} /></h3>
     <form onsubmit={kasseSpeichern} class="kasse-form" data-testid="kasse-einstellungen">
       {#if kontoDa}<button type="button" class="zweit klein" onclick={kasseAusKonto}>{T.kasseEinst.ausKonto}</button>{/if}
-      <label>{T.kasseEinst.aussteller}<input bind:value={kasse.aussteller} maxlength="160" autocomplete="organization" /></label>
-      <label>{T.kasseEinst.anschrift}<textarea bind:value={kasse.anschrift} maxlength="300" rows="2"></textarea></label>
+      <label>{T.kasseEinst.aussteller} <span class="leise">{T.kasseEinst.pflichtQuittung}</span><input bind:value={kasse.aussteller} maxlength="160" autocomplete="organization" /></label>
+      <label>{T.kasseEinst.anschrift} <span class="leise">{T.kasseEinst.pflichtQuittung}</span><textarea bind:value={kasse.anschrift} maxlength="300" rows="2"></textarea></label>
       <label>{T.kasseEinst.ust}
         <select bind:value={kasse.ust}>
           {#each ['keiner', 'befreit', 'enthalten'] as u (u)}<option value={u}>{T.kasseEinst.ustArten[u]}</option>{/each}
@@ -320,6 +389,7 @@
       <label>{T.kasseEinst.empfaenger}<input bind:value={kasse.empfaenger} maxlength="70" /></label>
       <label>{T.kasseEinst.iban}<input bind:value={kasse.iban} maxlength="42" autocapitalize="characters" autocomplete="off" spellcheck="false" data-testid="kasse-iban" /></label>
       {#if kasse.iban.trim() && !ibanGueltig(kasse.iban)}<p class="leise">{T.kasseEinst.ibanFalsch}</p>{/if}
+      <p class="leise" data-testid="iban-hinweis">{T.kasseEinst.ibanHinweis}</p>
       <label>{T.kasseEinst.bic}<input bind:value={kasse.bic} maxlength="11" autocapitalize="characters" autocomplete="off" spellcheck="false" /></label>
       {#if kontoDa}<label class="haken"><input type="checkbox" bind:checked={alsVorgabe} /> {T.kasseEinst.alsVorgabe}</label>{/if}
       <button type="submit">{T.app.speichern}</button>

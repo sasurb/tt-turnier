@@ -44,7 +44,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await page.getByLabel('Datum').fill('2027-10-02');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
-  const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
+  const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
 
   // Spieler-Rubrik: Alle Teilnehmer und Online-Anmeldungen als aufklappbare Abschnitte, keine Angaben mehr dort
   await expect(nav(page).getByRole('link', { name: 'Anmeldungen' })).toHaveCount(0);

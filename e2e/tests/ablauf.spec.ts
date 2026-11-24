@@ -35,9 +35,15 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   // Konto anlegen
   await page.getByRole('link', { name: 'Konto anlegen' }).first().click();
   await expect(page.getByRole('heading', { name: 'Konto anlegen' })).toBeVisible();
-  await page.getByLabel('Name (Verein oder Person)').fill(`TTC ${geraet}`);
+  await page.getByLabel('Dein Name').fill(`TTC ${geraet}`);
   await page.getByLabel('E-Mail', { exact: true }).fill(email);
   await page.getByLabel('Passwort (mindestens 8 Zeichen)').fill(passwort);
+  // ab 0.17: Verein und Sparte, mindestens 18, Nutzungsbedingungen mit AVV
+  await page.getByLabel('Verein', { exact: true }).fill(`TTC ${geraet} e. V.`);
+  await expect(page.getByLabel('Sparte', { exact: true })).toHaveValue('Tischtennis');
+  await expect(page.getByRole('button', { name: 'Konto anlegen' })).toBeDisabled();
+  await page.getByLabel('Ich bin mindestens 18 Jahre alt.').check();
+  await page.getByRole('checkbox', { name: /Nutzungsbedingungen/ }).check();
   await bild(page, '02-registrieren');
   await page.getByRole('button', { name: 'Konto anlegen' }).click();
 
@@ -52,7 +58,9 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   // Neues Turnier: online, ohne Auswahl „Nur dieses Gerät“ (gibt es nur in der Demo und auf der Zentrale)
   await page.getByTestId('neues-turnier').click();
   await expect(page.getByLabel(/Nur dieses Gerät/)).toHaveCount(0);
-  await expect(page.getByText(/8-stellige Turnierkennung/)).toBeVisible();
+  await expect(page.getByText(/persönliche Leitungskennung/)).toBeVisible();
+  await expect(page.getByRole('radio', { name: /Zufällig vergeben/ })).toBeChecked();
+  await expect(page.getByLabel('Automatische Löschung')).toHaveValue('12');
   await page.getByLabel('Name des Turniers').fill(`Herbstpokal ${geraet}`);
   await bild(page, '04-neues-turnier');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
@@ -97,7 +105,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   // Zugänge: Turnierkennung (8 Ziffern), Link, Leitungskennung der Leitung, Spielerkennungen
   await page.getByRole('link', { name: 'Zugänge' }).click();
   const turnierKennung = (await page.getByTestId('turnierkennung').innerText()).replace(/\s/g, '');
-  expect(turnierKennung).toMatch(/^\d{8}$/);
+  expect(turnierKennung).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/);
   const link = await page.getByLabel('Link').inputValue();
   expect(link).toContain(`#/t/${turnierKennung}`);
   const leitungZugaenge = page.getByTestId('zugaenge-leitung');
@@ -141,6 +149,16 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await page.getByLabel('Empfänger (bis zu 3) 2').fill(`helfer-${geraet}@example.org`);
   await page.locator('form', { has: page.getByLabel('Wie oft?') }).getByRole('button', { name: 'Speichern' }).click();
   await expect(page.getByText('Gespeichert.')).toBeVisible();
+  // ab 0.17: neue Adresse außerhalb der Leitung bestätigt erst per Link (Frage 14A)
+  await expect(page.getByTestId('sicherung-unbestaetigt')).toContainText(`helfer-${geraet}@example.org`);
+  const bestaetigen = /#\/sicherung\/[A-Z0-9-]+\/[a-f0-9]{64}/.exec(letzteMail(`helfer-${geraet}@example.org`, /Bitte bestätigen: Sicherungen/)?.text ?? '')?.[0];
+  expect(bestaetigen).toBeTruthy();
+  const turnierSeite = page.url();
+  await page.goto(`./${bestaetigen}`);
+  await expect(page.getByTestId('sicherung-link')).toContainText('bekommt ab jetzt die Sicherungen');
+  await page.goto(turnierSeite);
+  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await expect(page.getByTestId('sicherung-unbestaetigt')).toHaveCount(0);
   await page.getByRole('button', { name: 'Jetzt per Mail sichern' }).click();
   await expect(page.getByText(/Sicherung gesendet an/)).toBeVisible();
   const sm = letzteMail(`helfer-${geraet}@example.org`, /Sicherung: Herbstpokal/);
@@ -161,10 +179,9 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   const p2 = await zweites.newPage();
   await p2.goto('./');
   await p2.getByTestId('beitreten').click();
-  await p2.getByLabel('Turnierkennung, Block 1').fill(turnierKennung.slice(0, 4));
-  // nach 4 Ziffern springt der Cursor in den zweiten Block
-  await expect(p2.getByLabel('Turnierkennung, Block 2')).toBeFocused();
-  await p2.getByLabel('Turnierkennung, Block 2').fill(turnierKennung.slice(4));
+  // ab 0.17: Buchstaben und Ziffern, Groß/klein egal
+  await p2.getByLabel('Turnierkennung', { exact: true }).fill(turnierKennung.toLowerCase());
+  await expect(p2.getByLabel('Turnierkennung', { exact: true })).toHaveValue(turnierKennung);
   await bild(p2, '09a-beitreten');
   await p2.getByRole('button', { name: 'Weiter' }).click();
   await expect(p2.getByText(`Herbstpokal ${geraet}`)).toBeVisible();
@@ -310,7 +327,8 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await page.goto('./#/konto');
   await page.getByText('Konto löschen', { exact: true }).click();
   await page.getByLabel('Zur Bestätigung dein Passwort').fill('noch-sicherer-2');
-  page.once('dialog', (d) => void d.accept());
+  // Erste Frage „wirklich löschen?“, zweite „einzige Spartenleitung – Sparte mitlöschen?“
+  page.on('dialog', (d) => void d.accept());
   await page.getByRole('button', { name: 'Konto endgültig löschen' }).click();
   await expect(page.getByText('Dein Konto wurde gelöscht.')).toBeVisible();
 });

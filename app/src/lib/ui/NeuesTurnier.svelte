@@ -18,6 +18,8 @@
   import { amGeraetDerZentrale, istZentrale } from '../zentrale.svelte';
   import { ALLE_ARTEN, MODI, MODI_MANNSCHAFT, STANDARD_ANGABEN, type Angabe, type KonkurrenzArt, type Modus } from '../engine/modell';
   import { STANDARD_AUSWAHL, auswahlOrdnen, auswahlPruefen } from '../engine/auswahl';
+  import { aktiveSparte, setzeAktiveSparte, spartenName, spartenZumAnlegen } from '../sparte.svelte';
+  import { turnierKennungEingabe, wunschKennungGueltig } from '../code';
 
   let name = $state('');
   let datum = $state(new Date().toISOString().slice(0, 10));
@@ -26,6 +28,14 @@
   let tische = $state('');
   let fehler = $state('');
   let laeuft = $state(false);
+  /* Ab 0.17: Sparte, Turnierkennung, Jugendturnier, Löschfrist */
+  const mitSparten = $derived(app.server.art === 'bereit' && !!app.server.info.sparten && !!app.sitzung);
+  const anlegbar = $derived(spartenZumAnlegen());
+  let sparteId = $state<number | null>(aktiveSparte()?.anlegen ? (aktiveSparte()?.id ?? null) : null);
+  let kennungArt = $state<'zufall' | 'wunsch'>('zufall');
+  let wunsch = $state('');
+  let jugend = $state(false);
+  let loeschenNach = $state<12 | 24>(12);
 
   const onlineMoeglich = $derived(app.server.art === 'bereit' && !!app.sitzung);
   /** „Nur dieses Gerät“ gibt es nur in der Demo ohne Server und am Gerät der Zentrale */
@@ -68,8 +78,17 @@
       schritt = 0;
       return false;
     }
+    if (modus === 'online' && mitSparten && kennungArt === 'wunsch' && !wunschKennungGueltig(wunsch)) {
+      fehler = T.kennung.ungueltig;
+      schritt = 0;
+      return false;
+    }
     return true;
   }
+  // Jugendturnier: Zuschauer sehen standardmäßig nur die Kurzform
+  $effect(() => {
+    if (jugend) namen = 'kurz';
+  });
 
   function weiter() {
     fehler = '';
@@ -107,7 +126,7 @@
     const leer: KasseEinstellungen = { aussteller: '', anschrift: '', ust: 'keiner', ustSatz: 19, fusstext: '', empfaenger: '', iban: '', bic: '' };
     if (modus === 'online' && app.sitzung && !istZentrale()) {
       try {
-        const k = (await api.kontoEinstellungen(app.sitzung.token)).kasse;
+        const k = (await api.kontoEinstellungen(app.sitzung.token, mitSparten ? (sparteId ?? anlegbar[0]?.id ?? null) : null)).kasse;
         if (k) return { ...leer, ...k };
       } catch {
         /* ohne Vorgabe weiter */
@@ -132,8 +151,14 @@
       let id: string;
       let sitzung: TurnierSitzung;
       if (modus === 'online' && app.sitzung) {
-        const a = await api.turnierAnlegen(app.sitzung.token, { name: name.trim(), datum: datum || null });
+        const sp = mitSparten ? (sparteId ?? anlegbar[0]?.id ?? null) : null;
+        const a = await api.turnierAnlegen(app.sitzung.token, {
+          name: name.trim(),
+          datum: datum || null,
+          ...(mitSparten ? { loeschenNach, ...(sp ? { sparte: sp } : {}), ...(kennungArt === 'wunsch' ? { kennung: turnierKennungEingabe(wunsch) } : {}) } : {}),
+        });
         id = a.turnier.id;
+        if (sp) setzeAktiveSparte(sp);
         // Rechte kommen vom Konto; das Konto-Token wird nicht am Turnier gespeichert
         turnierMerken({ id, name: a.turnier.name, datum: a.turnier.datum, modus: 'online', rolle: 'zuschauer', token: null, konto: true });
         const token = app.sitzung.token;
@@ -146,12 +171,15 @@
         await sitzung.eintragen(ART.turnierAngelegt, { name: name.trim(), datum: datum || null });
         turnierMerken({ id, name: name.trim(), datum: datum || null, modus: 'lokal', rolle: 'leitung', token: null });
       }
+      // Jugendturnier (Frage 7A, 16A): eigener Eintrag – die Server lesen „jugend“ und „namen“ aus turnier.daten
+      if (jugend) await sitzung.eintragen(ART.turnierDaten, { jugend: true, namen: 'kurz' });
       if (mitAssistent) {
         const d = turnierDaten();
         if (kasse) d.kasse = await kasseVorgabe();
         await sitzung.eintragen(ART.turnierDaten, d);
         // „Namen für Zuschauer“ werten auch die Server aus – eigener Eintrag (lässt sich nicht rückgängig machen)
-        if (namen === 'kurz') await sitzung.eintragen(ART.turnierDaten, { namen });
+        if (namen === 'kurz' && !jugend) await sitzung.eintragen(ART.turnierDaten, { namen });
+        if (namen === 'voll' && jugend) await sitzung.eintragen(ART.turnierDaten, { namen });
         if (anmeldung && modus === 'online') app.hinweis = T.assistent.anmeldungHilfe;
       } else {
         const t = parseInt(tische, 10);
@@ -216,6 +244,53 @@
             </span>
           </label>
         </fieldset>
+      {/if}
+
+      <div class="haken-zeile">
+        <label class="haken"><input type="checkbox" bind:checked={jugend} data-testid="jugendturnier" /> {T.jugend.schalter}</label>
+        <Hilfe text={T.jugend.hilfe} />
+      </div>
+
+      {#if modus === 'online' && mitSparten}
+        {#if anlegbar.length > 1}
+          <label for="sp">{T.registrieren.sparte}</label>
+          <select id="sp" value={sparteId ?? anlegbar[0]?.id} onchange={(e) => (sparteId = Number(e.currentTarget.value))}>
+            {#each anlegbar as a (a.id)}<option value={a.id}>{spartenName(a)}</option>{/each}
+          </select>
+        {/if}
+        <fieldset>
+          <legend>{T.kennung.titel}<Hilfe text={T.kennung.hilfe} /></legend>
+          <label class="wahl" class:aktiv={kennungArt === 'zufall'}>
+            <input type="radio" name="kennung" value="zufall" bind:group={kennungArt} />
+            <span><strong>{T.kennung.zufall}</strong></span>
+          </label>
+          <label class="wahl" class:aktiv={kennungArt === 'wunsch'}>
+            <input type="radio" name="kennung" value="wunsch" bind:group={kennungArt} data-testid="kennung-wunsch" />
+            <span><strong>{T.kennung.wunsch}</strong></span>
+          </label>
+          {#if kennungArt === 'wunsch'}
+            <input
+              class="wunsch"
+              value={wunsch}
+              oninput={(e) => {
+                wunsch = turnierKennungEingabe(e.currentTarget.value);
+                e.currentTarget.value = wunsch;
+              }}
+              aria-label={T.kennung.wunschFeld}
+              placeholder="VM-2027"
+              maxlength="12"
+              autocapitalize="characters"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            {#if jugend}<p class="leise hinweis">{T.jugend.wunschHinweis}</p>{/if}
+          {/if}
+        </fieldset>
+        <div class="label-zeile"><label for="lf">{T.loeschfrist.titel}</label><Hilfe text={T.loeschfrist.hilfe} /></div>
+        <select id="lf" bind:value={loeschenNach}>
+          <option value={12}>{T.loeschfrist.monate(12)}</option>
+          <option value={24}>{T.loeschfrist.monate(24)}</option>
+        </select>
       {/if}
 
       {#if modus === 'online'}
@@ -286,6 +361,7 @@
           </label>
         {/each}
       </fieldset>
+      {#if jugend && namen === 'voll'}<div class="meldung info">{T.jugend.vollWarnung}</div>{/if}
     {:else if schritt === 6}
       <p>{modus === 'online' ? T.assistent.zugaengeText : T.assistent.zugaengeLokal}</p>
       {#if modus === 'online'}
@@ -359,5 +435,6 @@
     .zf dd { margin-bottom: 8px; }
   }
   .start { background: var(--gruen); }
+  .wunsch { font-family: ui-monospace, monospace; font-size: 1.2rem; letter-spacing: 0.08em; text-transform: uppercase; max-width: 16ch; margin-top: 8px; }
   legend { display: flex; align-items: center; }
 </style>

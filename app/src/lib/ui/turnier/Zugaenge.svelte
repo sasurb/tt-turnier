@@ -9,6 +9,7 @@
   import QrCode from './QrCode.svelte';
   import Hilfe from '../Hilfe.svelte';
   import { appBasis } from '../../zentrale.svelte';
+  import KontoZugaenge from './KontoZugaenge.svelte';
 
   /**
    * Zugänge eines Online-Turniers: je Person eine 8-stellige Kennung.
@@ -226,6 +227,7 @@
       <button type="submit" class="zweit" disabled={!leitungName.trim()}>{T.codes.leitungAnlegen}</button>
     </form>
     {#if leitungen.length}<button class="zweit klein drucken" onclick={() => drucken('leitung')}>{T.codes.drucken}</button>{/if}
+    <KontoZugaenge {id} />
   </details>
 
   <details class="karte" bind:open={offen.helfer} data-testid="zugaenge-helfer">

@@ -8,6 +8,7 @@ require_once __DIR__ . '/Datenbank.php';
 require_once __DIR__ . '/Mailer.php';
 require_once __DIR__ . '/Api.php';
 require_once __DIR__ . '/Anmeldung.php';
+require_once __DIR__ . '/Sparten.php';
 
 /**
  * Lädt die Konfiguration. Reihenfolge:

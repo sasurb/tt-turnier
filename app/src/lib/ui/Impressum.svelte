@@ -19,9 +19,9 @@
   </p>
   <h2>Hinweis</h2>
   <p class="leise">
-    Private, nicht-kommerzielle Turnier-App ohne Werbung. Quellcode unter MIT-Lizenz:
+    Private, nicht-kommerzielle Turnier-App ohne Werbung. Quellcode unter AGPL-3.0:
     <a href="https://github.com/Sasurb/tt-turnier">github.com/Sasurb/tt-turnier</a>.
-    Für Inhalte, die eine Turnierleitung in ihre Turniere einträgt, ist die jeweilige Turnierleitung verantwortlich.
+    Für Inhalte, die ein Verein bzw. seine Sparte in Turniere und Ausschüsse einträgt, ist der jeweilige Verein verantwortlich.
   </p>
-  <p><a href={linkZu('datenschutz')}>Datenschutzhinweis</a></p>
+  <p><a href={linkZu('datenschutz')}>Datenschutzhinweis</a> · <a href={linkZu('bedingungen')}>Nutzungsbedingungen</a> · <a href={linkZu('ueber')}>Über diese App</a></p>
 </section>

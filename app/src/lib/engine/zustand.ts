@@ -86,6 +86,10 @@ export interface TurnierZustand {
   kasse: KasseEinstellungen | null;
   /** App-Wertung der Hobbyspieler in den Spielerpool übernommen (Zeitpunkt, ab 0.15) – gegen doppeltes Übernehmen */
   wertungUebernommen: string | null;
+  /** Jugendturnier (ab 0.17): Kurzform für Zuschauer, keine Einzel-Online-Anmeldung, App-Wertung standardmäßig aus */
+  jugend: boolean;
+  /** App-Wertung angeboten (ab 0.17); null = Standard (aus bei Jugendturnieren), siehe appWertungAn() */
+  appWertung: boolean | null;
   /** Angebotene Konkurrenzarten und Spielsysteme (ab 0.16, Startassistent/Einstellungen); null = alle */
   konkurrenzarten: KonkurrenzAuswahl | null;
   /** Leistungsklassen laut Startassistent (Vorgabe für den Klassen-Assistenten); null = nicht festgelegt */
@@ -139,6 +143,8 @@ export function leererZustand(): TurnierZustand {
     zurueckgenommen: [],
     kasse: null,
     wertungUebernommen: null,
+    jugend: false,
+    appWertung: null,
     konkurrenzarten: null,
     klassenVorgabe: null,
     checkin: leer(),
@@ -924,6 +930,8 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       const vo = veroeffentlichungLesen(d.veroeffentlichung);
       if (vo) z.veroeffentlichung = vo;
       if (d.namen === 'voll' || d.namen === 'kurz') z.namen = d.namen;
+      if (typeof d.jugend === 'boolean') z.jugend = d.jugend;
+      if (typeof d.appWertung === 'boolean' || d.appWertung === null) z.appWertung = d.appWertung as boolean | null;
       const pause = zahl(d.pause, 0, 60);
       if (pause !== undefined && pause !== null) z.pause = pause;
       if (d.beginn === null || (typeof d.beginn === 'string' && UHRZEIT_MUSTER.test(d.beginn))) z.beginn = d.beginn;
@@ -1841,9 +1849,20 @@ export const NICHT_RUECKGAENGIG: readonly string[] = [
  * Zuschauer“ – diese Einstellung werten auch die Server aus (Datenschutz-Filter), die vom Rückgängig
  * nichts wissen. Sie wird stattdessen neu eingestellt.
  */
+/** App-Wertung im Turnier angeboten? (Frage 16A: bei Jugendturnieren standardmäßig aus) */
+export function appWertungAn(z: Pick<TurnierZustand, 'jugend' | 'appWertung'>): boolean {
+  return z.appWertung ?? !z.jugend;
+}
+
+/** Spieler, die laut Jahrgang am Turniertag (bzw. heute) noch nicht 18 sind */
+export function minderjaehrigeLautJahrgang(z: Pick<TurnierZustand, 'spieler' | 'datum'>): number {
+  const jahr = Number((z.datum ?? new Date().toISOString()).slice(0, 4));
+  return Object.values(z.spieler).filter((s) => typeof s.jahrgang === 'number' && jahr - s.jahrgang < 18).length;
+}
+
 export function rueckgaengigErlaubt(e: Pick<LokalesEreignis, 'art' | 'daten'>): boolean {
   if (NICHT_RUECKGAENGIG.includes(e.art)) return false;
-  if (e.art === ART.turnierDaten && e.daten && typeof e.daten === 'object' && ('namen' in e.daten || 'wertungUebernommen' in e.daten)) return false;
+  if (e.art === ART.turnierDaten && e.daten && typeof e.daten === 'object' && ('namen' in e.daten || 'wertungUebernommen' in e.daten || 'jugend' in e.daten)) return false;
   return true;
 }
 

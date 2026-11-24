@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.16.0";
+    public static final String VERSION = "0.17.0";
     /** Platzhalter für Namen entfernter Spieler (wie PHP Api::ENTFERNT_NAME) */
     static final String ENTFERNT_NAME = "Entfernt";
     public static final int PROTOKOLL = 1;
@@ -59,8 +59,12 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     private static final Pattern P_ART = Pattern.compile("^[a-z][a-z0-9_.]{1,63}$");
     private static final Pattern P_GERAET = Pattern.compile("^[A-Za-z0-9-]{4,64}$");
     private static final Pattern P_ZEIT = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?)?(Z|[+-]\\d{2}:?\\d{2})?$");
-    /** Turnierkennung: 8 Ziffern (ab 0.6); ältere Kennungen (10 Zeichen) bleiben gültig */
-    private static final Pattern P_TURNIER_ID = Pattern.compile("^([0-9]{8}|[a-z0-9]{6,16})$");
+    /**
+     * Turnierkennung (ab 0.17, wie Api::TURNIER_ID_MUSTER): Zufall aus 8 Zeichen ohne Verwechsler oder Wunschkennung
+     * 4–12 Zeichen A–Z, 0–9, Bindestrich (nicht am Rand); ohne Groß/klein. Ältere Kennungen aus 8 Ziffern passen.
+     */
+    static final Pattern P_TURNIER_ID = Pattern.compile("^[A-Z0-9][A-Z0-9-]{2,10}[A-Z0-9]$");
+    private static final String KENNUNG_ZEICHEN = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
     private static final List<String> CODE_ROLLEN = Arrays.asList("leitung", "helfer", "spieler");
     /** shared/protokoll.ts ALLE_AUFGABEN, HELFER_STANDARD, ARTEN_JE_AUFGABE, NUR_VOLLE_SICHT */
     static final List<String> AUFGABEN = Arrays.asList("ergebnisse", "aufruf", "kasse", "oberschiri");
@@ -614,7 +618,13 @@ public final class Zentrale implements HttpServer.Bearbeiter {
      * Unbekannte Kennungen werden je Anschluss gezählt: Durchprobieren wird gebremst.
      * Bekannte Turniere bleiben immer erreichbar (alle Geräte in der Halle teilen sich oft eine Adresse).
      */
+    /** Kennung aus einer Anfrage: Leerzeichen raus, Großbuchstaben */
+    static String turnierId(String id) {
+        return id == null ? null : id.replaceAll("\\s+", "").toUpperCase(java.util.Locale.ROOT);
+    }
+
     private Speicher.Turnier turnierLaden(String id, Anf a) {
+        id = turnierId(id);
         Speicher.Turnier t;
         synchronized (this) {
             t = id == null || !P_TURNIER_ID.matcher(id).matches() ? null : turniere.get(id);
@@ -661,13 +671,14 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             "abgegeben", wahr(t.kopf.get("abgegeben")));
     }
 
-    /** Neue Turnierkennung: 8 Ziffern, nicht zu einfach, noch nicht vergeben */
+    /** Neue Turnierkennung: 8 Zeichen ohne Verwechsler (0/O, 1/I/L), mit Buchstaben und Ziffern, frei */
     private String neueTurnierId() {
-        String id;
-        do {
-            id = String.valueOf(10_000_000 + zufall.nextInt(90_000_000));
-        } while (!codeGueltig(id) || turniere.containsKey(id));
-        return id;
+        while (true) {
+            StringBuilder b = new StringBuilder();
+            for (int i = 0; i < 8; i++) b.append(KENNUNG_ZEICHEN.charAt(zufall.nextInt(KENNUNG_ZEICHEN.length())));
+            String id = b.toString();
+            if (id.matches(".*[A-Z].*") && id.matches(".*[0-9].*") && !turniere.containsKey(id)) return id;
+        }
     }
 
     private boolean leitungsRecht(Map<String, Object> s, Speicher.Turnier t) {
@@ -757,9 +768,17 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             String m = k == null ? null : email(Json.alsText(k.get("email")));
             if (m != null) empf.add(m);
         }
+        String wunsch = Json.alsText(a.rumpf.get("kennung"));
+        wunsch = wunsch == null || wunsch.trim().isEmpty() ? null : turnierId(wunsch);
+        if (wunsch != null && (!P_TURNIER_ID.matcher(wunsch).matches() || wunsch.contains("--"))) {
+            throw new ApiFehler("ungueltig", "Die Wunschkennung braucht 4 bis 12 Zeichen: Buchstaben A–Z, Ziffern und Bindestriche (nicht am Anfang oder Ende).");
+        }
         Speicher.Turnier t;
         synchronized (this) {
-            String id = neueTurnierId();
+            if (wunsch != null && turniere.containsKey(wunsch)) {
+                throw new ApiFehler("konflikt", "Die Kennung „" + wunsch + "“ ist schon vergeben. Bitte eine andere wählen.");
+            }
+            String id = wunsch != null ? wunsch : neueTurnierId();
             long j = jetzt();
             t = new Speicher.Turnier(id, Json.obj(
                 "name", name, "datum", datum, "angelegt", iso(j), "angelegtSek", j,
@@ -2078,7 +2097,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
 
     private Map<String, Object> uebernehmen(Anf a) {
         selbst(a);
-        String id = Json.alsText(a.rumpf.get("turnier"));
+        String id = turnierId(Json.alsText(a.rumpf.get("turnier")));
         if (id == null || !P_TURNIER_ID.matcher(id).matches()) throw new ApiFehler("ungueltig", "Turnier fehlt.");
         String[] z = onlineZugang();
         synchronized (this) {

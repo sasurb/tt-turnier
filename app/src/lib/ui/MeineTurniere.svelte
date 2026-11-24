@@ -7,13 +7,20 @@
   import { app, anmeldungAbgelaufen, fehlerText, kontoTurnierOeffnen } from '../app.svelte';
   import { codeAnzeige } from '../code';
   import { istZentrale } from '../zentrale.svelte';
+  import { darfAnlegen, meineSparten, spartenName } from '../sparte.svelte';
 
   /** Alle Turniere des angemeldeten Kontos (Konto-Menü → „Meine Turniere“). */
   let liste = $state<TurnierInfo[] | null>(null);
   let fehler = $state('');
   let suche = $state('');
   const zentrale = $derived(istZentrale());
-  const gefiltert = $derived((liste ?? []).filter((t) => !suche.trim() || t.name.toLowerCase().includes(suche.trim().toLowerCase()) || t.id.includes(suche.replace(/\s/g, ''))));
+  const gefiltert = $derived((liste ?? []).filter((t) => !suche.trim() || t.name.toLowerCase().includes(suche.trim().toLowerCase()) || t.id.includes(suche.replace(/\s/g, '').toUpperCase())));
+  /** Mehrere Sparten: Name der Sparte am Turnier */
+  const mehrereSparten = $derived(meineSparten().length > 1);
+  function sparteVon(t: TurnierInfo) {
+    const s = meineSparten().find((x) => x.id === t.sparte);
+    return s ? spartenName(s) : '';
+  }
 
   onMount(async () => {
     if (!app.sitzung) {
@@ -33,7 +40,9 @@
 </script>
 
 <h1>{T.start.meineTurniere}</h1>
-<a class="knopf" href={linkZu('neu')} data-testid="neues-turnier">+ {T.start.neuesTurnier}</a>
+{#if darfAnlegen()}
+  <a class="knopf" href={linkZu('neu')} data-testid="neues-turnier">+ {T.start.neuesTurnier}</a>
+{/if}
 
 <section class="karte">
   {#if fehler}
@@ -41,7 +50,7 @@
   {:else if !liste}
     <p class="leise">{T.app.laden}</p>
   {:else if liste.length === 0}
-    <p class="leise">{T.start.keineTurniere}</p>
+    <p class="leise">{darfAnlegen() ? T.start.keineTurniere : T.start.keineTurniereEingeladen}</p>
   {:else}
     {#if liste.length > 6}
       <input bind:value={suche} placeholder={T.tspieler.suchen} aria-label={T.tspieler.suchen} autocomplete="off" />
@@ -52,7 +61,7 @@
           <button class="zeile" onclick={() => kontoTurnierOeffnen(t)}>
             <strong>{t.name}</strong>
             <span class="leise">
-              {datum(t.datum)}{t.datum ? ' · ' : ''}<span class="kennung">{codeAnzeige(t.id)}</span>
+              {datum(t.datum)}{t.datum ? ' · ' : ''}<span class="kennung">{codeAnzeige(t.id)}</span>{#if mehrereSparten && sparteVon(t)} · {sparteVon(t)}{/if}
               {#if t.zentrale}<span class="marke">{T.zentrale.liegtAndere(t.zentrale)}</span>{:else}<span class="marke online">{zentrale ? T.zentrale.modus : T.start.modusOnline}</span>{/if}
             </span>
           </button>

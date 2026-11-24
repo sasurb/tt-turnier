@@ -28,7 +28,7 @@ async function layoutPruefen(page: Page, bereich?: Locator) {
 }
 
 function linkAus(text: string | undefined): string {
-  const m = /(http:\/\/127\.0\.0\.1:\d+\/#\/meldung\/\d{8}\/[a-f0-9]{64})/.exec(text ?? '');
+  const m = /(http:\/\/127\.0\.0\.1:\d+\/#\/meldung\/[A-Z0-9-]+\/[a-f0-9]{64})/.exec(text ?? '');
   expect(m, 'Link in der Mail').not.toBeNull();
   return m![1]!;
 }
@@ -45,7 +45,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await page.getByLabel('Datum').fill('2027-03-20');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
-  const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
+  const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
 
   // Ein Tisch, Konkurrenz mit Startgeld und Höchstzahl 2
   await angabenSetzen(page, { tische: '1' });
@@ -91,6 +91,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await expect(p.getByTestId('meldung-konkurrenz')).toBeChecked(); // einzige Konkurrenz ist vorausgewählt
   await expect(p.getByTestId('meldung-senden')).toBeDisabled();
   await p.getByTestId('meldung-datenschutz').check();
+  await p.getByTestId('meldung-volljaehrig').check();
   await layoutPruefen(p, p.locator('main'));
   await bild(p, '91-anmeldeformular');
   await p.getByTestId('meldung-senden').click();
@@ -117,7 +118,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
           await fetch('api/index.php?r=anmeldung.senden', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ turnier: t, vorname: v, nachname: 'Netz', verein: '', email: e, konkurrenzen: [{ id: '' }], minderjaehrig: false, datenschutz: true }),
+            body: JSON.stringify({ turnier: t, vorname: v, nachname: 'Netz', verein: '', email: e, konkurrenzen: [{ id: '' }], volljaehrig: true, datenschutz: true }),
           })
         ).status,
       [tid, mail(n), n.toUpperCase()],
@@ -132,7 +133,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
           await fetch('api/index.php?r=anmeldung.senden', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ turnier: t, vorname: v, nachname: 'Netz', verein: '', email: e, konkurrenzen: [{ id: k }], minderjaehrig: jung === '1', einverstanden: true, datenschutz: true }),
+            body: JSON.stringify({ turnier: t, vorname: v, nachname: 'Netz', verein: '', email: e, konkurrenzen: [{ id: k }], volljaehrig: jung !== 'x', datenschutz: true }),
           })
         ).status,
       [tid, mail(n), n === 'ben' ? 'Ben' : 'Cem', konkId, n === 'cem' ? '1' : '0'],

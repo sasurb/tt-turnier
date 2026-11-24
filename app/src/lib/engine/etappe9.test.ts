@@ -214,7 +214,7 @@ describe('Etappe 9: IBAN und GiroCode', () => {
 describe('Etappe 9: Übernahme der Online-Anmeldungen', () => {
   const anm = (id: string, k: AnmeldungEintrag['konkurrenzen'], extra: Partial<AnmeldungEintrag> = {}): AnmeldungEintrag => ({
     id, vorname: id.toUpperCase(), nachname: 'Muster', verein: 'TV', email: `${id}@x.de`, ttr: 1400, klasse: null, geschlecht: 'w', jahrgang: 2010,
-    minderjaehrig: false, angelegt: '2026-11-16T10:00:00Z', bestaetigt: '2026-11-16T10:05:00Z', konkurrenzen: k, spieler: null, ...extra,
+    angelegt: '2026-11-16T10:00:00Z', bestaetigt: '2026-11-16T10:05:00Z', konkurrenzen: k, spieler: null, ...extra,
   });
   it('legt Spieler mit fester ID an, meldet in Einzel, Doppel als Hinweis; nur gewählte Angaben', () => {
     const t = new Baukasten();

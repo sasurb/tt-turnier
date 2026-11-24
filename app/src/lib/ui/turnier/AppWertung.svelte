@@ -5,7 +5,7 @@
   import { spielerName } from '../../engine/modell';
   import { appWertungen, poolUebernahmePlanen } from '../../engine/appwertung';
   import { hobbyStufe } from '../../engine/stufen';
-  import type { TurnierZustand } from '../../engine/zustand';
+  import { appWertungAn, type TurnierZustand } from '../../engine/zustand';
   import { pool, poolLaden, poolSpeichern } from '../../pool.svelte';
   import Hilfe from '../Hilfe.svelte';
   import { ART } from '@shared/protokoll';
@@ -48,9 +48,10 @@
   }
 </script>
 
-{#if ids.length}
+{#if ids.length && appWertungAn(z)}
   <details class="karte abschnitt" data-testid="abschnitt-appwertung" open={auf ?? geplant.length > 0} ontoggle={(e) => (auf = e.currentTarget.open)}>
     <summary><span class="kopf"><h2 class="titel">{T.appwertung.titel}</h2><Hilfe text={T.appwertung.hilfe} /></span></summary>
+    <p class="leise">{T.appwertung.profiling}</p>
     <ul class="liste">
       {#each ids as id (id)}
         {@const w = werte[id]!}

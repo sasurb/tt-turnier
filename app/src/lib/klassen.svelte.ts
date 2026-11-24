@@ -2,10 +2,11 @@ import { MAX_KLASSEN } from '@shared/protokoll';
 import { app } from './app.svelte';
 import { api } from './dienste';
 import { geraetKlassen, setzeGeraetKlassen } from './einstellungen';
+import { aktiveSparteId } from './sparte.svelte';
 
 /**
  * Begriffe für Leistungsklassen (z. B. „Anfänger“, „Fortgeschritten“, „A“, „B“).
- * Mit Konto liegen sie im Konto auf dem Server (auf allen Geräten gleich), sonst nur auf dem Gerät.
+ * Mit Konto liegen sie in der Sparte auf dem Server (ab 0.17; auf allen Geräten gleich), sonst nur auf dem Gerät.
  * Jeder neu eingetippte Begriff wird gemerkt und beim nächsten Tippen vorgeschlagen.
  */
 export const klassen = $state<{ liste: string[]; geladen: boolean }>({
@@ -25,7 +26,7 @@ export async function klassenLaden(): Promise<void> {
     return;
   }
   try {
-    klassen.liste = (await api.kontoEinstellungen(s.token)).klassen;
+    klassen.liste = (await api.kontoEinstellungen(s.token, aktiveSparteId())).klassen;
     setzeGeraetKlassen(klassen.liste); // Kopie für den Betrieb ohne Netz
   } catch {
     klassen.liste = geraetKlassen();
@@ -40,7 +41,7 @@ export async function klassenSpeichern(liste: string[]): Promise<void> {
   klassen.liste = sauber;
   setzeGeraetKlassen(sauber);
   const s = onlineKonto();
-  if (s) await api.kontoEinstellungenSetzen(s.token, { klassen: sauber });
+  if (s) await api.kontoEinstellungenSetzen(s.token, { klassen: sauber }, aktiveSparteId());
 }
 
 /** Begriffe merken, die gerade eingetippt wurden (nur neue; still, Fehler ignoriert) */

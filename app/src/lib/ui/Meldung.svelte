@@ -26,11 +26,11 @@
   let abgemeldet = $state(false);
 
   let f = $state({ vorname: '', nachname: '', verein: '', email: '', ttr: '', klasse: '', geschlecht: '', jahrgang: '' });
-  let wahl = $state<Record<string, { an: boolean; partner: string }>>({});
+  let wahl = $state<Record<string, { an: boolean; partner: string; partnerEmail: string }>>({});
   /** Q-TTR vorhanden (ja) oder Einstufung mit 4 Fragen (nein) */
   let hatTtr = $state<'ja' | 'nein' | ''>('');
-  let minderjaehrig = $state(false);
-  let einverstanden = $state(false);
+  /** Ab 0.17 (Frage 8C): online nur ab 18 */
+  let volljaehrig = $state(false);
   let datenschutz = $state(false);
   let website = $state(''); // Fangfeld für Bots
 
@@ -43,7 +43,8 @@
       /.+@.+\..+/.test(f.email.trim()) &&
       gewaehlt.length > 0 &&
       datenschutz &&
-      (!minderjaehrig || einverstanden) &&
+      volljaehrig &&
+      gewaehlt.every(([, w]) => !w.partner.trim() || /.+@.+\..+/.test(w.partnerEmail.trim())) &&
       (!pflicht.has('ttr') || (hatTtr !== '' && f.ttr !== '')) &&
       (!pflicht.has('klasse') || !!f.klasse.trim()) &&
       (!pflicht.has('geschlecht') || !!f.geschlecht) &&
@@ -61,7 +62,7 @@
       if (schluessel) stand = await api.anmeldungStand(turnier, schluessel);
       else {
         info = await api.anmeldungInfo(turnier);
-        wahl = Object.fromEntries(info.einstellungen.konkurrenzen.map((k) => [k.id, { an: info!.einstellungen.konkurrenzen.length === 1, partner: '' }]));
+        wahl = Object.fromEntries(info.einstellungen.konkurrenzen.map((k) => [k.id, { an: info!.einstellungen.konkurrenzen.length === 1, partner: '', partnerEmail: '' }]));
       }
     } catch (x) {
       fehler = fehlerText(x, T.app.fehlerAllgemein);
@@ -99,9 +100,8 @@
         klasse: pflicht.has('klasse') ? f.klasse.trim() || null : null,
         geschlecht: pflicht.has('geschlecht') ? ((f.geschlecht || null) as 'm' | 'w' | 'd' | null) : null,
         jahrgang: pflicht.has('jahrgang') ? zahl(f.jahrgang) : null,
-        konkurrenzen: gewaehlt.map(([id, w]) => ({ id, ...(w.partner.trim() ? { partner: w.partner.trim() } : {}) })),
-        minderjaehrig,
-        einverstanden: minderjaehrig ? einverstanden : false,
+        konkurrenzen: gewaehlt.map(([id, w]) => ({ id, ...(w.partner.trim() ? { partner: w.partner.trim(), partnerEmail: w.partnerEmail.trim() } : {}) })),
+        volljaehrig,
         datenschutz,
         website,
       });
@@ -126,11 +126,8 @@
       sendet = false;
     }
   }
-  // Jahrgang unter 18 (im Zweifel): Einverständnis der Erziehungsberechtigten abfragen
-  $effect(() => {
-    const jg = Number(f.jahrgang);
-    if (f.jahrgang.length === 4 && Number.isInteger(jg) && new Date().getFullYear() - jg <= 18) minderjaehrig = true;
-  });
+  // Jahrgang unter 18: Hinweis statt Absenden (Minderjährige meldet der Verein bzw. eine Mannschaftsleitung)
+  const zuJung = $derived(f.jahrgang.length === 4 && Number.isInteger(Number(f.jahrgang)) && new Date().getFullYear() - Number(f.jahrgang) < 18);
 
   async function abmelden(konkurrenz?: string) {
     if (!schluessel || !confirm(T.meldung.abmeldenFrage)) return;
@@ -164,7 +161,7 @@
     <ul class="liste" data-testid="meldung-stand">
       {#each stand.konkurrenzen as k (k.id)}
         <li class="reihe zwischen">
-          <span class="wachsen">{k.name}: <strong class="st-{k.status}">{k.status === null ? T.meldung.unbestaetigt : k.status === 'platz' ? T.meldung.platzSicher : k.status === 'warteliste' ? T.meldung.warteliste(k.position) : T.meldung.abgemeldet}</strong></span>
+          <span class="wachsen">{k.name}{#if k.partner} <span class="leise">({T.meldung.mit(k.partner)}{k.partnerStatus ? ` · ${T.meldung.partnerStatus[k.partnerStatus]}` : ''})</span>{/if}: <strong class="st-{k.status}">{k.status === null ? T.meldung.unbestaetigt : k.status === 'platz' ? T.meldung.platzSicher : k.status === 'warteliste' ? T.meldung.warteliste(k.position) : T.meldung.abgemeldet}</strong></span>
           {#if stand.bestaetigt && stand.abmeldbar && k.status !== 'abgemeldet' && stand.konkurrenzen.filter((x) => x.status !== 'abgemeldet').length > 1}
             <button class="zweit klein" disabled={sendet} onclick={() => abmelden(k.id)}>{T.meldung.abmelden}</button>
           {/if}
@@ -205,6 +202,8 @@
   {#if info.einstellungen.schluss}<p class="leise">{T.meldung.schluss(new Date(info.einstellungen.schluss).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}</p>{/if}
   {#if gesendet}
     <div class="meldung ok" role="status" data-testid="meldung-gesendet">{T.meldung.gesendet}</div>
+  {:else if info.jugend}
+    <div class="meldung info" role="status" data-testid="meldung-jugend">{T.meldung.jugend}</div>
   {:else if !info.moeglich}
     <div class="meldung info" role="status">{T.meldung.geschlossen}</div>
   {:else}
@@ -242,12 +241,22 @@
           </label>
           {#if k.art !== 'einzel' && wahl[k.id]!.an}
             <label class="einzug">{T.meldung.partner}<input bind:value={wahl[k.id]!.partner} maxlength="80" /></label>
+            {#if wahl[k.id]!.partner.trim()}
+              <div class="einzug">
+                <div class="label-zeile"><label for="pm-{k.id}">{T.meldung.partnerEmail}</label><Hilfe text={T.meldung.partnerEmailHilfe} /></div>
+                <input id="pm-{k.id}" type="email" bind:value={wahl[k.id]!.partnerEmail} maxlength="190" autocomplete="off" inputmode="email" />
+              </div>
+            {/if}
           {/if}
         {/each}
       </fieldset>
 
-      <label class="haken"><input type="checkbox" bind:checked={minderjaehrig} /> {T.meldung.minderjaehrig}</label>
-      {#if minderjaehrig}<label class="haken einzug"><input type="checkbox" bind:checked={einverstanden} /> {T.meldung.einverstanden}</label>{/if}
+      <div class="label-zeile">
+        <label class="haken"><input type="checkbox" bind:checked={volljaehrig} data-testid="meldung-volljaehrig" /> {T.meldung.volljaehrig}</label>
+        <Hilfe text={T.meldung.volljaehrigHilfe} />
+      </div>
+      {#if zuJung}<div class="meldung info">{T.meldung.zuJung}</div>{/if}
+      <p class="leise textbaustein">{T.textbaustein.text(info.turnier.veranstalter)}</p>
       <label class="haken"><input type="checkbox" bind:checked={datenschutz} data-testid="meldung-datenschutz" /> <span>{T.meldung.datenschutz} <a href={linkZu('datenschutz')} target="_blank" rel="noopener">{T.meldung.datenschutzLink}</a></span></label>
       <div class="fang" aria-hidden="true"><label for="mw">Website</label><input id="mw" bind:value={website} tabindex="-1" autocomplete="off" /></div>
       {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}

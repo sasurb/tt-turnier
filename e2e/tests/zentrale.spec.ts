@@ -66,7 +66,7 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
 
   // Zugänge: Turnierkennung 8 Ziffern, Links zeigen auf die Adresse im WLAN, nicht auf 127.0.0.1
   await page.getByRole('link', { name: 'Zugänge' }).click();
-  expect((await page.getByTestId('turnierkennung').innerText()).replace(/\s/g, '')).toMatch(/^\d{8}$/);
+  expect((await page.getByTestId('turnierkennung').innerText()).replace(/\s/g, '')).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/);
   const link = await page.getByLabel('Link').inputValue();
   expect(link.startsWith(lan)).toBe(true);
   // Die Zentrale hat für die Leitung eine eigene Kennung

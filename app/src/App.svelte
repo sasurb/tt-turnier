@@ -28,6 +28,18 @@
   import Meldung from './lib/ui/Meldung.svelte';
   import Handbuch from './lib/ui/Handbuch.svelte';
   import Spenden from './lib/ui/Spenden.svelte';
+  import Sparte from './lib/ui/Sparte.svelte';
+  import Ausschuss from './lib/ui/Ausschuss.svelte';
+  import Einladung from './lib/ui/Einladung.svelte';
+  import Partner from './lib/ui/Partner.svelte';
+  import SicherungLink from './lib/ui/SicherungLink.svelte';
+  import Bedingungen from './lib/ui/Bedingungen.svelte';
+  import Ueber from './lib/ui/Ueber.svelte';
+  import BedingungenDialog from './lib/ui/BedingungenDialog.svelte';
+  import { turnierIdNorm } from './lib/code';
+
+  /** Turnierkennungen aus Links ohne Groß/klein (ab 0.17) */
+  const tid = $derived(route.param ? turnierIdNorm(route.param) : null);
 
   onMount(() => {
     void serverLaden();
@@ -38,14 +50,15 @@
   });
 </script>
 
-{#if route.seite === 'live' && route.param}
-  {#key route.param}<LiveAnsicht id={route.param} />{/key}
-{:else if route.seite === 'druck' && route.param}
-  {#key route.param}<DruckAnsicht id={route.param} art={route.rest[0] ?? ''} param={route.rest[1] ?? null} />{/key}
+{#if route.seite === 'live' && tid}
+  {#key tid}<LiveAnsicht id={tid} />{/key}
+{:else if route.seite === 'druck' && tid}
+  {#key tid}<DruckAnsicht id={tid} art={route.rest[0] ?? ''} param={route.rest[1] ?? null} />{/key}
 {:else}
 <Kopf />
 
 <main class="inhalt">
+  <BedingungenDialog />
   {#if app.server.art === 'bereit' && app.server.offline}
     <div class="meldung info" role="status" data-testid="offline">{T.app.offline}</div>
   {/if}
@@ -54,9 +67,23 @@
   {:else if route.seite === 'neu'}
     <NeuesTurnier />
   {:else if route.seite === 'anmelden'}
-    <Anmelden />
+    {#key route.param}<Anmelden zurueck={route.param ? [route.param, ...route.rest].join('/') : null} />{/key}
   {:else if route.seite === 'registrieren'}
-    <Registrieren />
+    {#key route.param}<Registrieren einladung={route.param} />{/key}
+  {:else if route.seite === 'sparte'}
+    {#key route.param}<Sparte id={route.param ? Number(route.param) : null} />{/key}
+  {:else if route.seite === 'ausschuss' && route.param}
+    {#key route.param}<Ausschuss id={Number(route.param)} />{/key}
+  {:else if route.seite === 'einladung' && route.param}
+    {#key route.param}<Einladung schluessel={route.param} />{/key}
+  {:else if route.seite === 'partner' && tid && route.rest[0]}
+    {#key route.rest[0]}<Partner turnier={tid} schluessel={route.rest[0]} />{/key}
+  {:else if route.seite === 'sicherung' && tid && route.rest[0]}
+    {#key route.rest[0]}<SicherungLink turnier={tid} schluessel={route.rest[0]} />{/key}
+  {:else if route.seite === 'bedingungen'}
+    <Bedingungen />
+  {:else if route.seite === 'ueber'}
+    <Ueber />
   {:else if route.seite === 'vergessen'}
     <Vergessen />
   {:else if route.seite === 'zuruecksetzen'}
@@ -87,12 +114,12 @@
     <Spenden />
   {:else if route.seite === 'hilfe'}
     <Handbuch kapitel={route.param} />
-  {:else if route.seite === 'meldung' && route.param}
-    {#key `${route.param}/${route.rest[0] ?? ''}`}<Meldung turnier={route.param} schluessel={route.rest[0] ?? null} />{/key}
-  {:else if (route.seite === 't' || route.seite === 'c') && route.param}
-    {#key route.param}
+  {:else if route.seite === 'meldung' && tid}
+    {#key `${tid}/${route.rest[0] ?? ''}`}<Meldung turnier={tid} schluessel={route.rest[0] ?? null} />{/key}
+  {:else if (route.seite === 't' || route.seite === 'c') && tid}
+    {#key tid}
       <TurnierAnsicht
-        id={route.param}
+        id={tid}
         reiter={route.seite === 't' ? (route.rest[0] ?? null) : null}
         code={route.seite === 'c' ? (route.rest[0] ?? null) : null}
         weitere={route.seite === 't' ? route.rest.slice(1) : []}

@@ -162,7 +162,12 @@ public final class KernTest {
         a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Hallencup", "datum", "2026-12-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         String kontoKennung = (String) Json.alsObjekt(a.g("leitung")).get("code");
-        pruefe(a.s == 200 && tid.matches("^[0-9]{8}$") && Zentrale.codeGueltig(kontoKennung), "Turnier angelegt: Kennung 8 Ziffern, Leitungskennung");
+        pruefe(a.s == 200 && tid.matches("^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$") && Zentrale.codeGueltig(kontoKennung), "Turnier angelegt: Kennung 8 Zeichen ohne Verwechsler, Leitungskennung");
+        pruefe(rufe(z, "GET", "turnier", null, null, q("id", tid.toLowerCase(java.util.Locale.ROOT)), false).s == 200, "Kennung ohne Groß/klein");
+        A w = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Wunschturnier", "kennung", "hallen-cup"), konto);
+        pruefe(w.s == 200 && "HALLEN-CUP".equals(Json.alsObjekt(w.g("turnier")).get("id")), "Wunschkennung (Großbuchstaben)");
+        pruefe(rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Wunschturnier", "kennung", "HALLEN-CUP"), konto).s == 409, "Wunschkennung schon vergeben");
+        pruefe(rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Wunschturnier", "kennung", "-X-"), konto).s == 400, "ungültige Wunschkennung");
         String leitA = a.t("token");
         a = rufe(z, "GET", "turnier", null, null, q("id", tid), false);
         pruefe(a.s == 200 && "Hallencup".equals(Json.alsObjekt(a.g("turnier")).get("name")) && !Json.alsObjekt(a.g("turnier")).containsKey("rechte"), "Turnier öffentlich lesbar");
@@ -475,7 +480,7 @@ public final class KernTest {
         z.setzePort(8080);
         String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
         A a = rufe(z, "GET", "info", null, null);
-        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.16.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
+        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.17.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
         a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Kassencup", "datum", "2027-02-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         String leit = a.t("token");
@@ -608,7 +613,7 @@ public final class KernTest {
                 "name", "Admin", "email", "admin-" + zuf + "@example.org", "passwort", "admin-passwort"), null);
         }
         String mail = "zentrale-" + zuf + "@example.org";
-        Map<String, Object> reg = o.rufe(basis, "registrieren", null, Json.obj("name", "TTC Zentral", "email", mail, "passwort", "zentral-pw1", "website", ""), null);
+        Map<String, Object> reg = o.rufe(basis, "registrieren", null, Json.obj("name", "TTC Zentral", "email", mail, "passwort", "zentral-pw1", "website", "", "volljaehrig", true, "bedingungen", true), null);
         String vk = (String) reg.get("token");
         Map<String, Object> t = o.rufe(basis, "turnier.anlegen", null, Json.obj("name", "Online vorbereitet", "datum", "2026-12-12",
             "sicherungAn", liste(mail)), vk);

@@ -5,12 +5,12 @@
   import { api } from '../dienste';
   import { app, fehlerText } from '../app.svelte';
   import { ApiFehler } from '../engine/api';
-  import { codeAnzeige, turnierKennungLesen } from '../code';
+  import { codeAnzeige, turnierKennungEingabe, turnierKennungLesen } from '../code';
   import Hilfe from './Hilfe.svelte';
   import KennungFeld from './KennungFeld.svelte';
 
   /**
-   * Schritt 1: Turnierkennung (8 Ziffern) oder Link → Turnier wird gesucht und angezeigt.
+   * Schritt 1: Turnierkennung (ab 0.17 Buchstaben und Ziffern, z. B. „K7QM 3XRP“, oder Wunschkennung) oder Link → Turnier wird gesucht und angezeigt.
    * Schritt 2: eigene Kennung (Leitung, Helfer, Spieler) oder „Nur zuschauen“.
    */
   let kennung = $state('');
@@ -74,14 +74,29 @@
     <button type="button" class="zweit klein" onclick={() => (turnier = null)}>{T.beitreten.zurueck}</button>
   {:else}
     <div class="label-zeile"><label for="tk">{T.beitreten.kennung}</label><Hilfe text={T.beitreten.kennungHilfe} /></div>
-    <KennungFeld id="tk" bind:wert={kennung} label={T.beitreten.kennung} autofocus />
+    <input
+      id="tk"
+      class="turnierkennung"
+      value={kennung}
+      oninput={(e) => {
+        kennung = turnierKennungEingabe(e.currentTarget.value);
+        e.currentTarget.value = kennung;
+      }}
+      autocomplete="off"
+      autocapitalize="characters"
+      spellcheck="false"
+      maxlength="14"
+      placeholder="K7QM3XRP"
+      aria-describedby="tk-hinweis"
+    />
+    <p class="leise" id="tk-hinweis">{T.beitreten.kennungFormat}</p>
     <details class="link" bind:open={linkOffen}>
       <summary>{T.beitreten.linkEinfuegen}</summary>
       <input bind:value={link} autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…/#/t/…" aria-label={T.beitreten.linkEinfuegen} />
     </details>
     {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
     <div class="reihe" style="margin-top:12px">
-      <button type="submit" disabled={sucht || (!(linkOffen && link.trim()) && kennung.length !== 8)}>{T.beitreten.weiter}</button>
+      <button type="submit" disabled={sucht || (!(linkOffen && link.trim()) && kennung.length < 4)}>{T.beitreten.weiter}</button>
       <a class="knopf zweit" href={linkZu('')}>{T.app.abbrechen}</a>
     </div>
   {/if}
@@ -101,6 +116,13 @@
 {/if}
 
 <style>
+  .turnierkennung {
+    font-family: ui-monospace, monospace;
+    font-size: 1.5rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    max-width: 16ch;
+  }
   .gefunden { margin: 6px 0 12px; }
   .kennung { font-family: ui-monospace, monospace; letter-spacing: 0.05em; }
   .link { margin-top: 10px; }

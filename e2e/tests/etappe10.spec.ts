@@ -59,7 +59,7 @@ test('Hilfe: Suche, Rollen, Kapitel-Link', async ({ page }) => {
   await expect(page).toHaveURL(/#\/hilfe$/);
 });
 
-test('Admin schaltet die Online-Anmeldung für ein Konto frei', async ({ page }, info) => {
+test('Admin schaltet die Online-Anmeldung für eine Sparte frei', async ({ page }, info) => {
   await page.goto('./#/anmelden');
   await page.getByLabel('E-Mail').fill(ADMIN.email);
   await page.getByLabel('Passwort', { exact: true }).fill(ADMIN.passwort);
@@ -75,13 +75,15 @@ test('Admin schaltet die Online-Anmeldung für ein Konto frei', async ({ page },
   await page.locator('#kp').fill('freigabe123');
   await page.getByRole('button', { name: 'Konto anlegen' }).click();
   await expect(page.getByText('Konto angelegt.')).toBeVisible();
-  const zeile = page.locator('li.reihe', { hasText: mail });
+  // ab 0.17: Freigabe je Sparte (das neue Konto hat eine eigene Sparte mit seinem Namen als Verein)
+  const sparte = `TTC Freigabe ${info.project.name} – Tischtennis`;
+  const zeile = page.getByTestId('admin-sparten').locator('li.reihe', { hasText: sparte });
   const auswahl = zeile.getByTestId('admin-anmeldung');
   await expect(auswahl).toHaveValue('auto');
   await auswahl.selectOption('frei');
   await expect(page.getByText(/Online-Anmeldung für „TTC Freigabe/)).toBeVisible();
   await page.reload();
-  await expect(page.locator('li.reihe', { hasText: mail }).getByTestId('admin-anmeldung')).toHaveValue('frei');
+  await expect(page.getByTestId('admin-sparten').locator('li.reihe', { hasText: sparte }).getByTestId('admin-anmeldung')).toHaveValue('frei');
   await layoutPruefen(page, page.locator('main'));
   await bild(page, 'e10-verwaltung');
 });

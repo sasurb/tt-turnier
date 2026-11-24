@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { aktiveSparteId, spartenZumAnlegen } from '../sparte.svelte';
   import { ART, type Sicherung } from '@shared/protokoll';
   import { T } from '../texte';
   import { gehe, linkZu } from '../router.svelte';
@@ -40,7 +41,8 @@
       let sitzung: TurnierSitzung;
       let einmalToken: string | null = null;
       if (ziel === 'online' && app.sitzung) {
-        const a = await api.turnierAnlegen(app.sitzung.token, { name: s.turnier.name, datum: s.turnier.datum });
+        const sp = spartenZumAnlegen().find((x) => x.id === aktiveSparteId()) ?? spartenZumAnlegen()[0];
+        const a = await api.turnierAnlegen(app.sitzung.token, { name: s.turnier.name, datum: s.turnier.datum, ...(sp ? { sparte: sp.id } : {}) });
         einmalToken = a.token;
         id = a.turnier.id;
         turnierMerken({ id, name: a.turnier.name, datum: a.turnier.datum, modus: 'online', rolle: 'zuschauer', token: null, konto: true });

@@ -35,6 +35,17 @@ import type {
   TurnierEinstellungenAnfrage,
   TurnierZugangAntwort,
   ZentraleStatus,
+  SparteAntwort,
+  Sparte,
+  SparteKurz,
+  AusschussKurz,
+  SparteRolle,
+  EinladenAntwort,
+  EinladungInfo,
+  AusschussAntwort,
+  TurnierKontenAntwort,
+  PartnerAntwort,
+  KontoLoeschenAnfrage,
 } from '@shared/protokoll';
 
 export interface IchAntwort {
@@ -146,10 +157,94 @@ export class Api {
       rumpf: { schluessel, neu },
     });
   }
-  kontoLoeschen(token: string, passwort: string) {
+  /** Ab 0.17: Nutzungsbedingungen (mit AVV) annehmen */
+  bedingungenAnnehmen(token: string) {
+    return this.rufe<Konto>('POST', 'konto.bedingungen', { token, rumpf: { zustimmung: true, volljaehrig: true } });
+  }
+  /* ---------- Sparten, Einladungen, Ausschüsse (ab 0.17) ---------- */
+  sparte(token: string, id: number) {
+    return this.rufe<SparteAntwort>('GET', 'sparte', { token, query: { id: String(id) } });
+  }
+  sparten(token: string) {
+    return this.rufe<{ sparten: Sparte[] }>('GET', 'sparten', { token });
+  }
+  sparteAnlegen(token: string, verein: string, name: string) {
+    return this.rufe<{ sparte: Sparte; sparten: SparteKurz[]; ausschuesse: AusschussKurz[] }>('POST', 'sparte.anlegen', { token, rumpf: { verein, name, avv: true } });
+  }
+  sparteAendern(token: string, sparte: number, a: { name?: string; verein?: string; avv?: true }) {
+    return this.rufe<{ sparte: Sparte }>('POST', 'sparte.aendern', { token, rumpf: { sparte, ...a } });
+  }
+  sparteAnmeldung(token: string, id: number, anmeldung: 'auto' | 'frei' | 'gesperrt') {
+    return this.rufe<{ sparte: Sparte }>('POST', 'sparte.anmeldung', { token, rumpf: { id, anmeldung } });
+  }
+  sparteLoeschen(token: string, sparte: number, passwort: string) {
+    return this.rufe<{ ok: true; sparten: SparteKurz[]; ausschuesse: AusschussKurz[] }>('POST', 'sparte.loeschen', { token, rumpf: { sparte, passwort } });
+  }
+  sparteEinladen(token: string, sparte: number, email: string, name: string, rolle: SparteRolle, anlegen: boolean) {
+    return this.rufe<EinladenAntwort>('POST', 'sparte.einladen', { token, rumpf: { sparte, email, name, rolle, anlegen } });
+  }
+  turnierEinladen(token: string, turnier: string, email: string, name: string) {
+    return this.rufe<EinladenAntwort & TurnierKontenAntwort>('POST', 'sparte.einladen', { token, rumpf: { turnier, email, name } });
+  }
+  einladungInfo(schluessel: string) {
+    return this.rufe<{ einladung: EinladungInfo }>('POST', 'einladung.info', { rumpf: { schluessel } });
+  }
+  einladungAnnehmen(token: string, schluessel: string) {
+    return this.rufe<{ ok: true; art: string; turnier?: string; ausschuss?: number; sparte?: number; sparten: SparteKurz[]; ausschuesse: AusschussKurz[] }>(
+      'POST', 'einladung.annehmen', { token, rumpf: { schluessel } });
+  }
+  einladungZurueckziehen(token: string, id: string) {
+    return this.rufe<{ ok: true }>('POST', 'einladung.zurueckziehen', { token, rumpf: { id } });
+  }
+  mitgliedAendern(token: string, sparte: number, konto: number, a: { rolle?: SparteRolle; anlegen?: boolean }) {
+    return this.rufe<SparteAntwort>('POST', 'mitglied.aendern', { token, rumpf: { sparte, konto, ...a } });
+  }
+  mitgliedEntfernen(token: string, sparte: number, konto: number) {
+    return this.rufe<SparteAntwort & { ok?: true }>('POST', 'mitglied.entfernen', { token, rumpf: { sparte, konto } });
+  }
+  turnierKonten(token: string, turnier: string) {
+    return this.rufe<TurnierKontenAntwort>('GET', 'turnier.konten', { token, query: { id: turnier } });
+  }
+  turnierKontoEntfernen(token: string, turnier: string, konto: number) {
+    return this.rufe<TurnierKontenAntwort>('POST', 'turnier.konto.entfernen', { token, rumpf: { turnier, konto } });
+  }
+  ausschuss(token: string, id: number) {
+    return this.rufe<AusschussAntwort>('GET', 'ausschuss', { token, query: { id: String(id) } });
+  }
+  ausschussAnlegen(token: string, sparte: number, name: string) {
+    return this.rufe<AusschussAntwort>('POST', 'ausschuss.anlegen', { token, rumpf: { sparte, name } });
+  }
+  ausschussEinladen(token: string, ausschuss: number, email: string, name: string) {
+    return this.rufe<AusschussAntwort & EinladenAntwort>('POST', 'ausschuss.einladen', { token, rumpf: { ausschuss, email, name } });
+  }
+  ausschussSperren(token: string, ausschuss: number, konto: number, gesperrt: boolean) {
+    return this.rufe<AusschussAntwort>('POST', 'ausschuss.sperren', { token, rumpf: { ausschuss, konto, gesperrt } });
+  }
+  ausschussVerlassen(token: string, ausschuss: number) {
+    return this.rufe<{ ok: true; sparten: SparteKurz[]; ausschuesse: AusschussKurz[] }>('POST', 'ausschuss.verlassen', { token, rumpf: { ausschuss } });
+  }
+  ausschussNachricht(token: string, ausschuss: number, text: string) {
+    return this.rufe<AusschussAntwort>('POST', 'ausschuss.nachricht', { token, rumpf: { ausschuss, text } });
+  }
+  ausschussLoeschen(token: string, ausschuss: number) {
+    return this.rufe<{ ok: true }>('POST', 'ausschuss.loeschen', { token, rumpf: { ausschuss } });
+  }
+  veranstaltungAnlegen(token: string, sparte: number, name: string, datum: string | null, ausschuss: number | null) {
+    return this.rufe<SparteAntwort>('POST', 'veranstaltung.anlegen', { token, rumpf: { sparte, name, datum, ausschuss } });
+  }
+  veranstaltungLoeschen(token: string, sparte: number, id: number) {
+    return this.rufe<SparteAntwort>('POST', 'veranstaltung.loeschen', { token, rumpf: { sparte, id } });
+  }
+  sicherungBestaetigen(turnier: string, schluessel: string) {
+    return this.rufe<{ ok: true; email: string; turnier: string }>('POST', 'sicherung.bestaetigen', { rumpf: { turnier, schluessel } });
+  }
+  anmeldungPartner(turnier: string, schluessel: string, antwort?: 'ja' | 'nein', volljaehrig?: boolean) {
+    return this.rufe<PartnerAntwort>('POST', 'anmeldung.partner', { rumpf: { turnier, schluessel, ...(antwort ? { antwort } : {}), ...(volljaehrig ? { volljaehrig } : {}) } });
+  }
+  kontoLoeschen(token: string, passwort: string, sparteLoeschen = false) {
     return this.rufe<{ ok: true }>('POST', 'konto.loeschen', {
       token,
-      rumpf: { passwort },
+      rumpf: { passwort, ...(sparteLoeschen ? { sparteLoeschen } : {}) } satisfies KontoLoeschenAnfrage,
     });
   }
   rueckmeldung(token: string | null, a: RueckmeldungAnfrage) {
@@ -195,9 +290,6 @@ export class Api {
     });
   }
   /** Admin: Online-Anmeldung für ein Konto (ab 0.12) */
-  kontoAnmeldung(token: string, id: number, anmeldung: 'auto' | 'frei' | 'gesperrt') {
-    return this.rufe<{ konto: Konto }>('POST', 'konto.anmeldung', { token, rumpf: { id, anmeldung } });
-  }
   kontoSperren(token: string, id: number, gesperrt: boolean) {
     return this.rufe<{ konto: Konto }>('POST', 'konto.sperren', {
       token,
@@ -308,30 +400,32 @@ export class Api {
       rumpf: { turnier, passwort },
     });
   }
-  kontoEinstellungen(token: string) {
+  /** Ab 0.17 je Sparte (ohne sparte: erste Sparte des Kontos; die Zentrale kennt keine Sparten) */
+  kontoEinstellungen(token: string, sparte: number | null = null) {
     return this.rufe<KontoEinstellungen>('GET', 'konto.einstellungen', {
       token,
+      ...(sparte ? { query: { sparte: String(sparte) } } : {}),
     });
   }
-  kontoEinstellungenSetzen(token: string, a: Partial<KontoEinstellungen>) {
+  kontoEinstellungenSetzen(token: string, a: Partial<KontoEinstellungen>, sparte: number | null = null) {
     return this.rufe<KontoEinstellungen>('POST', 'konto.einstellungen', {
       token,
-      rumpf: a,
+      rumpf: { ...a, ...(sparte ? { sparte } : {}) },
     });
   }
-  pool(token: string) {
-    return this.rufe<PoolAntwort>('GET', 'pool', { token });
+  pool(token: string, sparte: number | null = null) {
+    return this.rufe<PoolAntwort>('GET', 'pool', { token, ...(sparte ? { query: { sparte: String(sparte) } } : {}) });
   }
-  poolSpeichern(token: string, spieler: PoolSpieler[]) {
+  poolSpeichern(token: string, spieler: PoolSpieler[], sparte: number | null = null) {
     return this.rufe<PoolAntwort>('POST', 'pool.speichern', {
       token,
-      rumpf: { spieler },
+      rumpf: { spieler, ...(sparte ? { sparte } : {}) },
     });
   }
-  poolLoeschen(token: string, ids: string[]) {
+  poolLoeschen(token: string, ids: string[], sparte: number | null = null) {
     return this.rufe<{ ok: true }>('POST', 'pool.loeschen', {
       token,
-      rumpf: { ids },
+      rumpf: { ids, ...(sparte ? { sparte } : {}) },
     });
   }
   uebersicht(token: string, turnier: string, text: string) {

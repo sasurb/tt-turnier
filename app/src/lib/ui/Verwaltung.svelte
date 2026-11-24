@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { Konto, TurnierInfo } from '@shared/protokoll';
+  import type { Konto, Sparte, TurnierInfo } from '@shared/protokoll';
   import { T } from '../texte';
   import { gehe } from '../router.svelte';
   import { api } from '../dienste';
@@ -10,6 +10,7 @@
 
   const sitzung = $derived(app.sitzung);
   let konten = $state<Konto[]>([]);
+  let sparten = $state<Sparte[]>([]);
   let turniere = $state<TurnierInfo[]>([]);
   let name = $state('');
   let email = $state('');
@@ -22,6 +23,8 @@
     if (!s || s.konto.rolle !== 'admin') return;
     try {
       konten = (await api.konten(s.token)).konten;
+      // Sparten gibt es nur auf dem Online-Server (ab 0.17); die Zentrale kennt die Route nicht
+      sparten = await api.sparten(s.token).then((a) => a.sparten).catch(() => []);
       turniere = (await api.turniere(s.token, true)).turniere;
     } catch (x) {
       if (!anmeldungAbgelaufen(x)) meldung = { ok: false, text: fehlerText(x, T.app.fehlerAllgemein) };
@@ -59,11 +62,11 @@
     }
   }
 
-  async function anmeldungSetzen(k: Konto, wert: 'auto' | 'frei' | 'gesperrt') {
+  async function anmeldungSetzen(k: Sparte, wert: 'auto' | 'frei' | 'gesperrt') {
     if (!sitzung) return;
     try {
-      await api.kontoAnmeldung(sitzung.token, k.id, wert);
-      meldung = { ok: true, text: T.admin.anmeldungGespeichert(k.name) };
+      await api.sparteAnmeldung(sitzung.token, k.id, wert);
+      meldung = { ok: true, text: T.admin.anmeldungGespeichert(`${k.verein} – ${k.name}`) };
       await laden();
     } catch (x) {
       if (!anmeldungAbgelaufen(x)) meldung = { ok: false, text: fehlerText(x, T.app.fehlerAllgemein) };
@@ -96,17 +99,6 @@
             {#if k.gesperrt}<span class="marke gesperrt">{T.admin.gesperrt}</span>{/if}
             <br /><span class="leise">{k.email}</span>
             <br /><span class="leise">{T.admin.zuletztAktiv}: {wann(k.zuletztAktiv ?? k.letzteAnmeldung)} · {T.admin.turniere}: {k.turniere ?? 0}</span>
-            {#if k.rolle !== 'admin' && k.anmeldung}
-              <div class="anmeldung">
-                <label for="anm-{k.id}">{T.admin.anmeldung}</label>
-                <Hilfe text={T.admin.anmeldungHilfe} />
-                <select id="anm-{k.id}" value={k.anmeldung} onchange={(e) => anmeldungSetzen(k, (e.currentTarget as HTMLSelectElement).value as 'auto' | 'frei' | 'gesperrt')} data-testid="admin-anmeldung">
-                  <option value="auto">{T.admin.anmeldungAuto}</option>
-                  <option value="frei">{T.admin.anmeldungFrei}</option>
-                  <option value="gesperrt">{T.admin.anmeldungGesperrt}</option>
-                </select>
-              </div>
-            {/if}
           </div>
           {#if k.id !== sitzung.konto.id}
             <button class="klein" class:gefahr={!k.gesperrt} class:zweit={k.gesperrt} onclick={() => umschalten(k)}>
@@ -117,6 +109,32 @@
       {/each}
     </ul>
   </section>
+
+  {#if sparten.length}
+    <section class="karte" data-testid="admin-sparten">
+      <h2>{T.admin.sparten} <span class="leise">({sparten.length})</span></h2>
+      <ul class="liste">
+        {#each sparten as k (k.id)}
+          <li class="reihe">
+            <div class="wachsen">
+              <strong>{k.verein} – {k.name}</strong>
+              <br /><span class="leise">{T.admin.spartenleitung}: {(k.leitung ?? []).join(', ') || '–'}</span>
+              <br /><span class="leise">{T.admin.mitglieder}: {k.mitglieder ?? 0} · {T.admin.turniere}: {k.turniere ?? 0} · AVV: {k.avv ? wann(k.avv) : T.admin.nie}</span>
+              <div class="anmeldung">
+                <label for="anm-{k.id}">{T.admin.anmeldung}</label>
+                <Hilfe text={T.admin.anmeldungHilfe} />
+                <select id="anm-{k.id}" value={k.anmeldung} onchange={(e) => anmeldungSetzen(k, (e.currentTarget as HTMLSelectElement).value as 'auto' | 'frei' | 'gesperrt')} data-testid="admin-anmeldung">
+                  <option value="auto">{T.admin.anmeldungAuto}</option>
+                  <option value="frei">{T.admin.anmeldungFrei}</option>
+                  <option value="gesperrt">{T.admin.anmeldungGesperrt}</option>
+                </select>
+              </div>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
 
   <section class="karte">
     <h2>{T.admin.alleTurniere}</h2>

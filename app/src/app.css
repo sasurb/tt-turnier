@@ -187,3 +187,7 @@ textarea { min-height: 120px; line-height: 1.4; }
 /* Feldbeschriftung mit Hilfe-Symbol daneben (Symbol nicht Teil der Beschriftung) */
 .label-zeile { display: flex; align-items: center; margin: 12px 0 6px; }
 .label-zeile label { margin: 0; }
+
+/* Häkchen mit Text (ab 0.17 global; Seiten dürfen eigene Abstände setzen) */
+label.haken { display: flex; gap: 10px; align-items: center; font-weight: 400; min-height: 44px; }
+label.haken input[type='checkbox'] { width: 22px; height: 22px; min-height: 0; flex: none; }

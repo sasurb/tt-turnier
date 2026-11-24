@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import type { Plugin } from 'vite';
 
 const shared = fileURLToPath(new URL('../shared', import.meta.url));
+const paket = JSON.parse(readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8')) as { version: string };
 
 /**
  * Erzeugt beim Bauen dist/sw.js aus sw/sw-vorlage.js mit der Liste aller App-Dateien (für den
@@ -31,6 +32,7 @@ export default defineConfig({
   // Relative Pfade: läuft unter tt-turnier.saschaurban.de/ und unter sasurb.github.io/tt-turnier/
   base: './',
   plugins: [svelte(), serviceWorker()],
+  define: { __APP_VERSION__: JSON.stringify(paket.version) },
   resolve: { alias: { '@shared': shared } },
   server: {
     fs: { allow: ['..'] },

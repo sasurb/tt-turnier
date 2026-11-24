@@ -39,11 +39,14 @@ describe.skipIf(!basis)('Integration mit echtem Server', () => {
       passwort: 'veranst-pw',
     });
     const v = await api.login(`v-${zufall}@example.org`, 'veranst-pw');
+    // Ab 0.17: vom Admin angelegte Konten stimmen beim ersten Anmelden den Nutzungsbedingungen zu
+    expect(v.konto.bedingungen).toBe(false);
+    await api.bedingungenAnnehmen(v.token);
     const t = await api.turnierAnlegen(v.token, {
       name: 'Integrationstest',
       datum: '2026-12-01',
     });
-    expect(t.turnier.id).toMatch(/^[0-9]{8}$/);
+    expect(t.turnier.id).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/);
     expect(t.leitung.code).toMatch(/^[0-9]{8}$/);
     const leitungB = await api.codesAnlegen(t.token, t.turnier.id, [{ rolle: 'leitung', bezug: 'l-b', name: 'Helferin B' }]);
     const zugangB = await api.turnierZugang(t.turnier.id, leitungB.codes.find((c) => c.bezug === 'l-b')!.code);

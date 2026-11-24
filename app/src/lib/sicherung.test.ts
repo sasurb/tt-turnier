@@ -18,16 +18,23 @@ describe('Kennungen', () => {
     });
     expect(turnierKennungLesen('https://x.de/tt/#/c/48392017/11223344')).toEqual({ turnier: '48392017', code: '11223344' });
     expect(turnierKennungLesen('https://x.de/tt/#/t/abc123xyz0')).toEqual({
-      turnier: 'abc123xyz0',
+      turnier: 'ABC123XYZ0',
       code: null,
     });
+    // ab 0.17: Buchstaben-Kennungen und Wunschkennungen, ohne Groß/klein
+    expect(turnierKennungLesen('k7qm 3xrp')).toEqual({ turnier: 'K7QM3XRP', code: null });
+    expect(turnierKennungLesen('VM-2027')).toEqual({ turnier: 'VM-2027', code: null });
+    expect(turnierKennungLesen('https://x.de/tt/#/c/K7QM3XRP/11223344')).toEqual({ turnier: 'K7QM3XRP', code: '11223344' });
     expect(turnierKennungLesen('l1234567890')).toBeNull();
     expect(turnierKennungLesen('123')).toBeNull();
+    expect(turnierKennungLesen('-ABC')).toBeNull();
   });
   it('säubert Eingaben und zeigt lesbar an', () => {
     expect(codeEingabe(' 48 39-20 77 9')).toBe('48392077');
     expect(codeAnzeige('48392017')).toBe('4839 2017');
     expect(codeAnzeige('abc123xyz0')).toBe('abc123xyz0');
+    expect(codeAnzeige('K7QM3XRP')).toBe('K7QM 3XRP');
+    expect(codeAnzeige('VM-2027')).toBe('VM-2027');
   });
 });
 

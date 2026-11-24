@@ -61,22 +61,46 @@ export const HANDBUCH: HandbuchKapitel[] = [
   },
   {
     id: 'konto',
-    titel: 'Konto der Turnierleitung',
+    titel: 'Konto, Verein und Sparte',
     fuer: ['leitung'],
-    einleitung: 'Mit einem Konto legst du Turniere an, führst einen Spielerpool und bekommst Sicherungen per Mail.',
+    einleitung:
+      'Turniere, Spielerpool, Leistungsklassen und Kasse-Vorgaben gehören eurer Sparte (z. B. „TTC Musterstadt – Tischtennis“). Mit einem Konto gehörst du zur Sparte – als Spartenleitung oder als Turnierleitung.',
     abschnitte: [
       {
-        titel: 'Konto anlegen und verwalten',
+        titel: 'Konto anlegen',
         text: [
-          '„Anmelden“ → „Konto anlegen“: Name, E-Mail und Passwort. Unter „Konto“ änderst du Passwort und Mail, pflegst deine Begriffe für Leistungsklassen und die Vorgaben für Kasse und Quittung.',
-          'Ein Konto, das 12 Monate nicht genutzt wird, wird gelöscht – 30 Tage vorher kommt eine Erinnerung. Du kannst es unter „Konto“ jederzeit selbst löschen; dabei werden auch deine Turniere gelöscht.',
+          '„Anmelden“ → „Konto anlegen“: dein Name, E-Mail, Passwort, Verein und Sparte. Konten gibt es ab 18; du stimmst den Nutzungsbedingungen mit der Vereinbarung zur Auftragsverarbeitung für deinen Verein zu. Damit bist du Spartenleitung.',
+          'Wurdest du eingeladen, öffne den Link aus der Mail und lege dort ein Konto mit genau dieser Adresse an – oder melde dich an, wenn du schon eines hast.',
+        ],
+      },
+      {
+        titel: 'Rollen in der Sparte',
+        text: [
+          '• Spartenleitung: leitet alle Turniere der Sparte, lädt Personen ein (Spartenleitung oder Turnierleitung), gibt Turnierleitungen das Recht „Turniere anlegen“, verwaltet Ausschüsse und Veranstaltungen. Es kann mehrere Spartenleitungen geben.',
+          '• Turnierleitung: leitet die Turniere, zu denen sie eingeladen wurde (unter „Zugänge“ → „Turnierleitung mit Konto“); mit dem Recht „Turniere anlegen“ legt sie selbst welche an. Sie arbeitet mit dem Spielerpool der Sparte.',
+          '• Ohne Konto geht es weiter mit Kennungen: Leitungs-, Helfer- und Spielerkennungen gelten nur für ein Turnier.',
+          'Mehrere Sparten (z. B. eigene Jugendabteilung): unter „Sparte“ → „Weitere Sparte anlegen“. Welche Sparte gerade gilt, wählst du dort; öffnest du ein Turnier, gilt seine Sparte.',
+        ],
+      },
+      {
+        titel: 'Ausschüsse und Veranstaltungen',
+        text: [
+          'Für Aufgaben außerhalb der Turniere (Sommerfest, Weihnachtsfeier, Fahrradtour) legt die Spartenleitung Ausschüsse an. Mitglieder laden weitere ein, können Mitglieder sperren und schreiben sich Nachrichten (werden nach 12 Monaten gelöscht). Ausschussmitglieder sehen keine Turniere und keinen Pool.',
+          'Veranstaltungen sind vorerst nur eine Liste (Name, Datum, zuständiger Ausschuss); Planung und Anmeldung folgen später.',
+        ],
+      },
+      {
+        titel: 'Löschen',
+        text: [
+          'Ein Konto, das 12 Monate nicht genutzt wird, wird gelöscht – 30 Tage vorher kommt eine Erinnerung. Ist es die einzige Spartenleitung, wird die Sparte mit allen Turnieren mitgelöscht; alle Mitglieder bekommen 30 Tage vorher eine Mail. Ladet deshalb besser zwei Spartenleitungen ein.',
+          'Selbst löschen: Konto unter „Konto“, Sparte unter „Sparte“ → „Sparte löschen“ (beides mit Passwort).',
         ],
       },
       {
         titel: 'Grenzen zum Schutz vor Missbrauch',
         text: [
-          '• Höchstens 20 neue Turniere am Tag und 300 Turniere je Konto – lösche alte Testturniere unter „Meine Turniere“ → Turnier → „Einstellungen“.',
-          '• Die Online-Anmeldung steht neuen Konten nach 7 Tagen zur Verfügung. Der Administrator kann sie früher freischalten – schreib ihm über das Kontaktformular.',
+          '• Höchstens 20 neue Turniere am Tag je Konto und 300 Turniere je Sparte – lösche alte Testturniere unter „Meine Turniere“ → Turnier → „Einstellungen“.',
+          '• Die Online-Anmeldung steht neuen Sparten nach 7 Tagen zur Verfügung. Der Administrator kann sie früher freischalten – schreib ihm über das Kontaktformular.',
           '• Höchstens 150 Sicherungsmails am Tag; die Sicherungsdatei kannst du jederzeit herunterladen.',
         ],
       },
@@ -306,15 +330,18 @@ export const HANDBUCH: HandbuchKapitel[] = [
         titel: 'Für die Turnierleitung',
         text: [
           'Reiter „Anmeldungen“ (nur online): Konkurrenzen auswählen, Meldeschluss und Hinweis eintragen, öffnen. Höchstzahl und Startgeld stellst du je Konkurrenz ein. Den Link bzw. QR-Code gibst du weiter, etwa in der Turnierausschreibung.',
-          'Mit „Übernehmen“ kommen bestätigte Anmeldungen ins Turnier. Doppel bildest du selbst, der Partnerwunsch steht in der Liste.',
-          'Neue Konten können die Anmeldung erst nach 7 Tagen öffnen (Schutz vor Missbrauch), außer der Administrator schaltet sie früher frei.',
+          'Mit „Übernehmen“ kommen bestätigte Anmeldungen ins Turnier. Doppel bildest du selbst, der Partnerwunsch steht in der Liste – mit dem Hinweis, ob die Partnerin bzw. der Partner per Mail bestätigt hat.',
+          'Neue Sparten können die Anmeldung erst nach 7 Tagen öffnen (Schutz vor Missbrauch), außer der Administrator schaltet sie früher frei.',
+          'Online anmelden können sich nur Volljährige. Bei Jugendturnieren (Schalter unter „Einstellungen“) gibt es keine Einzelanmeldung online – Minderjährige meldet der Verein bzw. eine Mannschaftsleitung.',
+          'Für eure Ausschreibung gibt es unter „Online-Anmeldungen“ und „Einstellungen“ einen Textbaustein zum Datenschutz.',
         ],
       },
       {
         titel: 'Für Spieler',
         text: [
           'Formular ausfüllen, dann den Link in der Mail öffnen und „Anmeldung jetzt bestätigen“ tippen – erst dann gibt es einen Platz. Über denselben Link siehst du deinen Stand (Platz oder Warteliste), das Startgeld mit GiroCode für die Banking-App und kannst dich bis zum Vortag abmelden.',
-          'Bist du unter 18, müssen deine Erziehungsberechtigten einverstanden sein.',
+          'Online anmelden kannst du dich ab 18. Bist du jünger, meldet dich dein Verein bzw. deine Mannschaftsleitung an.',
+          'Meldest du dich mit Partner/in für ein Doppel, gib auch deren E-Mail an: Sie bekommt nach deiner Bestätigung eine Mail und bestätigt selbst.',
           'Anmeldungen werden 30 Tage nach dem Turniertag gelöscht, unbestätigte nach 24 Stunden.',
         ],
       },
@@ -390,6 +417,33 @@ export const HANDBUCH: HandbuchKapitel[] = [
         titel: 'Verdeckte Stände',
         text: [
           'Tabellen, Platzierungen und den K.-o.-Baum kann die Leitung bis zur Siegerehrung verdecken und dann mit „Ergebnisse veröffentlichen“ aufdecken. Einzelne Ergebnisse bleiben sichtbar, damit jeder weiß, wann er spielt – wer alle mitschreibt, könnte den Stand also selbst ausrechnen. Verdecken sorgt für Spannung, ist aber kein Geheimnis.',
+        ],
+      },
+    ],
+  },
+  {
+    id: 'datenschutz',
+    titel: 'Jugendturnier, Löschfristen, Kennungen',
+    fuer: ['leitung'],
+    einleitung: 'Was die App für den Datenschutz tut – und was ihr als Verein dazu einstellt.',
+    abschnitte: [
+      {
+        titel: 'Jugendturnier',
+        text: [
+          'Schalter beim Anlegen bzw. unter „Einstellungen“: Zuschauer sehen Namen nur in Kurzform („Max M.“), die Online-Einzelanmeldung ist zu, die App-Wertung ist aus (lässt sich einschalten). Spielen laut Jahrgang Minderjährige mit und der Schalter ist aus, weist die App darauf hin.',
+        ],
+      },
+      {
+        titel: 'Automatische Löschung',
+        text: [
+          'Jedes Online-Turnier wird 12 oder 24 Monate (wählbar) nach dem Turniertag automatisch gelöscht, ohne Datum nach der letzten Änderung. 30 Tage vorher bekommt die Turnierleitung eine Mail mit einer Sicherungsdatei.',
+          'Sicherungen per Mail enthalten keine E-Mail-Adressen und keine Bankverbindung. Neue Empfänger außerhalb der Turnierleitung bekommen sie erst, nachdem sie ihre Adresse über einen Link bestätigt haben.',
+        ],
+      },
+      {
+        titel: 'Turnierkennung',
+        text: [
+          'Die App vergibt eine zufällige Kennung aus 8 Zeichen ohne verwechselbare Zeichen (z. B. „K7QM 3XRP“). Du kannst auch eine Wunschkennung wählen (4–12 Zeichen, z. B. „VM-2027“) – leichter anzusagen, aber auch leichter zu erraten; bei Jugendturnieren besser die Zufallskennung. Groß/klein ist egal. Gelöschte Kennungen sind 180 Tage gesperrt.',
         ],
       },
     ],

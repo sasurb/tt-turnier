@@ -6,6 +6,8 @@
   import { abmelden, anmeldungAbgelaufen, app, fehlerText, setzeSitzung } from '../app.svelte';
   import PasswortFeld from './PasswortFeld.svelte';
   import { klassen, klassenLaden, klassenSpeichern } from '../klassen.svelte';
+  import { ApiFehler } from '../engine/api';
+  import { aktiveSparte, meineSparten, spartenMoeglich, spartenName } from '../sparte.svelte';
 
   const sitzung = $derived(app.sitzung);
 
@@ -58,7 +60,13 @@
     if (!sitzung || !confirm(T.konto.loeschenFrage)) return;
     loeschFehler = '';
     try {
-      await api.kontoLoeschen(sitzung.token, loeschPw);
+      try {
+        await api.kontoLoeschen(sitzung.token, loeschPw);
+      } catch (x) {
+        // Einzige Spartenleitung: erst nach ausdrücklicher Bestätigung mit der Sparte löschen
+        if (!(x instanceof ApiFehler && x.code === 'konflikt') || !confirm(T.konto.loeschenSparteFrage(x.message))) throw x;
+        await api.kontoLoeschen(sitzung.token, loeschPw, true);
+      }
       setzeSitzung(null);
       app.hinweis = T.konto.geloescht;
       gehe('');
@@ -81,12 +89,27 @@
     {/if}
   </section>
 
+  {#if spartenMoeglich()}
+    <section class="karte" data-testid="konto-sparten">
+      <h2>{T.konto.sparten}</h2>
+      {#if !meineSparten().length && !(sitzung.konto.ausschuesse ?? []).length}<p class="leise">{T.konto.keineSparte}</p>{/if}
+      <ul class="liste">
+        {#each meineSparten() as s (s.id)}
+          <li><a href={linkZu(`sparte/${s.id}`)}>{spartenName(s)}</a> <span class="marke">{T.sparte.rolle[s.rolle]}</span></li>
+        {/each}
+        {#each sitzung.konto.ausschuesse ?? [] as a (a.id)}
+          <li><a href={linkZu(`ausschuss/${a.id}`)}>{a.name}</a> <span class="leise">{T.ausschuss.titel} · {a.sparteName}</span></li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
   <section class="karte">
     <a class="knopf zweit breit" href={linkZu('turniere')}>{T.konto.turniere}</a>
   </section>
 
   <details class="karte">
-    <summary>{T.konto.klassenTitel}</summary>
+    <summary>{T.konto.klassenTitel}{#if aktiveSparte()} <span class="leise">· {spartenName(aktiveSparte()!)}</span>{/if}</summary>
     <p class="leise">{T.konto.klassenText}</p>
     {#if klassen.liste.length === 0}
       <p class="leise">{T.konto.klassenLeer}</p>
@@ -146,4 +169,6 @@
   .klassen { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 8px; }
   .klassen li { display: inline-flex; align-items: center; gap: 6px; padding: 4px 4px 4px 12px; border: 1px solid var(--linie); border-radius: 999px; }
   .gefahrzone summary { color: var(--rot); }
+  .liste { list-style: none; padding: 0; margin: 0; }
+  .liste li { padding: 8px 0; border-bottom: 1px solid var(--linie); min-height: 44px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 </style>

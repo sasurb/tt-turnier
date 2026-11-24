@@ -185,7 +185,7 @@ describe('Online-Anmeldung und Pool-Datei', () => {
     b.konkurrenz('e', { ...standardEinstellungen('E'), modus: 'jgj' }, []);
     const a: AnmeldungEintrag = {
       id: 'abcdefghij', vorname: 'Hanna', nachname: 'H', verein: '', email: 'h@example.org', ttr: 1025, ttrGeschaetzt: true, klasse: null, geschlecht: null, jahrgang: null,
-      minderjaehrig: false, angelegt: '', bestaetigt: '2026-11-22T10:00:00Z', konkurrenzen: [{ id: 'e', status: 'platz', position: null, partner: null }], spieler: null,
+      angelegt: '', bestaetigt: '2026-11-22T10:00:00Z', konkurrenzen: [{ id: 'e', status: 'platz', position: null, partner: null }], spieler: null,
     };
     const schritt = uebernahmePlanen(b.z, [a]).schritte[0]!;
     expect(schritt.daten).toMatchObject({ ttr: 1025, ttrGeschaetzt: true });

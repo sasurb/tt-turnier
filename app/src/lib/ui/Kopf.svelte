@@ -3,6 +3,7 @@
   import { linkZu, route } from '../router.svelte';
   import { T } from '../texte';
   import { amGeraetDerZentrale, istZentrale } from '../zentrale.svelte';
+  import { meineSparten, spartenMoeglich } from '../sparte.svelte';
 
   let offen = $state(false);
   let wurzel: HTMLDivElement | undefined = $state();
@@ -50,8 +51,18 @@
           {:else}
             <a role="menuitem" href={linkZu('konto')}>{T.kopf.konto}</a>
           {/if}
-          <a role="menuitem" href={linkZu('turniere')}>{T.kopf.turniere}</a>
-          <a role="menuitem" href={linkZu('pool')}>{T.pool.titel}</a>
+          {#if !spartenMoeglich() || meineSparten().length}
+            <a role="menuitem" href={linkZu('turniere')}>{T.kopf.turniere}</a>
+            <a role="menuitem" href={linkZu('pool')}>{T.pool.titel}</a>
+          {/if}
+          {#if spartenMoeglich() && meineSparten().length}
+            <a role="menuitem" href={linkZu('sparte')} data-testid="menue-sparte">{T.sparte.titel}</a>
+          {/if}
+          {#if spartenMoeglich()}
+            {#each app.sitzung.konto.ausschuesse ?? [] as a (a.id)}
+              <a role="menuitem" href={linkZu(`ausschuss/${a.id}`)}>{T.ausschuss.titel}: {a.name}</a>
+            {/each}
+          {/if}
           {#if app.sitzung.konto.rolle === 'admin'}
             <a role="menuitem" href={linkZu('verwaltung')}>{T.kopf.verwaltung}</a>
           {/if}

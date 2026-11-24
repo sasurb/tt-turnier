@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Textbaustein from './Textbaustein.svelte';
   import { onMount, untrack } from 'svelte';
   import { alleGesehen, appHinweisAn, neueAnmeldungen, setzeAppHinweis } from '../../anmeldeHinweis';
   import type { AnmeldeStatus, AnmeldungEinstellungen, AnmeldungEintrag, AnmeldungKonkurrenz } from '@shared/protokoll';
@@ -264,7 +265,6 @@
             <div class="kopfzeile">
               <strong class="wachsen">{a.vorname} {a.nachname}</strong>
               {#if !a.bestaetigt}<span class="marke">{T.anm.unbestaetigt}</span>{/if}
-              {#if a.minderjaehrig}<span class="marke">{T.anm.minderjaehrig}</span>{/if}
               {#if z.spieler[a.id]}<span class="marke online">{T.anm.imTurnier}</span>{/if}
             </div>
             <div class="leise">
@@ -279,6 +279,7 @@
                       {z.konkurrenzen[k.id]?.einst.name ?? k.id}:
                       <strong class="st-{k.status}">{k.status === 'warteliste' ? T.anm.position(k.position) : T.anm.status[k.status]}</strong>
                       {#if k.partner}<span class="leise"> · {T.anm.partner(k.partner)}</span>{/if}
+                      {#if k.partnerStatus}<span class="marke" class:offen={k.partnerStatus !== 'bestaetigt'} data-testid="partner-status">{T.meldung.partnerStatus[k.partnerStatus]}</span>{/if}
                     </span>
                     {#if k.status !== 'platz'}<button class="zweit klein" onclick={() => status(a, k.id, 'platz')}>{T.anm.platzGeben}</button>{/if}
                     {#if k.status === 'platz'}<button class="zweit klein" onclick={() => status(a, k.id, 'warteliste')}>{T.anm.aufWarteliste}</button>{/if}
@@ -293,6 +294,7 @@
       </ul>
     {/if}
 
+    <Textbaustein />
     <details class="einrichten" open={einrichtenAuf ?? !einst?.offen} ontoggle={(e) => (einrichtenAuf = e.currentTarget.open === !einst?.offen ? null : e.currentTarget.open)}>
       <summary>{T.anm.einrichten}</summary>
     <fieldset>
@@ -356,6 +358,7 @@
   h3 { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 16px; }
   .abschnitt > summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 44px; cursor: pointer; }
   .abschnitt > summary .titel { font-size: 1.2rem; margin: 0; }
+  .marke.offen { color: var(--orange-text); }
   .einrichten { margin-top: 16px; border-top: 1px solid var(--linie); padding-top: 8px; }
   .einrichten > summary { min-height: 44px; display: flex; align-items: center; font-weight: 700; cursor: pointer; }
   .marke.neu { background: var(--orange); color: #fff; }

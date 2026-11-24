@@ -73,8 +73,18 @@ export const ID_MUSTER = /^[a-z0-9]{1,16}$/;
  * stehen in den öffentlich lesbaren Ereignissen.
  */
 export const KENNUNG_MUSTER = /^[0-9]{8}$/;
-/** Turnierkennung: 8 Ziffern (ältere Turniere: 10 Zeichen a–z/0–9; Links darauf gelten weiter). */
-export const TURNIER_KENNUNG_MUSTER = /^([0-9]{8}|[a-z0-9]{6,16})$/;
+/**
+ * Turnierkennung auf dem Server (ab 0.17): Zufall aus 8 Zeichen ohne Verwechsler (TURNIER_KENNUNG_ZEICHEN, Anzeige
+ * „K7QM 3XRP“) oder Wunschkennung 4–12 Zeichen A–Z, 0–9, Bindestrich (nicht am Rand). Ohne Groß/klein: Server und
+ * App wandeln in Großbuchstaben. Ältere Kennungen aus 8 Ziffern passen ebenfalls.
+ */
+export const TURNIER_KENNUNG_MUSTER = /^[A-Z0-9][A-Z0-9-]{2,10}[A-Z0-9]$/;
+export const TURNIER_KENNUNG_ZEICHEN = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+/** Gelöschte Turnierkennungen werden erst nach so vielen Tagen wieder vergeben */
+export const KENNUNG_SPERRE_TAGE = 180;
+/** Automatische Löschung je Turnier: Monate nach dem Turniertag bzw. der letzten Änderung (Frage 5) */
+export const LOESCHFRISTEN = [12, 24] as const;
+export type Loeschfrist = (typeof LOESCHFRISTEN)[number];
 /** Lokale Turniere (nur dieses Gerät) beginnen mit „l“ und liegen nie auf einem Server. */
 export const LOKALE_KENNUNG_MUSTER = /^l[a-z0-9]{6,16}$/;
 
@@ -101,6 +111,126 @@ export interface Ereignis extends NeuesEreignis {
   autor: Autor;
 }
 
+/* ---------- Verein, Sparte, Mitglieder (ab 0.17) ----------
+ * Ein Verein hat Sparten (je Sportart; Turnierfunktionen vorerst nur Tischtennis). Turniere, Spielerpool,
+ * Klassen/Kasse-Vorlagen gehören der Sparte. Mitglieder sind Konten mit Rolle „spartenleitung“ (leitet alles,
+ * verwaltet Mitglieder, Ausschüsse, Veranstaltungen) oder „turnierleitung“ (leitet Turniere mit Konto-Zugang,
+ * mit `anlegen` auch eigene). Ausschüsse haben eigene Mitglieder (Konten) und Nachrichten.
+ */
+export type SparteRolle = 'spartenleitung' | 'turnierleitung';
+export interface SparteKurz {
+  id: number;
+  name: string;
+  verein: string;
+  sportart: string;
+  rolle: SparteRolle;
+  /** darf Turniere anlegen (Spartenleitung immer) */
+  anlegen: boolean;
+}
+export interface AusschussKurz {
+  id: number;
+  name: string;
+  sparte: number;
+  sparteName: string;
+}
+export interface Sparte {
+  id: number;
+  name: string;
+  verein: string;
+  sportart: string;
+  angelegt: string;
+  /** Zeitpunkt der Zustimmung zur Auftragsverarbeitungsvereinbarung (AVV) */
+  avv: string | null;
+  /** Online-Anmeldung (Missbrauchsschutz): auto (nach ANMELDUNG_NACH_TAGEN), frei, gesperrt – setzt der Admin */
+  anmeldung: 'auto' | 'frei' | 'gesperrt';
+  turniere?: number;
+  /** nur GET sparten (Admin) */
+  leitung?: string[];
+  mitglieder?: number;
+}
+export interface SparteMitglied {
+  konto: number;
+  name: string;
+  email: string;
+  rolle: SparteRolle;
+  anlegen: boolean;
+  /** Turniere mit Konto-Zugang */
+  turniere: string[];
+  ich: boolean;
+  zuletztAktiv: string | null;
+}
+export interface Einladung {
+  id: string;
+  art: 'sparte' | 'turnier' | 'ausschuss';
+  ziel: string | null;
+  rolle: SparteRolle | 'mitglied';
+  anlegen: boolean;
+  email: string;
+  name: string;
+  angelegt: string;
+  ablauf: string;
+}
+export interface Veranstaltung {
+  id: number;
+  name: string;
+  datum: string | null;
+  ausschuss: number | null;
+}
+/** GET sparte&id= – nur Spartenleitung */
+export interface SparteAntwort {
+  sparte: Sparte;
+  mitglieder: SparteMitglied[];
+  einladungen: Einladung[];
+  ausschuesse: { id: number; name: string; mitglieder: number; angelegt: string }[];
+  veranstaltungen: Veranstaltung[];
+}
+/** POST sparte.einladen { sparte, email, name, rolle, anlegen? } bzw. { turnier, email, name } → Link (14 Tage, nur für diese Adresse) */
+export interface EinladenAntwort {
+  einladung: Einladung;
+  link: string;
+  /** Mail verschickt (sonst Link selbst weitergeben) */
+  gesendet: boolean;
+}
+/** POST einladung.info { schluessel } – öffentlich */
+export interface EinladungInfo {
+  art: Einladung['art'];
+  rolle: Einladung['rolle'];
+  anlegen: boolean;
+  verein: string;
+  sparte: string;
+  /** Turnier- bzw. Ausschussname */
+  ziel: string | null;
+  von: string;
+  name: string;
+  /** gekürzt, z. B. „to…@example.org“ */
+  email: string;
+  ablauf: string;
+}
+export interface AusschussNachricht {
+  id: number;
+  von: string;
+  text: string;
+  zeit: string;
+  ich: boolean;
+}
+/** GET ausschuss&id=[&ab=] – Mitglieder und Spartenleitung */
+export interface AusschussAntwort {
+  ausschuss: { id: number; name: string; sparte: number; sparteName: string };
+  mitglieder: { konto: number; name: string; gesperrt: boolean; ich: boolean }[];
+  nachrichten: AusschussNachricht[];
+  einladungen: Einladung[];
+  /** angemeldete Person ist Spartenleitung (darf löschen) */
+  leitung: boolean;
+}
+export const AUSSCHUSS_MAX_NACHRICHT = 2000;
+/** GET turnier.konten&id= – Konten mit Zugang zum Turnier (Leitung mit Konto) */
+export interface TurnierKontenAntwort {
+  konten: { konto: number; name: string }[];
+  einladungen: Einladung[];
+}
+/** Fassung der Nutzungsbedingungen mit AVV; ändert sie sich, stimmen Konten beim nächsten Anmelden erneut zu */
+export const BEDINGUNGEN_FASSUNG = '2026-11-24';
+
 export interface Konto {
   id: number;
   name: string;
@@ -117,6 +247,11 @@ export interface Konto {
    * frei (vom Admin früher freigeschaltet) oder gesperrt (vom Admin gesperrt). Schutz vor Missbrauch als Mail-Versand.
    */
   anmeldung?: 'auto' | 'frei' | 'gesperrt';
+  /** Ab 0.17 (Anmeldung, ich): Sparten und Ausschüsse des Kontos */
+  sparten?: SparteKurz[];
+  ausschuesse?: AusschussKurz[];
+  /** Nutzungsbedingungen (mit AVV) in der aktuellen Fassung angenommen; sonst POST konto.bedingungen */
+  bedingungen?: boolean;
 }
 export const ANMELDUNG_NACH_TAGEN = 7;
 /** POST konto.anmeldung { id, anmeldung } – nur Admin (ab 0.12) */
@@ -127,8 +262,10 @@ export const KONTO_LOESCHEN_NACH_TAGEN = 365;
 export const KONTO_ERINNERUNG_TAGE_VORHER = 30;
 
 export interface TurnierInfo {
-  /** Turnierkennung (8 Ziffern) */
+  /** Turnierkennung (ab 0.17 Zufall „K7QM3XRP“ oder Wunschkennung) */
   id: string;
+  /** Sparte, der das Turnier gehört (ab 0.17, nur Online-Server) */
+  sparte?: number | null;
   name: string;
   datum: string | null;
   angelegt: string;
@@ -191,6 +328,10 @@ export interface InfoAntwort {
   aufgaben?: boolean;
   /** Online-Anmeldung mit Warteliste (ab Server 0.11; nur online mit Mailversand) */
   anmeldung?: boolean;
+  /** Vereine/Sparten, Einladungen, Ausschüsse, Wunschkennung, Löschfrist (ab Server 0.17; nicht auf der Zentrale) */
+  sparten?: boolean;
+  /** Aktuelle Fassung der Nutzungsbedingungen (ab 0.17) */
+  bedingungen?: string;
   /** Nur bei der Android-Zentrale (ab 0.5) */
   zentrale?: {
     version: string;
@@ -219,11 +360,21 @@ export interface LoginAntwort {
   konto: Konto;
 }
 
-/** POST registrieren – offen. `website` ist ein Fangfeld für Bots und muss leer bleiben. */
+/**
+ * POST registrieren – offen. `website` ist ein Fangfeld für Bots und muss leer bleiben.
+ * Ab 0.17: `volljaehrig` und `bedingungen` (Nutzungsbedingungen mit AVV) müssen true sein. Ohne Einladung legt
+ * die Registrierung Verein und Sparte an (das Konto wird Spartenleitung); mit `einladung` (Schlüssel aus dem
+ * Link, gleiche E-Mail-Adresse) tritt es der Sparte, dem Turnier bzw. dem Ausschuss bei.
+ */
 export interface RegistrierenAnfrage {
   name: string;
   email: string;
   passwort: string;
+  volljaehrig: boolean;
+  bedingungen: boolean;
+  verein?: string;
+  sparte?: string;
+  einladung?: string;
   website?: string;
 }
 /** Antwort wie LoginAntwort: das neue Konto ist sofort angemeldet. */
@@ -242,6 +393,8 @@ export interface PasswortZuruecksetzenAnfrage {
 /** POST konto.loeschen – eigenes Konto samt Turnieren löschen (nicht für den Administrator). */
 export interface KontoLoeschenAnfrage {
   passwort: string;
+  /** Ab 0.17: einzige Spartenleitung – Sparten werden mitgelöscht (sonst Fehler „konflikt“) */
+  sparteLoeschen?: boolean;
 }
 
 export type RueckmeldungArt = 'fehler' | 'wunsch' | 'frage' | 'kontakt';
@@ -283,6 +436,10 @@ export interface TurniereAntwort {
 export interface TurnierAnlegenAnfrage {
   name: string;
   datum: string | null;
+  /** Ab 0.17: Sparte (ohne: erste Sparte des Kontos), Wunschkennung (ohne: Zufall), Löschfrist in Monaten */
+  sparte?: number;
+  kennung?: string;
+  loeschenNach?: Loeschfrist;
   /** Empfänger der Sicherungsmails; Standard: E-Mail des Kontos. */
   sicherungAn?: string[];
 }
@@ -317,6 +474,11 @@ export const SICHERUNG_MAX_EMPFAENGER = 3;
 /** GET turnier.einstellungen&id=… – nur Leitung, Eigentümer-Konto oder Administrator */
 export interface TurnierEinstellungen {
   sicherungAn: string[];
+  /** Ab 0.17: Adressen außerhalb der Leitung, die den Bestätigungslink noch nicht geöffnet haben (bekommen nichts) */
+  unbestaetigt?: string[];
+  /** Ab 0.17 (nur online): Löschfrist und Termin der automatischen Löschung */
+  loeschenNach?: Loeschfrist;
+  loeschungAm?: string | null;
   sicherungTakt: SicherungTakt;
   letzteSicherung: string | null;
   /** Mailversand auf dem Server eingerichtet (Zentrale: Online-Konto verbunden) */
@@ -328,6 +490,7 @@ export interface TurnierEinstellungen {
 export interface TurnierEinstellungenAnfrage {
   turnier: string;
   sicherungAn?: string[];
+  loeschenNach?: Loeschfrist;
   sicherungTakt?: SicherungTakt;
   /** Ab 0.11: Name und Datum des Turniers (dazu Ereignis turnier.umbenannt) */
   name?: string;
@@ -687,8 +850,10 @@ export const ANMELDUNG_LOESCHEN_NACH_TAGEN = 30;
 export interface AnmeldungInfo {
   turnier: { id: string; name: string; datum: string | null; veranstalter: string };
   einstellungen: AnmeldungEinstellungen;
-  /** Anmeldung jetzt möglich (offen, vor Meldeschluss und Turniertag) */
+  /** Anmeldung jetzt möglich (offen, vor Meldeschluss und Turniertag, kein Jugendturnier) */
   moeglich: boolean;
+  /** Ab 0.17: Jugendturnier – keine Einzelanmeldung online (Meldung über Verein/Mannschaftsleitung) */
+  jugend?: boolean;
   /** Je Konkurrenz: vergebene Plätze und Länge der Warteliste (ohne Namen) */
   belegung: Record<string, { plaetze: number; warteliste: number }>;
 }
@@ -705,11 +870,13 @@ export interface AnmeldungSendenAnfrage {
   klasse?: string | null;
   geschlecht?: 'm' | 'w' | 'd' | null;
   jahrgang?: number | null;
-  /** Gewünschte Konkurrenzen; bei Doppel/Mixed optional Partner/in (Name, die Leitung bildet das Paar) */
-  konkurrenzen: { id: string; partner?: string }[];
-  /** Jünger als 18 Jahre: dann muss `einverstanden` (Erziehungsberechtigte) true sein */
-  minderjaehrig: boolean;
-  einverstanden?: boolean;
+  /**
+   * Gewünschte Konkurrenzen; bei Doppel/Mixed optional Partner/in (Name, die Leitung bildet das Paar).
+   * Ab 0.17 mit Partner/in auch deren E-Mail: sie bestätigt selbst (Mail nach der eigenen Bestätigung).
+   */
+  konkurrenzen: { id: string; partner?: string; partnerEmail?: string }[];
+  /** Ab 0.17: online nur ab 18 (Minderjährige meldet der Verein bzw. eine Mannschaftsleitung) */
+  volljaehrig: boolean;
   /** Datenschutzhinweis zur Kenntnis genommen */
   datenschutz: boolean;
   website?: string;
@@ -720,7 +887,7 @@ export interface AnmeldungStand {
   vorname: string;
   nachname: string;
   /** status null = noch nicht bestätigt (Plätze werden erst mit der Bestätigung vergeben) */
-  konkurrenzen: { id: string; name: string; status: AnmeldeStatus | null; position: number | null }[];
+  konkurrenzen: { id: string; name: string; status: AnmeldeStatus | null; position: number | null; partner?: string | null; partnerStatus?: PartnerStatus | null }[];
   /** Summe der Startgelder der Konkurrenzen mit Platz (Cent) */
   startgeld: number;
   bank: AnmeldungEinstellungen['bank'];
@@ -753,11 +920,10 @@ export interface AnmeldungEintrag {
   klasse: string | null;
   geschlecht: 'm' | 'w' | 'd' | null;
   jahrgang: number | null;
-  minderjaehrig: boolean;
   angelegt: string;
   /** null = noch nicht per Mail bestätigt */
   bestaetigt: string | null;
-  konkurrenzen: { id: string; status: AnmeldeStatus; position: number | null; partner: string | null }[];
+  konkurrenzen: { id: string; status: AnmeldeStatus; position: number | null; partner: string | null; partnerStatus?: PartnerStatus | null }[];
   /** Ins Turnier übernommen (Spieler-ID) */
   spieler: string | null;
 }
@@ -766,6 +932,16 @@ export interface AnmeldungenAntwort {
   anmeldungen: AnmeldungEintrag[];
   /** Ab 0.12: darf das Konto die Anmeldung öffnen? ab = Tag der automatischen Freigabe (ISO) */
   freigabe?: { erlaubt: boolean; ab: string | null };
+}
+/** Ab 0.17: Partner/in einer Doppelmeldung – offen (Mail unterwegs), bestätigt, abgelehnt (Meldung zurückgezogen) */
+export type PartnerStatus = 'offen' | 'bestaetigt' | 'abgelehnt';
+/** POST anmeldung.partner { turnier, schluessel, antwort?: 'ja' | 'nein', volljaehrig? } – Link aus der Partner-Mail */
+export interface PartnerAntwort {
+  turnier: { id: string; name: string; datum: string | null };
+  von: string;
+  partner: string;
+  konkurrenz: string;
+  status: PartnerStatus;
 }
 /** Platzhalter, den die Server Spielern und Zuschauern statt des Namens entfernter Spieler liefern (ab 0.12) */
 export const ENTFERNT_NAME = 'Entfernt';

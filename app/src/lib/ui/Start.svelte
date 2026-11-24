@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { darfAnlegen as kannAnlegen } from '../sparte.svelte';
   import { SPENDENWEGE } from '../rechtliches';
   import type { TurnierInfo, ZentraleStatus } from '@shared/protokoll';
   import { T } from '../texte';
@@ -26,7 +27,8 @@
   const zentrale = $derived(istZentrale());
   const zentralGeraet = $derived(amGeraetDerZentrale());
   /** Neue Turniere: angemeldete Leitung (auch Zentrale) oder Demo ohne Server */
-  const darfAnlegen = $derived(!!angemeldet || demo);
+  // ab 0.17: angemeldet und in einer Sparte mit Recht „Turniere anlegen“ (Zentrale wie bisher)
+  const darfAnlegen = $derived((!!angemeldet && kannAnlegen()) || demo);
   let zStatus = $state<ZentraleStatus | null>(null);
   $effect(() => {
     if (!zentralGeraet) return;

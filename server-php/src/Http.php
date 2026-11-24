@@ -81,6 +81,7 @@ final class ApiFehler extends \RuntimeException
         'nicht_angemeldet' => 401,
         'falsche_zugangsdaten' => 401,
         'gesperrt' => 403,
+        'bedingungen' => 403,
         'keine_berechtigung' => 403,
         'nicht_gefunden' => 404,
         'konflikt' => 409,

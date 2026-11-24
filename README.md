@@ -108,4 +108,16 @@ Pushes auf `main` werden danach automatisch auf den Webspace und auf GitHub Page
 
 ## Lizenz
 
-[MIT](LICENSE)
+Ab Fassung 0.17: [GNU Affero General Public License 3.0](LICENSE) (AGPL-3.0-only) mit einem Zusatz nach
+§ 7 b: Der Urheberhinweis auf Sascha Urban im Fuß der Oberfläche und auf der Seite „Über diese App“ muss in
+veränderten Fassungen erhalten bleiben. Wer eine veränderte Fassung über ein Netzwerk anbietet, muss den
+Nutzern ihren Quellcode zugänglich machen (§ 13 AGPL) – die Seite „Über diese App“ verlinkt dafür auf das
+Repository; bei einem eigenen Fork den Link anpassen.
+
+Fassungen bis einschließlich 0.16 wurden unter der MIT-Lizenz veröffentlicht und bleiben unter MIT.
+
+### Selbst betreiben
+
+Vereine, die die App selbst betreiben, tragen ihre eigenen Angaben für Impressum, Datenschutzhinweis und
+Nutzungsbedingungen über die GitHub-Variablen `BETREIBER_NAME`, `BETREIBER_ANSCHRIFT`, `BETREIBER_MAIL`
+(optional `BETREIBER_TELEFON`) ein und prüfen die Texte in `app/src/lib/rechtliches.ts`.

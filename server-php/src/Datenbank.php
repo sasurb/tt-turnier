@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 8;
+    public const SCHEMA_VERSION = 9;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -35,8 +35,16 @@ final class Datenbank
      * aufgeschobene Transaktion, die erst liest und dann schreibt, scheitert bei gleichzeitigen
      * Schreibern sonst sofort mit „database is locked“ (der Busy-Timeout greift dort nicht).
      */
+    private int $tiefe = 0;
+
+    public function inTransaktion(): bool
+    {
+        return $this->tiefe > 0;
+    }
+
     public function anfangen(): void
     {
+        $this->tiefe++;
         if ($this->treiber === 'sqlite') {
             $this->pdo->exec('BEGIN IMMEDIATE');
         } else {
@@ -46,6 +54,7 @@ final class Datenbank
 
     public function festschreiben(): void
     {
+        $this->tiefe = max(0, $this->tiefe - 1);
         if ($this->treiber === 'sqlite') {
             $this->pdo->exec('COMMIT');
         } else {
@@ -55,6 +64,7 @@ final class Datenbank
 
     public function zurueckrollen(): void
     {
+        $this->tiefe = max(0, $this->tiefe - 1);
         if ($this->treiber === 'sqlite') {
             try {
                 $this->pdo->exec('ROLLBACK');
@@ -176,7 +186,182 @@ final class Datenbank
             }
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['8', 'schema']);
         }
-        // Spätere Versionen: if ($version < 9) { … UPDATE meta … }
+        if ($version < 9) {
+            foreach ($this->schemaV9() as $sql) {
+                try {
+                    $this->pdo->exec($sql);
+                } catch (\PDOException $e) {
+                    if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                        throw $e;
+                    }
+                }
+            }
+            $this->spartenUebernehmen();
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['9', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 10) { … UPDATE meta … }
+    }
+
+    /**
+     * Version 9 (Paket 0.17): Verein → Sparte → Mitglieder (Spartenleitung, Turnierleitung), Konto-Zugänge je
+     * Turnier, Einladungen, Ausschüsse mit Nachrichten, Veranstaltungen (Platzhalter), Spielerpool je Sparte,
+     * gesperrte (gelöschte) Turnierkennungen, bestätigte Sicherungsempfänger, Löschfrist je Turnier,
+     * angenommene Nutzungsbedingungen je Konto.
+     * @return list<string>
+     */
+    private function schemaV9(): array
+    {
+        $mysql = $this->treiber === 'mysql';
+        $pk = $mysql ? 'BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+        $nach = $mysql ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '';
+        return [
+            "CREATE TABLE vereine (
+                id $pk,
+                name VARCHAR(160) NOT NULL,
+                angelegt BIGINT NOT NULL
+            )$nach",
+            "CREATE TABLE sparten (
+                id $pk,
+                verein_id BIGINT NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                sportart VARCHAR(40) NOT NULL,
+                daten TEXT NULL,
+                angelegt BIGINT NOT NULL,
+                anmeldung_frei INTEGER NULL,
+                avv BIGINT NULL,
+                avv_konto BIGINT NULL,
+                loeschung_erinnert BIGINT NULL
+            )$nach",
+            "CREATE TABLE mitglieder (
+                sparte_id BIGINT NOT NULL,
+                konto_id BIGINT NOT NULL,
+                rolle VARCHAR(20) NOT NULL,
+                anlegen INTEGER NOT NULL DEFAULT 0,
+                angelegt BIGINT NOT NULL,
+                PRIMARY KEY (sparte_id, konto_id)
+            )$nach",
+            'CREATE INDEX idx_mitglieder_konto ON mitglieder (konto_id)',
+            "CREATE TABLE turnier_zugaenge (
+                turnier_id VARCHAR(16) NOT NULL,
+                konto_id BIGINT NOT NULL,
+                angelegt BIGINT NOT NULL,
+                PRIMARY KEY (turnier_id, konto_id)
+            )$nach",
+            'CREATE INDEX idx_zugaenge_konto ON turnier_zugaenge (konto_id)',
+            "CREATE TABLE einladungen (
+                id VARCHAR(16) NOT NULL PRIMARY KEY,
+                schluessel_hash CHAR(64) NOT NULL,
+                art VARCHAR(20) NOT NULL,
+                sparte_id BIGINT NOT NULL,
+                ziel VARCHAR(40) NULL,
+                rolle VARCHAR(20) NOT NULL,
+                anlegen INTEGER NOT NULL DEFAULT 0,
+                email VARCHAR(190) NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                von_konto BIGINT NOT NULL,
+                angelegt BIGINT NOT NULL,
+                ablauf BIGINT NOT NULL
+            )$nach",
+            'CREATE UNIQUE INDEX idx_einladungen_schluessel ON einladungen (schluessel_hash)',
+            "CREATE TABLE ausschuesse (
+                id $pk,
+                sparte_id BIGINT NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                angelegt BIGINT NOT NULL
+            )$nach",
+            "CREATE TABLE ausschuss_mitglieder (
+                ausschuss_id BIGINT NOT NULL,
+                konto_id BIGINT NOT NULL,
+                gesperrt INTEGER NOT NULL DEFAULT 0,
+                angelegt BIGINT NOT NULL,
+                PRIMARY KEY (ausschuss_id, konto_id)
+            )$nach",
+            "CREATE TABLE ausschuss_nachrichten (
+                id $pk,
+                ausschuss_id BIGINT NOT NULL,
+                konto_id BIGINT NULL,
+                name VARCHAR(120) NOT NULL,
+                text TEXT NOT NULL,
+                zeit BIGINT NOT NULL
+            )$nach",
+            'CREATE INDEX idx_nachrichten_ausschuss ON ausschuss_nachrichten (ausschuss_id, id)',
+            "CREATE TABLE veranstaltungen (
+                id $pk,
+                sparte_id BIGINT NOT NULL,
+                name VARCHAR(160) NOT NULL,
+                datum VARCHAR(10) NULL,
+                ausschuss_id BIGINT NULL,
+                angelegt BIGINT NOT NULL
+            )$nach",
+            "CREATE TABLE spieler_pool (
+                sparte_id BIGINT NOT NULL,
+                id VARCHAR(40) NOT NULL,
+                daten TEXT NOT NULL,
+                geaendert BIGINT NOT NULL,
+                PRIMARY KEY (sparte_id, id)
+            )$nach",
+            "CREATE TABLE kennungen_gesperrt (
+                id VARCHAR(16) NOT NULL PRIMARY KEY,
+                bis BIGINT NOT NULL
+            )$nach",
+            "CREATE TABLE sicherung_empfaenger (
+                turnier_id VARCHAR(16) NOT NULL,
+                email VARCHAR(190) NOT NULL,
+                schluessel_hash CHAR(64) NOT NULL,
+                angelegt BIGINT NOT NULL,
+                bestaetigt BIGINT NULL,
+                PRIMARY KEY (turnier_id, email)
+            )$nach",
+            'ALTER TABLE turniere ADD COLUMN sparte_id BIGINT NULL',
+            'ALTER TABLE turniere ADD COLUMN loeschen_nach INTEGER NOT NULL DEFAULT 12',
+            'ALTER TABLE turniere ADD COLUMN loeschung_erinnert BIGINT NULL',
+            'CREATE INDEX idx_turniere_sparte ON turniere (sparte_id)',
+            'ALTER TABLE konten ADD COLUMN bedingungen VARCHAR(20) NULL',
+            // Turnierkennungen ohne Groß/klein (ab 0.17 in Großbuchstaben gespeichert; ältere waren Ziffern bzw. a–z)
+            'UPDATE turniere SET id = UPPER(id)',
+            'UPDATE ereignisse SET turnier_id = UPPER(turnier_id)',
+            'UPDATE codes SET turnier_id = UPPER(turnier_id)',
+            'UPDATE sitzungen SET turnier_id = UPPER(turnier_id) WHERE turnier_id IS NOT NULL',
+            'UPDATE anmeldungen SET turnier_id = UPPER(turnier_id)',
+        ];
+    }
+
+    /**
+     * Bestehende Konten (bis 0.16) werden je zu Verein + Sparte „Tischtennis“ mit ihnen als Spartenleitung;
+     * ihre Turniere, ihr Spielerpool und ihre Einstellungen (Klassen, Kasse) gehen an die Sparte.
+     * Die Nutzungsbedingungen bestätigen sie beim nächsten Anmelden.
+     */
+    private function spartenUebernehmen(): void
+    {
+        $konten = $this->alle('SELECT * FROM konten WHERE id NOT IN (SELECT konto_id FROM mitglieder)');
+        foreach ($konten as $k) {
+            $jetzt = (int)($k['angelegt'] ?? time());
+            $this->ausfuehren('INSERT INTO vereine (name, angelegt) VALUES (?, ?)', [mb_substr((string)$k['name'], 0, 160), $jetzt]);
+            $verein = (int)$this->pdo->lastInsertId();
+            $this->ausfuehren(
+                'INSERT INTO sparten (verein_id, name, sportart, daten, angelegt, anmeldung_frei) VALUES (?, ?, ?, ?, ?, ?)',
+                [$verein, 'Tischtennis', 'tischtennis', $k['daten'] ?? null, $jetzt, $k['anmeldung_frei'] ?? null]
+            );
+            $sparte = (int)$this->pdo->lastInsertId();
+            $this->ausfuehren(
+                'INSERT INTO mitglieder (sparte_id, konto_id, rolle, anlegen, angelegt) VALUES (?, ?, ?, 1, ?)',
+                [$sparte, (int)$k['id'], 'spartenleitung', $jetzt]
+            );
+            $this->ausfuehren('UPDATE turniere SET sparte_id = ? WHERE konto_id = ?', [$sparte, (int)$k['id']]);
+            try {
+                $this->ausfuehren(
+                    'INSERT INTO spieler_pool (sparte_id, id, daten, geaendert) SELECT ?, id, daten, geaendert FROM pool WHERE konto_id = ?',
+                    [$sparte, (int)$k['id']]
+                );
+            } catch (\PDOException) {
+                // keine alte Pool-Tabelle
+            }
+        }
+        try {
+            $this->pdo->exec('DROP TABLE pool');
+        } catch (\PDOException) {
+            // schon entfernt
+        }
     }
 
     /**

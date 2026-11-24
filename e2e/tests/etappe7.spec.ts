@@ -51,7 +51,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await page.getByLabel('Name des Turniers').fill(`Livepokal ${geraet}`);
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
-  const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
+  const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
 
   await angabenSetzen(page, { tische: '2' });
   await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
@@ -155,7 +155,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   }
   await expect(dok.getByText(/Noch kein Endstand/)).toBeVisible();
   await page.getByTestId('druck-art').selectOption('aushang');
-  await expect(dok.getByText(tid.replace(/(\d{4})(\d{4})/, '$1 $2'))).toBeVisible();
+  await expect(dok.getByText(tid.replace(/^(.{4})(.{4})$/, '$1 $2'))).toBeVisible();
 
   // Spiel-Link vom Zettel öffnet das Ergebnis zum Eintragen
   await page.goto(spielLink!.replace(/^.*#/, './#'));

@@ -53,7 +53,7 @@ test('Teilnehmer je Konkurrenz und Reiter Spielerpool', async ({ page }, info) =
   await page.getByLabel('Datum').fill('2027-12-04');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
-  const tid = page.url().match(/#\/t\/(\d{8})/)![1]!;
+  const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
 
   // Reiter: „Teilnehmer“ statt „Spieler“, „Spielerpool“ direkt vor „Einstellungen“
   const reiter = await nav(page).getByRole('link').allInnerTexts();

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { setzeAktiveSparte } from '../sparte.svelte';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { ALLE_AUFGABEN, ART, HELFER_STANDARD, type Aufgabe, type Rolle, type TurnierEinstellungen as Einstellungen } from '@shared/protokoll';
   import { T } from '../texte';
@@ -88,6 +89,8 @@
         if (zustand) zustand = mitKopf(berechnen(ereignisse));
       }
       sperre = a.turnier.zentrale || a.turnier.abgegeben ? { zentrale: a.turnier.zentrale ?? null, abgegeben: !!a.turnier.abgegeben } : null;
+      // Pool, Klassen und Kasse-Vorgaben gehören der Sparte des Turniers (ab 0.17)
+      setzeAktiveSparte(a.turnier.sparte);
       if (kennung) {
         if (a.turnier.rechte === null || a.turnier.rechte === undefined) {
           turnierAbmelden(id);

@@ -423,6 +423,9 @@
           </tfoot>
         </table>
       </section>
+    {:else if kassenArt === 'quittungen' && (!z.kasse?.aussteller.trim() || !z.kasse?.anschrift.trim())}
+      <!-- Frage 15A: Aussteller und Anschrift sind auf Quittungen Pflicht -->
+      <p class="leer" data-testid="quittung-pflicht">{T.quittung.pflichtFehlt}</p>
     {:else if kassenArt === 'quittungen'}
       {#if !quittungen.length}<p class="leer">{T.quittung.keine}</p>{/if}
       <div class="quittungen">
@@ -432,7 +435,7 @@
             {#if b.storniert}<div class="storno">{T.quittung.storniert}</div>{/if}
             <header>
               <div><strong>{z.kasse?.aussteller || z.name}</strong>{#if z.kasse?.anschrift}<div class="klein vor">{z.kasse.anschrift}</div>{/if}</div>
-              <div class="rechts"><div class="q-titel">{T.quittung.titel}</div><div>{T.quittung.nr} {quittungsNr(b)}</div></div>
+              <div class="rechts"><div class="q-titel">{T.quittung.titel}</div><div>{T.quittung.nr} {quittungsNr(b)}</div><div class="klein">{T.quittung.ausgestellt(new Date().toLocaleDateString('de-DE'))}</div></div>
             </header>
             <dl>
               <dt>{T.quittung.betrag}</dt><dd class="betrag">{euro(b.betrag)}</dd>

@@ -5,6 +5,8 @@
   import { angemeldet, app, fehlerText } from '../app.svelte';
   import PasswortFeld from './PasswortFeld.svelte';
 
+  /** Ziel nach der Anmeldung (z. B. zurück zur Einladung) */
+  let { zurueck = null }: { zurueck?: string | null } = $props();
   let email = $state('');
   let passwort = $state('');
   let fehler = $state('');
@@ -15,7 +17,7 @@
     fehler = '';
     laeuft = true;
     try {
-      angemeldet(await api.login(email.trim(), passwort));
+      angemeldet(await api.login(email.trim(), passwort), null, zurueck ?? '');
     } catch (x) {
       fehler = fehlerText(x, T.app.fehlerAllgemein);
     } finally {
