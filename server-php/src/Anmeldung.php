@@ -659,9 +659,14 @@ final class Anmeldung
                 throw new ApiFehler('ungueltig', 'Online bestätigen können nur Volljährige. Unter 18 meldet euch bitte über euren Verein bei der Turnierleitung.');
             }
             $frei = null;
-            $this->gesperrt((string)$t['id'], function () use ($t, &$z, $i, $antwort, &$frei): void {
+            $geaendert = false;
+            $this->gesperrt((string)$t['id'], function () use ($t, &$z, $i, $antwort, &$frei, &$geaendert): void {
                 $z = $this->zeile($t, (string)$z['id']);
                 $k = $z['d']['konkurrenzen'][$i];
+                if (($k['partnerOk'] ?? null) === ($antwort === 'ja')) {
+                    return; // schon so beantwortet: keine weitere Mail
+                }
+                $geaendert = true;
                 $z['d']['konkurrenzen'][$i]['partnerOk'] = $antwort === 'ja';
                 if ($antwort === 'nein' && $k['status'] !== 'abgemeldet') {
                     $frei = $k['status'] === 'platz' ? (string)$k['id'] : null;
@@ -673,7 +678,7 @@ final class Anmeldung
                 $this->nachruecken($t, $e, $frei);
             }
             $kk = self::konkurrenzVon($e, (string)$z['d']['konkurrenzen'][$i]['id']);
-            $this->mailen($t, (string)$z['email'], ($antwort === 'ja' ? 'Partner/in hat bestätigt: ' : 'Partner/in hat abgelehnt: ') . $t['name'],
+            if ($geaendert) $this->mailen($t, (string)$z['email'], ($antwort === 'ja' ? 'Partner/in hat bestätigt: ' : 'Partner/in hat abgelehnt: ') . $t['name'],
                 "Hallo {$z['d']['vorname']},\n\n" . (string)$z['d']['konkurrenzen'][$i]['partner']
                 . ($antwort === 'ja' ? ' hat die Meldung für „' . ($kk['name'] ?? '') . '“ bestätigt.'
                     : ' hat die Meldung für „' . ($kk['name'] ?? '') . '“ abgelehnt. Diese Meldung ist damit zurückgezogen.')

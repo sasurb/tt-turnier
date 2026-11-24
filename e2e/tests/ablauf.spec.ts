@@ -155,6 +155,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   expect(bestaetigen).toBeTruthy();
   const turnierSeite = page.url();
   await page.goto(`./${bestaetigen}`);
+  await page.getByTestId('sicherung-bestaetigen').click();
   await expect(page.getByTestId('sicherung-link')).toContainText('bekommt ab jetzt die Sicherungen');
   await page.goto(turnierSeite);
   await page.getByRole('link', { name: 'Einstellungen' }).click();

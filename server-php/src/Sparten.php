@@ -90,6 +90,14 @@ final class Sparten
         if ($this->istAdmin($s)) {
             return true;
         }
+        // Ohne Zustimmung zu den Nutzungsbedingungen (mit AVV) keine Leitung per Konto
+        $kb = 'b|' . $s['konto_id'];
+        if (!array_key_exists($kb, $this->cache)) {
+            $this->cache[$kb] = $this->api->bedingungenAngenommen((int)$s['konto_id']) ? [] : null;
+        }
+        if ($this->cache[$kb] === null) {
+            return false;
+        }
         if ($t['sparte_id'] !== null && $this->istSpartenleitung($s, (int)$t['sparte_id'])) {
             return true;
         }
@@ -340,7 +348,16 @@ final class Sparten
         $s = $this->api->kontoSitzung($a);
         $sp = $this->sparteFuer($s, $a->rumpf['sparte'] ?? null, 'leitung');
         $this->api->passwortPruefen($a, (int)$s['konto_id']);
+        $empfaenger = $this->alleAdressen((int)$sp['id'], (int)$s['konto_id']);
+        $wer = (string)($this->db->eine('SELECT name FROM konten WHERE id = ?', [(int)$s['konto_id']])['name'] ?? '');
         $this->entfernen((int)$sp['id']);
+        if ($this->api->mailBereit()) {
+            foreach (array_slice($empfaenger, 0, 300) as $m) {
+                $this->api->mail((string)$m['email'], "Sparte gelöscht: {$sp['verein']} – {$sp['name']}", "Hallo {$m['name']},\n\n"
+                    . "{$wer} hat die Sparte „{$sp['verein']} – {$sp['name']}“ mit allen Turnieren, dem Spielerpool und den Ausschüssen gelöscht.\n"
+                    . 'Dein Konto bleibt bestehen. Fragen dazu bitte an die Spartenleitung.');
+            }
+        }
         return ['ok' => true] + $this->fuerKonto((int)$s['konto_id']);
     }
 
@@ -445,6 +462,19 @@ final class Sparten
         foreach ($this->letzteLeitungIn($konto) as $sp) {
             $this->entfernen((int)$sp['id']);
         }
+        $this->api->kontoKennungenSperren($konto, null);
+        // Adresse aus den Sicherungsempfängern der weitergeführten Turniere entfernen
+        $mail = mb_strtolower((string)($this->db->eine('SELECT email FROM konten WHERE id = ?', [$konto])['email'] ?? ''));
+        if ($mail !== '') {
+            foreach ($this->db->alle('SELECT id, sicherung_an FROM turniere WHERE sicherung_an LIKE ?', ['%' . $mail . '%']) as $t) {
+                $liste = json_decode((string)$t['sicherung_an'], true);
+                if (is_array($liste)) {
+                    $neu = array_values(array_filter($liste, static fn(mixed $e): bool => is_string($e) && mb_strtolower($e) !== $mail));
+                    $this->db->ausfuehren('UPDATE turniere SET sicherung_an = ? WHERE id = ?', [json_encode($neu), $t['id']]);
+                }
+            }
+            $this->db->ausfuehren('DELETE FROM sicherung_empfaenger WHERE email = ?', [$mail]);
+        }
         foreach ($this->db->alle('SELECT DISTINCT sparte_id FROM turniere WHERE konto_id = ? AND sparte_id IS NOT NULL', [$konto]) as $z) {
             $neu = $this->db->eine(
                 "SELECT konto_id FROM mitglieder WHERE sparte_id = ? AND rolle = 'spartenleitung' AND konto_id <> ? ORDER BY angelegt LIMIT 1",
@@ -516,6 +546,9 @@ final class Sparten
         if ($m['rolle'] === 'spartenleitung') {
             $this->nichtLetzteLeitung((int)$sp['id'], $konto);
         }
+        $turniere = array_map(static fn(array $z): string => (string)$z['id'], $this->db->alle('SELECT id FROM turniere WHERE sparte_id = ?', [(int)$sp['id']]));
+        $this->api->kontoKennungenSperren($konto, $turniere);
+        $this->db->ausfuehren("DELETE FROM einladungen WHERE von_konto = ? AND sparte_id = ? AND art <> 'ausschuss'", [$konto, (int)$sp['id']]);
         $this->db->ausfuehren('DELETE FROM mitglieder WHERE sparte_id = ? AND konto_id = ?', [(int)$sp['id'], $konto]);
         $this->db->ausfuehren('DELETE FROM turnier_zugaenge WHERE konto_id = ? AND turnier_id IN (SELECT id FROM turniere WHERE sparte_id = ?)', [$konto, (int)$sp['id']]);
         // Sitzungen des Kontos für Turniere dieser Sparte enden (Konto-Token ohne Turnier bleiben gültig)
@@ -565,8 +598,15 @@ final class Sparten
         if (!is_int($konto)) {
             throw new ApiFehler('ungueltig', 'Feld „konto“ fehlt.');
         }
+        if ($this->db->eine('SELECT konto_id FROM turnier_zugaenge WHERE turnier_id = ? AND konto_id = ?', [$t['id'], $konto]) === null) {
+            return $this->turnierKontenListe($t);
+        }
         $this->db->ausfuehren('DELETE FROM turnier_zugaenge WHERE turnier_id = ? AND konto_id = ?', [$t['id'], $konto]);
         $this->db->ausfuehren('DELETE FROM sitzungen WHERE konto_id = ? AND turnier_id = ?', [$konto, $t['id']]);
+        // Spartenleitung behält die Leitung ohnehin; sonst auch die beim Anlegen erzeugte Kennung sperren
+        if ($t['sparte_id'] === null || ($this->mitglied($konto, (int)$t['sparte_id'])['rolle'] ?? '') !== 'spartenleitung') {
+            $this->api->kontoKennungenSperren($konto, [(string)$t['id']]);
+        }
         $this->cacheLeeren();
         return $this->turnierKontenListe($t);
     }
@@ -590,7 +630,12 @@ final class Sparten
     {
         $konto = (int)$s['konto_id'];
         $this->api->begrenzen('einladung|' . $konto, 30, 3600, 'Zu viele Einladungen in kurzer Zeit. Bitte später erneut versuchen.');
-        $this->api->begrenzen('einladung-sparte|' . $sp['id'], 60, 86400, 'Heute wurden für diese Sparte schon sehr viele Einladungen verschickt.');
+        // Eigenes Tageskontingent für Ausschüsse (sonst verbrauchen Ausschussmitglieder das der Spartenleitung);
+        // neue, nicht freigegebene Sparten (jünger als 7 Tage) nur wenige Einladungen am Tag (gegen Mail-Missbrauch)
+        $frei = $this->api->anmeldungFreigabe(['sparte_id' => (int)$sp['id'], 'konto_id' => $konto])['erlaubt'];
+        $this->api->begrenzen(($art === 'ausschuss' ? 'einladung-ausschuss-sparte|' : 'einladung-sparte|') . $sp['id'], $frei ? 60 : 10, 86400,
+            $frei ? 'Heute wurden für diese Sparte schon sehr viele Einladungen verschickt.'
+                : 'Neue Sparten können in den ersten 7 Tagen höchstens 10 Einladungen am Tag verschicken. Der Administrator kann die Sparte früher freischalten.');
         $jetzt = $this->api->jetzt();
         // Gleiche Einladung nochmals: alte ersetzen
         $this->db->ausfuehren('DELETE FROM einladungen WHERE sparte_id = ? AND art = ? AND email = ? AND ' . ($ziel === null ? 'ziel IS NULL' : 'ziel = ?'),
@@ -609,13 +654,16 @@ final class Sparten
         $von = (string)($this->db->eine('SELECT name FROM konten WHERE id = ?', [$konto])['name'] ?? '');
         $gesendet = false;
         if ($this->api->mailBereit()) {
-            $gesendet = $this->api->mail($email, "Einladung: {$was}", "Hallo {$name},\n\n"
+            // Ohne frei eingegebenen Namen der eingeladenen Person (die Mail geht an eine fremde Adresse)
+            $gesendet = $this->api->mail($email, 'Einladung zur Turnier-App', "Hallo,\n\n"
                 . "{$von} lädt dich ein: {$was} ({$sp['verein']} – {$sp['name']}).\n\n"
                 . "Über diesen Link nimmst du die Einladung an. Hast du noch kein Konto, legst du dort eines an –\n"
                 . "bitte mit dieser E-Mail-Adresse ({$email}):\n\n{$link}\n\n"
                 . "Der Link gilt 14 Tage und nur einmal. Kennst du die Person nicht? Dann ignoriere diese Mail.");
         }
-        return ['einladung' => self::einladungAusgabe($this->db->eine('SELECT * FROM einladungen WHERE id = ?', [$id])), 'link' => $link, 'gesendet' => $gesendet];
+        // Den Link bekommt die einladende Person nur, wenn keine Mail verschickt wurde (sonst könnte sie selbst
+        // ein Konto auf die fremde Adresse anlegen)
+        return ['einladung' => self::einladungAusgabe($this->db->eine('SELECT * FROM einladungen WHERE id = ?', [$id])), 'link' => $gesendet ? '' : $link, 'gesendet' => $gesendet];
     }
 
     private function einladungsFelder(Anfrage $a): array
@@ -637,6 +685,12 @@ final class Sparten
             $t = $this->api->turnierLaden((string)$turnier);
             if (!$this->kontoLeitet($s, $t) || $t['sparte_id'] === null) {
                 throw new ApiFehler('keine_berechtigung', 'Konten einladen darf nur die Turnierleitung mit Konto.');
+            }
+            // Die Einladung macht zum Mitglied der Sparte (mit Spielerpool): nur Spartenleitung oder Turnierleitungen,
+            // denen die Spartenleitung das Recht „Turniere anlegen“ gegeben hat
+            $m = $this->mitglied((int)$s['konto_id'], (int)$t['sparte_id']);
+            if (!$this->istSpartenleitung($s, (int)$t['sparte_id']) && (int)($m['anlegen'] ?? 0) !== 1) {
+                throw new ApiFehler('keine_berechtigung', 'Konten zu einem Turnier einladen dürfen die Spartenleitung und Turnierleitungen mit dem Recht „Turniere anlegen“.');
             }
             $sp = $this->sparteLaden((int)$t['sparte_id']);
             $antwort = $this->einladen($s, $sp, 'turnier', (string)$t['id'], 'turnierleitung', false, $email, $name, "Turnierleitung „{$t['name']}“");
@@ -665,7 +719,9 @@ final class Sparten
         if ($e === null) {
             throw new ApiFehler('nicht_gefunden', 'Einladung nicht gefunden.');
         }
-        $darf = $this->istSpartenleitung($s, (int)$e['sparte_id']) || (int)$e['von_konto'] === (int)$s['konto_id'];
+        $eigene = (int)$e['von_konto'] === (int)$s['konto_id']
+            && ($e['art'] === 'ausschuss' ? $this->ausschussMitglied((int)$e['ziel'], (int)$s['konto_id']) : $this->mitglied((int)$s['konto_id'], (int)$e['sparte_id']) !== null);
+        $darf = $this->istSpartenleitung($s, (int)$e['sparte_id']) || $eigene;
         if (!$darf && $e['art'] === 'turnier') {
             $darf = $this->kontoLeitet($s, $this->api->turnierLaden((string)$e['ziel']));
         }
@@ -852,7 +908,15 @@ final class Sparten
             'id' => (int)$z['id'], 'von' => (string)$z['name'], 'text' => (string)$z['text'], 'zeit' => Api::iso((int)$z['zeit']),
             'ich' => $z['konto_id'] !== null && (int)$z['konto_id'] === (int)$s['konto_id'],
         ], $zeilen));
-        $einladungen = array_map([self::class, 'einladungAusgabe'], $this->db->alle(
+        $leitung = $this->istSpartenleitung($s, (int)$au['sparte_id']);
+        $einladungen = array_map(static function (array $z) use ($leitung, $s): array {
+            $e = self::einladungAusgabe($z);
+            if (!$leitung && (int)$z['von_konto'] !== (int)$s['konto_id']) {
+                [$lokal, $domain] = array_pad(explode('@', $e['email'], 2), 2, '');
+                $e['email'] = mb_substr($lokal, 0, 2) . '…@' . $domain;
+            }
+            return $e;
+        }, $this->db->alle(
             "SELECT * FROM einladungen WHERE art = 'ausschuss' AND ziel = ? AND ablauf >= ? ORDER BY angelegt DESC",
             [(string)$id, $this->api->jetzt()]
         ));
@@ -862,7 +926,7 @@ final class Sparten
             'mitglieder' => $mitglieder,
             'nachrichten' => $nachrichten,
             'einladungen' => $einladungen,
-            'leitung' => $this->istSpartenleitung($s, (int)$au['sparte_id']),
+            'leitung' => $leitung,
         ];
     }
 
@@ -912,6 +976,10 @@ final class Sparten
             }
         }
         $this->db->ausfuehren('UPDATE ausschuss_mitglieder SET gesperrt = ? WHERE ausschuss_id = ? AND konto_id = ?', [$gesperrt ? 1 : 0, (int)$au['id'], $konto]);
+        if ($gesperrt) {
+            // Offene Einladungen der gesperrten Person in diesem Ausschuss verfallen
+            $this->db->ausfuehren("DELETE FROM einladungen WHERE art = 'ausschuss' AND ziel = ? AND von_konto = ?", [(string)$au['id'], $konto]);
+        }
         return $this->ausschussAusgabe($s, $au, 0);
     }
 

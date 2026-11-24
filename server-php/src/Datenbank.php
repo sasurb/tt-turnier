@@ -310,6 +310,7 @@ final class Datenbank
                 schluessel_hash CHAR(64) NOT NULL,
                 angelegt BIGINT NOT NULL,
                 bestaetigt BIGINT NULL,
+                name VARCHAR(160) NULL,
                 PRIMARY KEY (turnier_id, email)
             )$nach",
             'ALTER TABLE turniere ADD COLUMN sparte_id BIGINT NULL',
@@ -317,6 +318,8 @@ final class Datenbank
             'ALTER TABLE turniere ADD COLUMN loeschung_erinnert BIGINT NULL',
             'CREATE INDEX idx_turniere_sparte ON turniere (sparte_id)',
             'ALTER TABLE konten ADD COLUMN bedingungen VARCHAR(20) NULL',
+            // Konto, für das eine Leitungskennung beim Anlegen erzeugt wurde (wird beim Entfernen gesperrt)
+            'ALTER TABLE codes ADD COLUMN konto_id BIGINT NULL',
             // Turnierkennungen ohne Groß/klein (ab 0.17 in Großbuchstaben gespeichert; ältere waren Ziffern bzw. a–z)
             'UPDATE turniere SET id = UPPER(id)',
             'UPDATE ereignisse SET turnier_id = UPPER(turnier_id)',
@@ -333,6 +336,12 @@ final class Datenbank
      */
     private function spartenUebernehmen(): void
     {
+        try {
+            $this->pdo->query('SELECT COUNT(*) FROM pool')->fetchColumn();
+            $altPool = true;
+        } catch (\PDOException) {
+            $altPool = false; // keine alte Pool-Tabelle (neue Installation oder schon übernommen)
+        }
         $konten = $this->alle('SELECT * FROM konten WHERE id NOT IN (SELECT konto_id FROM mitglieder)');
         foreach ($konten as $k) {
             $jetzt = (int)($k['angelegt'] ?? time());
@@ -348,19 +357,20 @@ final class Datenbank
                 [$sparte, (int)$k['id'], 'spartenleitung', $jetzt]
             );
             $this->ausfuehren('UPDATE turniere SET sparte_id = ? WHERE konto_id = ?', [$sparte, (int)$k['id']]);
-            try {
+            if ($altPool) {
                 $this->ausfuehren(
                     'INSERT INTO spieler_pool (sparte_id, id, daten, geaendert) SELECT ?, id, daten, geaendert FROM pool WHERE konto_id = ?',
                     [$sparte, (int)$k['id']]
                 );
-            } catch (\PDOException) {
-                // keine alte Pool-Tabelle
             }
         }
-        try {
-            $this->pdo->exec('DROP TABLE pool');
-        } catch (\PDOException) {
-            // schon entfernt
+        // Alte Tabelle erst entfernen, wenn alles übernommen ist (Zahl der Einträge gleich)
+        if ($altPool) {
+            $alt = (int)$this->pdo->query('SELECT COUNT(*) FROM pool')->fetchColumn();
+            $neu = (int)$this->pdo->query('SELECT COUNT(*) FROM spieler_pool')->fetchColumn();
+            if ($neu >= $alt) {
+                $this->pdo->exec('DROP TABLE pool');
+            }
         }
     }
 

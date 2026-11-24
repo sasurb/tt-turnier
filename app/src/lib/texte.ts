@@ -1956,7 +1956,9 @@ export const T = {
   },
   sicherungLink: {
     titel: 'Sicherungen bestätigen',
-    pruefe: 'Wird bestätigt …',
+    frage: 'Du wurdest als Empfänger der Sicherungsmails eines Turniers eingetragen. Die Sicherungen enthalten Namen und Ergebnisse der Teilnehmenden (ohne E-Mail-Adressen und Bankverbindung).',
+    knopf: 'Ja, Sicherungen empfangen',
+    nicht: 'Kennst du das Turnier nicht? Dann schließe diese Seite einfach – du bekommst nichts.',
     ok: (mail: string, turnier: string) => `Danke! ${mail} bekommt ab jetzt die Sicherungen von „${turnier}“.`,
   },
   bedingungen: {

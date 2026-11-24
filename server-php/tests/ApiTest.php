@@ -388,6 +388,12 @@ pruefe($s === 400, 'ungültiger Takt abgewiesen');
 
 echo "Etappe 2b: Sicherung per Mail\n";
 [$s, $d] = rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $hid, 'sicherungAn' => ['Leitung@Example.org', 'nord@example.org'], 'sicherungTakt' => 15], $jana);
+pruefe($s === 403, 'Ab 0.17: fremde Empfänger nur mit Konto (nicht mit Leitungskennung)');
+[$s, $d] = rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $hid, 'sicherungAn' => ['Leitung@Example.org', 'nord@example.org'], 'sicherungTakt' => 15], $hLeitung);
+pruefe($s === 403, 'Ab 0.17: neue Sparte (unter 7 Tagen) nur an die eigenen Adressen');
+[, $d] = rufe($api, 'GET', 'sparten', null, $admin2);
+rufe($api, 'POST', 'sparte.anmeldung', ['id' => array_values(array_filter($d['sparten'], fn($x) => $x['verein'] === 'TSV Nord'))[0]['id'], 'anmeldung' => 'frei'], $admin2);
+[$s, $d] = rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $hid, 'sicherungAn' => ['Leitung@Example.org', 'nord@example.org'], 'sicherungTakt' => 15], $hLeitung);
 pruefe($s === 200 && $d['sicherungAn'] === ['leitung@example.org', 'nord@example.org'] && $d['sicherungTakt'] === 15, 'Empfänger und Takt gespeichert');
 pruefe($d['unbestaetigt'] === ['leitung@example.org'], 'Ab 0.17: fremde Adresse wartet auf Bestätigung, Konto-Adresse nicht');
 $bm = mailAn($mailer, 'leitung@example.org');
@@ -1208,9 +1214,7 @@ $zw = array_values(array_filter($d['codes'], fn($c) => $c['bezug'] === 'l-zwei')
 $zwTok = $d['token'];
 $vorher = count($mailer->mails);
 [$st] = rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $tid, 'sicherungAn' => ['nord@example.org', 'fremd@example.org']], $zwTok);
-$m = mailAn($mailer, 'nord@example.org');
-pruefe($st === 200 && count($mailer->mails) === $vorher + 2 && str_contains($m->text, 'fremd@example.org') && str_contains($m->text, 'Zweite Leitung')
-    && str_contains((string)mailAn($mailer, 'fremd@example.org')?->betreff, 'Bitte bestätigen'), 'Neue Sicherungsempfänger: Mail an das Konto (und Bestätigungslink an die neue Adresse)');
+pruefe($st === 403 && count($mailer->mails) === $vorher, 'Ab 0.17: Leitungskennung ohne Konto trägt keine fremden Sicherungsempfänger ein (keine Mail)');
 $vorher = count($mailer->mails);
 rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $tid, 'sicherungAn' => ['nord@example.org']], $leit);
 rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $tid, 'sicherungAn' => ['nord@example.org', 'zweit@example.org']], $leit);
@@ -1322,6 +1326,15 @@ echo "Paket 0.17: Sparten, Rollen, Einladungen, Ausschüsse\n";
 $mailer17 = new TestMailer();
 $api = neueApi($mailer17);
 $zeit = 1_800_000_000;
+// Link der zuletzt verschickten Einladung (ab 0.17 nur in der Mail, nicht in der Antwort)
+$einlLink = function () use ($mailer17): array {
+    foreach (array_reverse($mailer17->mails) as $m) {
+        if (preg_match('~#/einladung/([a-f0-9]{64})~', $m->text, $x)) {
+            return $x;
+        }
+    }
+    return [];
+};
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Sara Sparte', 'email' => 'sara@example.org', 'passwort' => 'sarasara1', 'bedingungen' => true], null, [], '10.17.0.1');
 pruefe($s === 400 && str_contains($d['meldung'], '18'), 'Registrieren ohne „mindestens 18“ abgewiesen');
@@ -1357,8 +1370,8 @@ pruefe($s === 400, 'nur 12 oder 24 Monate');
 
 // Turnierleitung per Einladung (ganze Sparte, ohne Recht „anlegen“)
 [$s, $d] = rufe($api, 'POST', 'sparte.einladen', ['sparte' => $sid, 'email' => 'Tom@Example.org', 'name' => 'Tom Turnier', 'rolle' => 'turnierleitung'], $sara);
-pruefe($s === 200 && str_contains($d['link'], '#/einladung/') && $d['gesendet'] === true && $d['einladung']['email'] === 'tom@example.org', 'Einladung mit Link und Mail');
-preg_match('~#/einladung/([a-f0-9]{64})~', $d['link'], $ex);
+pruefe($s === 200 && $d['link'] === '' && $d['gesendet'] === true && $d['einladung']['email'] === 'tom@example.org', 'Einladung per Mail (Link nicht in der Antwort)');
+preg_match('~#/einladung/([a-f0-9]{64})~', (string)mailAn($mailer17, 'tom@example.org')?->text, $ex);
 $tomKey = $ex[1];
 pruefe(str_contains((string)mailAn($mailer17, 'tom@example.org')?->text, $tomKey), 'Einladungsmail enthält den Link');
 [$s, $d] = rufe($api, 'POST', 'einladung.info', ['schluessel' => $tomKey]);
@@ -1406,7 +1419,7 @@ pruefe($s === 403, 'Ohne Leitung des Turniers keine Einladung dazu');
 pruefe($s === 401, 'Leitung nur per Kennung (ohne Konto) kann keine Konten einladen');
 [$s, $d] = rufe($api, 'POST', 'sparte.einladen', ['turnier' => $kr, 'email' => 'fremd17@example.org', 'name' => 'Fremd'], $sara);
 pruefe($s === 200 && count($d['einladungen']) === 1, 'Spartenleitung lädt ein Konto zur Turnierleitung von „Kreisrangliste“ ein');
-preg_match('~#/einladung/([a-f0-9]{64})~', $d['link'], $ex);
+preg_match('~#/einladung/([a-f0-9]{64})~', (string)mailAn($mailer17, 'fremd17@example.org')?->text, $ex);
 [$s] = rufe($api, 'POST', 'einladung.annehmen', ['schluessel' => $ex[1]], $tom);
 pruefe($s === 403, 'Einladung gilt nur für die eingeladene Adresse');
 [$s, $d] = rufe($api, 'POST', 'einladung.annehmen', ['schluessel' => $ex[1]], $fremd);
@@ -1442,7 +1455,7 @@ pruefe($s === 403, 'Ausschuss anlegen nur Spartenleitung');
 pruefe($s === 200 && $d['ausschuss']['name'] === 'Sommerfest' && count($d['mitglieder']) === 1, 'Ausschuss angelegt, Spartenleitung ist Mitglied');
 $aid = $d['ausschuss']['id'];
 [$s, $d] = rufe($api, 'POST', 'ausschuss.einladen', ['ausschuss' => $aid, 'email' => 'mia@example.org', 'name' => 'Mia'], $sara);
-preg_match('~#/einladung/([a-f0-9]{64})~', $d['link'], $ex);
+$ex = $einlLink();
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Mia', 'email' => 'mia@example.org', 'passwort' => 'miamia123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1]], null, [], '10.17.0.4');
 pruefe($s === 200 && $d['konto']['sparten'] === [] && $d['konto']['ausschuesse'][0]['id'] === $aid, 'Ausschussmitglied ohne Sparten-Rolle');
 $mia = $d['token'];
@@ -1452,7 +1465,7 @@ pruefe($s === 403, 'Ausschussmitglied hat keinen Zugriff auf den Pool');
 pruefe($s === 200 && $d['nachrichten'][0]['von'] === 'Mia' && $d['nachrichten'][0]['ich'] === true && str_contains($d['nachrichten'][0]['text'], "\n"), 'Nachricht im Ausschuss (mehrzeilig)');
 [$s, $d] = rufe($api, 'POST', 'ausschuss.einladen', ['ausschuss' => $aid, 'email' => 'nils@example.org', 'name' => 'Nils'], $mia);
 pruefe($s === 200, 'Mitglied lädt weiteres Mitglied ein');
-preg_match('~#/einladung/([a-f0-9]{64})~', $d['link'], $ex);
+$ex = $einlLink();
 [, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Nils', 'email' => 'nils@example.org', 'passwort' => 'nilsnils1', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1]], null, [], '10.17.0.5');
 $nils = $d['token'];
 $nilsId = $d['konto']['id'];
@@ -1468,7 +1481,7 @@ pruefe($s === 200, 'Mitglied sperrt ein anderes Mitglied');
 [$s2] = rufe($api, 'POST', 'ausschuss.nachricht', ['ausschuss' => $aid, 'text' => 'Hallo?'], $nils);
 pruefe($s === 403 && $s2 === 403, 'Gesperrte lesen und schreiben nicht mehr');
 [, $d] = rufe($api, 'POST', 'ausschuss.einladen', ['ausschuss' => $aid, 'email' => 'nils@example.org', 'name' => 'Nils'], $mia);
-preg_match('~#/einladung/([a-f0-9]{64})~', $d['link'], $ex);
+$ex = $einlLink();
 [$s] = rufe($api, 'POST', 'einladung.annehmen', ['schluessel' => $ex[1]], $nils);
 pruefe($s === 403, 'Gesperrte heben die Sperre nicht mit einer neuen Einladung auf');
 [$s] = rufe($api, 'POST', 'veranstaltung.anlegen', ['sparte' => $sid, 'name' => 'Sommerfest 2027', 'datum' => '2027-07-10', 'ausschuss' => $aid], $sara);
@@ -1559,6 +1572,90 @@ pruefe($s === 401, 'Sparte löschen nur mit Passwort');
 [$s, $d] = rufe($api, 'POST', 'sparte.loeschen', ['sparte' => $zweite, 'passwort' => 'olafolaf1'], $olaf);
 [$s2] = rufe($api, 'GET', 'turnier', null, null, ['id' => $jc]);
 pruefe($s === 200 && count($d['sparten']) === 1 && $s2 === 404, 'Sparte mit Turnieren gelöscht, erste bleibt');
+
+echo "Paket 0.17: Befunde der Sicherheitsprüfung\n";
+$mailerS = new TestMailer();
+$api = neueApi($mailerS);
+$zeit = 1_800_000_000;
+rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Lea', 'email' => 'lea@example.org', 'passwort' => 'lealea123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'TV Süd'], null, [], '10.18.0.1');
+$lea = $d['token'];
+$lsp = $d['konto']['sparten'][0]['id'];
+[, $d] = rufe($api, 'POST', 'login', ['email' => 'admin@example.org', 'passwort' => 'geheim123'], null, [], '10.18.0.9');
+$adm = $d['token'];
+// Neue Sparte: Einladungen nur wenige am Tag
+$n = 0;
+for ($i = 0; $i < 12; $i++) {
+    [$s] = rufe($api, 'POST', 'sparte.einladen', ['sparte' => $lsp, 'email' => "x{$i}@example.org", 'name' => 'Xaver', 'rolle' => 'turnierleitung'], $lea);
+    $n += $s === 200 ? 1 : 0;
+}
+pruefe($n === 10, 'Neue Sparte: höchstens 10 Einladungen am Tag');
+pruefe(str_starts_with((string)mailAn($mailerS, 'x0@example.org')?->text, "Hallo,\n"), 'Einladungsmail ohne frei eingegebenen Namen');
+rufe($api, 'POST', 'sparte.anmeldung', ['id' => $lsp, 'anmeldung' => 'frei'], $adm);
+[, $d] = rufe($api, 'POST', 'sparte.einladen', ['sparte' => $lsp, 'email' => 'ole@example.org', 'name' => 'Ole', 'rolle' => 'turnierleitung'], $lea);
+$ex = [];
+preg_match('~#/einladung/([a-f0-9]{64})~', (string)mailAn($mailerS, 'ole@example.org')?->text, $ex);
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Ole', 'email' => 'ole@example.org', 'passwort' => 'oleole123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1] ?? ''], null, [], '10.18.0.2');
+$ole = $d['token'];
+$oleId = $d['konto']['id'];
+[$s] = rufe($api, 'POST', 'konto.einstellungen', ['kasse' => ['aussteller' => 'X', 'anschrift' => '', 'ust' => 'keiner', 'ustSatz' => 19, 'fusstext' => '', 'empfaenger' => 'Ole', 'iban' => 'DE02120300000000202051', 'bic' => '']], $ole);
+pruefe($s === 403, 'Turnierleitung ändert die Kasse-Vorgabe (IBAN) der Sparte nicht');
+[$s] = rufe($api, 'POST', 'konto.einstellungen', ['klassen' => ['Hobby']], $ole);
+pruefe($s === 200, 'Klassen-Begriffe darf die Turnierleitung pflegen');
+[$s] = rufe($api, 'POST', 'pool.loeschen', ['ids' => ['a']], $ole);
+pruefe($s === 403, 'Turnierleitung ohne Recht löscht nicht im Spielerpool');
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Südcup', 'datum' => '2027-03-01'], $lea);
+$sc = $d['turnier']['id'];
+rufe($api, 'POST', 'sparte.einladen', ['turnier' => $sc, 'email' => 'ole@example.org', 'name' => 'Ole'], $lea);
+preg_match('~#/einladung/([a-f0-9]{64})~', (string)mailAn($mailerS, 'ole@example.org')?->text, $ex);
+rufe($api, 'POST', 'einladung.annehmen', ['schluessel' => $ex[1] ?? ''], $ole);
+[$s] = rufe($api, 'POST', 'sparte.einladen', ['turnier' => $sc, 'email' => 'eve@example.org', 'name' => 'Eve'], $ole);
+pruefe($s === 403, 'Turnierleitung ohne Recht „anlegen“ lädt keine Konten ins Turnier (und damit in die Sparte) ein');
+rufe($api, 'POST', 'mitglied.aendern', ['sparte' => $lsp, 'konto' => $oleId, 'anlegen' => true], $lea);
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Oles Cup', 'datum' => null], $ole);
+$oc = $d['turnier']['id'];
+$oleKennung = $d['leitung']['code'];
+[$s] = rufe($api, 'POST', 'sparte.einladen', ['turnier' => $oc, 'email' => 'eve@example.org', 'name' => 'Eve'], $ole);
+pruefe($s === 200, 'mit Recht „anlegen“: Einladung ins eigene Turnier');
+preg_match('~#/einladung/([a-f0-9]{64})~', (string)mailAn($mailerS, 'eve@example.org')?->text, $evx);
+// Kennung ohne Konto: keine fremden Empfänger, kein Datum weit in der Vergangenheit
+[, $z] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $oc, 'code' => $oleKennung]);
+[$s] = rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $oc, 'sicherungAn' => ['fremd@example.org']], $z['token']);
+pruefe($s === 403, 'Leitungskennung trägt keine fremden Sicherungsempfänger ein');
+[$s] = rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $oc, 'datum' => '2000-01-01'], $z['token']);
+pruefe($s === 403, 'Leitungskennung setzt keinen Turniertag weit in der Vergangenheit');
+// Bestätigungsmails begrenzt (auch beim Wechsel leer/voll)
+$mails = count($mailerS->mails);
+$fehler429 = false;
+for ($i = 0; $i < 20; $i++) {
+    [$s] = rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $sc, 'sicherungAn' => [$i % 2 ? 'opfer@example.org' : "n{$i}@example.org"]], $lea);
+    rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $sc, 'sicherungAn' => []], $lea);
+    $fehler429 = $fehler429 || $s === 429;
+}
+$anOpfer = count(array_filter($mailerS->mails, fn($m) => $m->an === 'opfer@example.org'));
+pruefe($fehler429 && count($mailerS->mails) - $mails <= 10 && $anOpfer <= 3, 'Bestätigungsmails je Turnier (10) und Adresse (3) am Tag begrenzt');
+// Entfernen: Kennung gesperrt, Einladungen verfallen
+rufe($api, 'POST', 'mitglied.entfernen', ['sparte' => $lsp, 'konto' => $oleId], $lea);
+[$s] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $oc, 'code' => $oleKennung]);
+[$s2] = rufe($api, 'GET', 'turnier.einstellungen', null, $z['token'], ['id' => $oc]);
+pruefe($s === 401 && $s2 === 401, 'Entferntes Mitglied: eigene Leitungskennung gesperrt, Sitzung beendet');
+[$s] = rufe($api, 'POST', 'einladung.info', ['schluessel' => $evx[1] ?? '']);
+pruefe($s === 410, 'Einladungen eines entfernten Mitglieds verfallen');
+// Zentrale: fremde Turnierkennung nicht nutzbar
+[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Max', 'email' => 'max@example.org', 'passwort' => 'maxmax123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Max e. V.'], null, [], '10.18.0.3');
+$max = $d['token'];
+rufe($api, 'POST', 'sparte.anmeldung', ['id' => $d['konto']['sparten'][0]['id'], 'anmeldung' => 'frei'], $adm);
+[$s] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => $sc, 'name' => 'Falsch'], 'empfaenger' => ['lea@example.org'],
+    'sicherung' => ['format' => 'tt-turnier-sicherung', 'version' => 1, 'ereignisse' => []]], $max);
+pruefe($s === 403, 'sicherung.senden: Kennung eines fremden Online-Turniers abgewiesen');
+// Jugendturnier ohne Namens-Einstellung: Zuschauer sehen die Kurzform
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Jugend', 'datum' => null], $lea);
+$jt = $d['turnier']['id'];
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('jj-0000001', 'turnier.daten', ['jugend' => true]),
+    ereignis('jj-0000002', 'spieler.angelegt', ['id' => 'a', 'vorname' => 'Anna', 'nachname' => 'Muster', 'verein' => ''])]], $d['token'], ['turnier' => $jt]);
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $jt, 'ab' => 0]);
+$sp = array_values(array_filter($d['ereignisse'], fn($e) => $e['art'] === 'spieler.angelegt'))[0] ?? null;
+pruefe(($sp['daten']['nachname'] ?? '') === 'M.', 'Jugendturnier: Zuschauer sehen ohne Einstellung die Kurzform');
 
 echo "\n$anzahl Prüfungen, $fehler Fehler\n";
 exit($fehler === 0 ? 0 : 1);

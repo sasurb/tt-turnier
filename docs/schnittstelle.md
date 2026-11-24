@@ -351,3 +351,71 @@ das Turnierdatum nicht entfernen. Die Bankverbindung liefert nur der Stand einer
   `endrunde` (`{bestOf, mannschaft}` für die zweite Stufe, null = wie Vorrunde), `zweiTische`; Mannschafts-Spielsysteme
   `braunschweig` und `zweier3`. `turnier.daten`: `konkurrenzarten` (`{arten, modi}`, angebotene Arten/Systeme, null =
   alle) und `klassenVorgabe` (`{nach: keine|klasse|ttr, grenzen}`). Alles ohne personenbezogene Daten.
+
+## Paket 0.17 (Schema 9): Verein, Sparte, Rollen, Kennungen, Recht
+
+Nur der Online-Server (`info.sparten = true`); die Zentrale kennt keine Sparten. Die App zeigt die Sparten-
+Oberfläche nur, wenn `info.sparten` gesetzt ist.
+
+### Datenmodell
+
+- `vereine` → `sparten` (Sportart, Daten = Klassen/Kasse-Vorgaben, AVV-Zeitpunkt, Freigabe der Online-Anmeldung)
+- `mitglieder` (Sparte, Konto, Rolle `spartenleitung` | `turnierleitung`, Recht `anlegen`)
+- `turnier_zugaenge` (Turnier, Konto): Turnierleitung per Konto für ein einzelnes Turnier
+- `einladungen` (Art `sparte` | `turnier` | `ausschuss`, Schlüssel nur als SHA-256, 14 Tage, an die E-Mail gebunden)
+- `ausschuesse`, `ausschuss_mitglieder` (gesperrt), `ausschuss_nachrichten` (12 Monate)
+- `veranstaltungen` (Platzhalter: Name, Datum, Ausschuss)
+- `spieler_pool` (je Sparte; ersetzt `pool` je Konto), `kennungen_gesperrt` (180 Tage), `sicherung_empfaenger`
+- `turniere.sparte_id`, `loeschen_nach` (12 | 24), `loeschung_erinnert`; `konten.bedingungen` (angenommene Fassung)
+
+Migration: Jedes bestehende Konto wird zu Verein + Sparte „Tischtennis“ mit ihm als Spartenleitung; Turniere,
+Pool und Konto-Einstellungen gehen an die Sparte; Turnierkennungen werden in Großbuchstaben gespeichert.
+
+### Rechte
+
+Leitung eines Turniers: Leitungskennung des Turniers, Administrator, Spartenleitung der Sparte des Turniers oder
+Konto mit Zugang (`turnier_zugaenge`) und Mitgliedschaft in der Sparte. Konten müssen die aktuelle Fassung der
+Nutzungsbedingungen angenommen haben (`konto.bedingungen`), sonst antworten Konto-Routen mit `bedingungen` (403).
+
+### Routen (alle POST mit JSON, außer GET)
+
+| Route | Wer | Inhalt |
+| --- | --- | --- |
+| `POST konto.bedingungen` | Konto | `{ zustimmung: true, volljaehrig: true }` → Konto |
+| `GET sparte&id=` | Spartenleitung | Sparte, Mitglieder (mit E-Mail), offene Einladungen, Ausschüsse, Veranstaltungen |
+| `GET sparten` | Admin | alle Sparten mit Spartenleitung, Zahlen, Freigabe |
+| `POST sparte.anlegen` | Konto | `{ verein, name, avv: true }` – weitere Sparte (max. 5 je Konto) |
+| `POST sparte.aendern` | Spartenleitung | `{ sparte, name?, verein?, avv? }` |
+| `POST sparte.anmeldung` | Admin | `{ id, anmeldung: auto\|frei\|gesperrt }` (ersetzt `konto.anmeldung`) |
+| `POST sparte.loeschen` | Spartenleitung | `{ sparte, passwort }` – mit Turnieren, Pool, Ausschüssen |
+| `POST sparte.einladen` | Spartenleitung bzw. Leitung mit Konto | `{ sparte, email, name, rolle, anlegen? }` oder `{ turnier, email, name }` → `{ einladung, link, gesendet }` |
+| `POST einladung.info` | öffentlich (gebremst) | `{ schluessel }` → was, von wem, maskierte Adresse |
+| `POST einladung.annehmen` | Konto mit der eingeladenen Adresse | `{ schluessel }` |
+| `POST einladung.zurueckziehen` | wer eingeladen hat bzw. Spartenleitung | `{ id }` |
+| `POST mitglied.aendern` | Spartenleitung | `{ sparte, konto, rolle?, anlegen? }` (letzte Spartenleitung bleibt) |
+| `POST mitglied.entfernen` | Spartenleitung oder das Mitglied selbst | `{ sparte, konto }` |
+| `GET turnier.konten&id=` | Leitung mit Konto | Konto-Zugänge und offene Einladungen des Turniers |
+| `POST turnier.konto.entfernen` | Leitung mit Konto | `{ turnier, konto }` |
+| `GET ausschuss&id=[&ab=]` | Mitglied (nicht gesperrt), Spartenleitung | Mitglieder (ohne E-Mail), Nachrichten (max. 200) |
+| `POST ausschuss.anlegen` | Spartenleitung | `{ sparte, name }` |
+| `POST ausschuss.einladen` | Mitglied, Spartenleitung | `{ ausschuss, email, name }` |
+| `POST ausschuss.sperren` | Mitglied, Spartenleitung | `{ ausschuss, konto, gesperrt }` (nicht sich selbst, nicht das letzte) |
+| `POST ausschuss.verlassen` / `ausschuss.nachricht` / `ausschuss.loeschen` | Mitglied / Mitglied / Spartenleitung | |
+| `POST veranstaltung.anlegen` / `veranstaltung.loeschen` | Spartenleitung | `{ sparte, name, datum?, ausschuss? }` / `{ sparte, id }` |
+| `POST sicherung.bestaetigen` | öffentlich (gebremst) | `{ turnier, schluessel }` aus der Bestätigungsmail |
+| `POST anmeldung.partner` | öffentlich (gebremst) | `{ turnier, schluessel, antwort?: ja\|nein, volljaehrig? }` |
+
+Geändert: `registrieren` verlangt `volljaehrig` und `bedingungen`; ohne `einladung` mit `verein`/`sparte`.
+`turnier.anlegen` nimmt `sparte`, `kennung` (Wunsch) und `loeschenNach`; `turnier.einstellungen` liefert/nimmt
+`loeschenNach`, liefert `loeschungAm` und `unbestaetigt`. `pool*` und `konto.einstellungen` nehmen `sparte`.
+`konto.loeschen` braucht als einzige Spartenleitung `sparteLoeschen: true`. `anmeldung.senden` verlangt
+`volljaehrig` und bei Partner/in deren E-Mail; Jugendturniere (`turnier.daten.jugend`) nehmen keine Einzel-
+anmeldungen an. Sicherungsmails enthalten keine Bankverbindung und keine E-Mail-Adressen (`ohneKontaktdaten`).
+
+### Wartung (täglich)
+
+Turniere werden `loeschen_nach` Monate nach dem Turniertag (ohne Datum: nach der letzten Änderung) gelöscht;
+30 Tage vorher Mail mit Sicherung an die Leitungsadressen. Konten ohne Nutzung: wie bisher; ist ein Konto die
+einzige Spartenleitung, wird die Sparte mitgelöscht und alle Mitglieder bekommen 30 Tage vorher eine Mail.
+Abgelaufene Einladungen, alte Ausschuss-Nachrichten, abgelaufene Kennungssperren und unbestätigte
+Sicherungsempfänger (30 Tage) werden entfernt.

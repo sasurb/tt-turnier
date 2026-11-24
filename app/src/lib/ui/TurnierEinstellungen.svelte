@@ -15,7 +15,7 @@
   import KonkurrenzAuswahlWahl from './turnier/KonkurrenzAuswahlWahl.svelte';
   import Textbaustein from './turnier/Textbaustein.svelte';
   import { appWertungAn, minderjaehrigeLautJahrgang } from '../engine/zustand';
-  import { aktiveSparteId } from '../sparte.svelte';
+  import { aktiveSparte, aktiveSparteId } from '../sparte.svelte';
 
   let {
     id,
@@ -391,7 +391,7 @@
       {#if kasse.iban.trim() && !ibanGueltig(kasse.iban)}<p class="leise">{T.kasseEinst.ibanFalsch}</p>{/if}
       <p class="leise" data-testid="iban-hinweis">{T.kasseEinst.ibanHinweis}</p>
       <label>{T.kasseEinst.bic}<input bind:value={kasse.bic} maxlength="11" autocapitalize="characters" autocomplete="off" spellcheck="false" /></label>
-      {#if kontoDa}<label class="haken"><input type="checkbox" bind:checked={alsVorgabe} /> {T.kasseEinst.alsVorgabe}</label>{/if}
+      {#if kontoDa && (!app.server.art || app.server.art !== 'bereit' || !app.server.info.sparten || aktiveSparte()?.rolle === 'spartenleitung')}<label class="haken"><input type="checkbox" bind:checked={alsVorgabe} /> {T.kasseEinst.alsVorgabe}</label>{/if}
       <button type="submit">{T.app.speichern}</button>
     </form>
     {@render hinweis('kasse')}

@@ -60,6 +60,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await page.getByRole('link', { name: 'Einstellungen' }).click();
   const kasse = page.getByTestId('kasse-einstellungen');
   await kasse.getByLabel('Aussteller (Verein)').fill('TTC Frühling e. V.');
+  await kasse.getByLabel(/^Anschrift/).fill('Hallenweg 1, 24937 Flensburg'); // ab 0.17 Pflicht für Quittungen
   await kasse.getByLabel('Kontoinhaber').fill('TTC Frühling e. V.');
   await kasse.getByTestId('kasse-iban').fill('DE89 3704 0044 0532 0130 01');
   await expect(kasse.getByText('Die IBAN ist ungültig')).toBeVisible();
@@ -155,7 +156,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await expect(liste.locator(':scope > li')).toHaveCount(3);
   await expect(liste).toContainText(mail('cem'));
   await expect(liste.locator('li', { hasText: 'Cem Netz' })).toContainText('Warteliste 1');
-  await expect(liste.locator('li', { hasText: 'Cem Netz' })).toContainText('unter 18');
+  await expect(liste.locator('li', { hasText: 'Cem Netz' })).not.toContainText('unter 18'); // ab 0.17 gibt es online nur Volljährige
   await page.getByTestId('anmeldung-uebernehmen').click();
   await expect(page.getByText(/Änderung\(en\) übernommen/)).toBeVisible();
   await expect(liste.locator('li', { hasText: 'Ada Aufschlag' })).toContainText('im Turnier');

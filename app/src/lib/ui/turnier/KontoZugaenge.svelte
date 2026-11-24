@@ -5,6 +5,7 @@
   import { api } from '../../dienste';
   import { app, fehlerText } from '../../app.svelte';
   import Hilfe from '../Hilfe.svelte';
+  import { aktiveSparte } from '../../sparte.svelte';
 
   /**
    * Turnierleitung per Konto (ab 0.17): Konten einladen, die genau dieses Turnier leiten (ohne eigene Kennung).
@@ -18,6 +19,8 @@
   let meldung = $state<{ ok: boolean; text: string } | null>(null);
 
   const moeglich = $derived(app.server.art === 'bereit' && !!app.server.info.sparten && !!app.sitzung);
+  /** Einladen dürfen Spartenleitung und Turnierleitungen mit Recht „Turniere anlegen“ (die Einladung gibt Zugriff auf den Pool) */
+  const einladenErlaubt = $derived(!!aktiveSparte()?.anlegen || app.sitzung?.konto.rolle === 'admin');
 
   onMount(async () => {
     if (!moeglich || !app.sitzung) return;
@@ -66,6 +69,7 @@
     {#if daten.einladungen.length}
       <p class="leise">{T.sparte.offeneEinladungen}: {daten.einladungen.map((x) => x.name).join(', ')}</p>
     {/if}
+    {#if einladenErlaubt}
     <form onsubmit={einladen}>
       <div class="reihe">
         <input class="wachsen" bind:value={name} placeholder={T.sparte.einladungName} aria-label={T.sparte.einladungName} minlength="2" maxlength="120" required autocomplete="off" />
@@ -73,6 +77,7 @@
         <button type="submit" class="zweit">{T.kontoZugang.einladen}</button>
       </div>
     </form>
+    {/if}
     {#if meldung}<div class="meldung" class:ok={meldung.ok} class:fehler={!meldung.ok} role="status">{meldung.text}</div>{/if}
     {#if link}
       <p class="leise">{T.sparte.einladungLink}</p>

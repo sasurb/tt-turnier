@@ -19,6 +19,7 @@ cat > "$ZIEL/config.php" <<PHP
 return [
   'db' => ['dsn' => 'sqlite:$ZIEL/daten.sqlite'],
   'setup_code' => 'e2e-einrichtung-123',
+  'registrieren_je_stunde' => 1000,
   'app_url' => 'http://127.0.0.1:$PORT/',
   'mail' => ['absender' => 'turnier@example.org', 'admin' => 'betreiber@example.org', 'datei' => '$ZIEL/mails'],
 ];

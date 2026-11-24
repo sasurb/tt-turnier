@@ -273,7 +273,7 @@
         {#each daten.mitglieder as m (m.konto)}
           <li data-testid="mitglied">
             <div>
-              <strong>{m.name}</strong>{#if m.ich} <span class="leise">({T.sparte.ich})</span>{/if}<br />
+              <strong>{m.name}</strong>{#if m.ich}&nbsp;<span class="leise">({T.sparte.ich})</span>{/if}<br />
               <span class="leise umbruch">{m.email}</span><br />
               <span class="marke">{T.sparte.rolle[m.rolle]}</span>
               {#if m.rolle === 'turnierleitung' && m.turniere.length}<span class="leise"> · {T.sparte.turniereMit(m.turniere.length)}</span>{/if}
