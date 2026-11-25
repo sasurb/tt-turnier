@@ -401,6 +401,13 @@ export class Api {
   anmeldungLoeschen(token: string, turnier: string, id: string) {
     return this.rufe<AnmeldungenAntwort>('POST', 'anmeldung.loeschen', { token, rumpf: { turnier, id } });
   }
+  /* ---------- Favoriten der Sparte (ab 0.18) ---------- */
+  favoriten(token: string, sparte: number) {
+    return this.rufe<{ favoriten: { name: string; einst: Record<string, unknown> }[] }>('GET', 'sparte.favoriten', { token, query: { sparte: String(sparte) } });
+  }
+  favoritenSpeichern(token: string, sparte: number, favoriten: { name: string; einst: Record<string, unknown> }[]) {
+    return this.rufe<{ favoriten: { name: string; einst: Record<string, unknown> }[] }>('POST', 'sparte.favoriten', { token, rumpf: { sparte, favoriten } });
+  }
   /* ---------- Nachrichten (ab 0.18) ---------- */
   postfach(token: string, turnier: string) {
     return this.rufe<PostfachAntwort>('GET', 'nachrichten', { token, query: { turnier } });

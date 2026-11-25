@@ -17,6 +17,7 @@
     knopf,
     speichern,
     abbrechen,
+    alsFavorit,
   }: {
     start?: KonkurrenzEinstellungen;
     gestartet?: boolean;
@@ -29,6 +30,8 @@
     knopf: string;
     speichern: (e: KonkurrenzEinstellungen) => Promise<void>;
     abbrechen: () => void;
+    /** Ab 0.18: Vorgaben als Favorit speichern (statt anlegen) */
+    alsFavorit?: (e: KonkurrenzEinstellungen) => Promise<void>;
   } = $props();
 
   const id = Math.random().toString(36).slice(2, 7);
@@ -167,7 +170,8 @@
     sendet = true;
     fehler = '';
     try {
-      await speichern(aus);
+      if (alsFavorit && (ev.submitter as HTMLElement | null)?.dataset.favorit) await alsFavorit(aus);
+      else await speichern(aus);
     } catch (x) {
       fehler = x instanceof Error ? x.message : String(x);
     } finally {
@@ -413,6 +417,7 @@
   <div class="reihe" style="margin-top:12px">
     <button type="submit" disabled={sendet || !e.name.trim()}>{knopf}</button>
     <button type="button" class="zweit" onclick={abbrechen}>{T.app.abbrechen}</button>
+    {#if alsFavorit}<button type="submit" class="zweit" data-favorit="1" disabled={sendet || !e.name.trim()} data-testid="als-favorit">☆ {T.favoriten.speichern}</button>{/if}
   </div>
 </form>
 

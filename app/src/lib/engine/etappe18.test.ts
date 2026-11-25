@@ -147,3 +147,68 @@ describe('Paket 0.18: Übernahme einer Gruppenanmeldung', () => {
     expect(uebernahmePlanen(t.z, [{ ...a, spieler: 'abcdefghij' }]).schritte).toEqual([]);
   });
 });
+
+import { praemienRechnen } from './praemie';
+import { saetze } from './test/baukasten';
+import { alsVorgabe } from './vorgabe';
+
+describe('Paket 0.18: Siegprämie', () => {
+  function koTurnier(praemie: unknown) {
+    const t = new Baukasten();
+    const ids = ['p1', 'p2', 'p3', 'p4'];
+    ids.forEach((id, i) => t.spieler(id, 1600 - i * 100));
+    t.e(ART.konkurrenzAngelegt, { id: 'k', einst: { name: 'Herren', modus: 'ko', startgeld: 1000, praemie, spielUmPlatz3: false } });
+    for (const id of ids) t.e(ART.teilnehmerGemeldet, { konkurrenz: 'k', id });
+    ids.forEach((id, i) => t.e(ART.startgeldGebucht, { id: `b${i}aaaaaa`, spieler: id, betrag: i === 3 ? 500 : 1000, art: i === 3 ? 'erlassen' : 'bar' }));
+    return t;
+  }
+  const vorlage = { einbehalt: { art: 'prozent', wert: 10 }, verteilung: { art: 'prozent', werte: [50, 30, 20] } };
+
+  it('voraussichtlich: bezahltes Startgeld, Einbehalt, abgerundet auf volle Euro', () => {
+    const t = koTurnier(vorlage);
+    const r = praemienRechnen(t.z, t.z.konkurrenzen.k!)!;
+    // bezahlt 3 × 10 € (der vierte: 5 € erlassen zählt nicht)
+    expect(r.topf).toBe(3000);
+    expect(r.einbehalt).toBe(300);
+    expect(r.plaetze).toEqual([1300, 800, 500]); // 13,50 → 13 €, 8,10 → 8 €, 5,40 → 5 €
+    expect(r.voraussichtlich).toBe(true);
+    expect(r.verein).toBe(3000 - 2600);
+  });
+
+  it('nach dem Ende: geteilter dritter Platz, Auszahlung und Storno', () => {
+    const t = koTurnier(vorlage);
+    t.auslosen('k');
+    t.starten('k', 'ko');
+    const spiele = () => Object.values(t.z.konkurrenzen.k!.spiele).filter((s) => s.a && s.b && !s.ergebnis);
+    while (spiele().length) {
+      const s = spiele()[0]!;
+      const aBesser = Number(s.a!.slice(1)) < Number(s.b!.slice(1));
+      t.ergebnis('k', s.id, aBesser ? saetze(5, 5, 5) : saetze(-5, -5, -5));
+    }
+    const r = praemienRechnen(t.z, t.z.konkurrenzen.k!)!;
+    expect(r.voraussichtlich).toBe(false);
+    const je = Object.fromEntries(r.empfaenger.map((e) => [e.teilnehmer, e.betrag]));
+    expect(je).toEqual({ p1: 1300, p2: 800, p3: 200, p4: 200 }); // 5 € + 0 € geteilt → je 2 € (abgerundet)
+    t.e(ART.praemieAusgezahlt, { id: 'pa1aaaaaaa', konkurrenz: 'k', teilnehmer: 'p1', platz: '1', betrag: 1300 }, { rolle: 'helfer', name: 'Kasse', aufgaben: ['kasse'] });
+    expect(praemienRechnen(t.z, t.z.konkurrenzen.k!)!.empfaenger.find((e) => e.teilnehmer === 'p1')!.ausgezahlt).toBe(1300);
+    t.e(ART.praemieAusgezahlt, { id: 'pa2aaaaaaa', konkurrenz: 'k', teilnehmer: 'p2', platz: '2', betrag: 800 }, { rolle: 'helfer', name: 'Aufruf', aufgaben: ['aufruf'] });
+    expect(t.z.auszahlungen).toHaveLength(1);
+    t.e(ART.praemieAusgezahlt, { storno: 'pa1aaaaaaa', konkurrenz: 'k' });
+    expect(t.z.auszahlungen[0]!.storniert).toBe(true);
+  });
+
+  it('ungültige Einstellungen werden verworfen', () => {
+    expect(koTurnier({ einbehalt: { art: 'prozent', wert: 10 }, verteilung: { art: 'prozent', werte: [80, 30] } }).z.konkurrenzen.k!.einst.praemie).toBeNull();
+    expect(koTurnier({ einbehalt: { art: 'x', wert: 1 }, verteilung: { art: 'fest', werte: [100] } }).z.konkurrenzen.k!.einst.praemie).toBeNull();
+    expect(koTurnier({ einbehalt: { art: 'fest', wert: 200 }, verteilung: { art: 'fest', werte: [2000, 1000] } }).z.konkurrenzen.k!.einst.praemie).toEqual({ einbehalt: { art: 'fest', wert: 200 }, verteilung: { art: 'fest', werte: [2000, 1000] } });
+  });
+});
+
+describe('Paket 0.18: Favoriten', () => {
+  it('Vorgaben werden wie ein Eintrag geprüft (fremde Favoriten der Sparte)', () => {
+    const v = alsVorgabe({ name: 'Herren', modus: 'ko', bestOf: 5, startgeld: 800, zulassung: 'kaputt', __proto__: { x: 1 } });
+    expect(v).toMatchObject({ name: 'Herren', modus: 'ko', bestOf: 5, startgeld: 800 });
+    expect(Array.isArray(v.zulassung.klassen)).toBe(true);
+    expect(alsVorgabe('Unsinn').modus).toBe('gruppen_ko');
+  });
+});

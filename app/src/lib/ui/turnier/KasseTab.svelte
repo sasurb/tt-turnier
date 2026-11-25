@@ -11,6 +11,7 @@
   import Hilfe from '../Hilfe.svelte';
   import QrCode from './QrCode.svelte';
   import CheckinKonkurrenz from './CheckinKonkurrenz.svelte';
+  import PraemieKarte from './PraemieKarte.svelte';
   import { begonnen } from '../../engine/zustand';
 
   /**
@@ -168,6 +169,16 @@
     {#each offeneKonkurrenzen as k (k.id)}
       <h3>{k.einst.name}</h3>
       <CheckinKonkurrenz {z} {k} {leitung} {eintragen} />
+    {/each}
+  </section>
+{/if}
+
+{#if mitStartgeld && (leitung || z.konkurrenzReihe.some((id) => z.konkurrenzen[id]!.einst.praemie))}
+  <section class="karte" data-testid="kasse-praemien">
+    <h2>{T.praemie.titel}<Hilfe text={T.praemie.hilfe} /></h2>
+    <p class="meldung info steuer">{T.praemie.steuer}</p>
+    {#each z.konkurrenzReihe.map((id) => z.konkurrenzen[id]!).filter((k) => k.einst.startgeld && (leitung || k.einst.praemie)) as k (k.id)}
+      <PraemieKarte {z} {k} {leitung} {turnierId} {eintragen} />
     {/each}
   </section>
 {/if}

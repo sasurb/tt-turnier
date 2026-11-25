@@ -1,3 +1,4 @@
+import { praemieLesen, type Auszahlung } from './praemie';
 import { ALLE_AUFGABEN, ART, HELFER_STANDARD, ID_MUSTER, UST_SAETZE, type Aufgabe, type Autor, type KasseEinstellungen, type NamenFuerZuschauer } from '@shared/protokoll';
 import type { LokalesEreignis } from './typen';
 import { eingabeTauschen, ergebnisGleich, ergebnisWerten } from './ergebnis';
@@ -102,6 +103,8 @@ export interface TurnierZustand {
   checkinPflicht: boolean;
   /** Startgeld-Buchungen in Reihenfolge (Quittungsnummer = nr; nur volle Sicht) */
   buchungen: Buchung[];
+  /** Ausgezahlte Siegprämien (ab 0.18, nur volle Sicht) */
+  auszahlungen: Auszahlung[];
   abgeschlossen: boolean;
   notizen: {
     id: string;
@@ -154,6 +157,7 @@ export function leererZustand(): TurnierZustand {
     checkin: leer(),
     checkinPflicht: false,
     buchungen: [],
+    auszahlungen: [],
     abgeschlossen: false,
     notizen: [],
     anzahlEreignisse: 0,
@@ -270,7 +274,7 @@ function spielerDatenLesen(d: Record<string, unknown>): Partial<SpielerDaten> {
   return r;
 }
 
-function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): KonkurrenzEinstellungen {
+export function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): KonkurrenzEinstellungen {
   const e = { ...basis, zulassung: { ...basis.zulassung } };
   if (!d || typeof d !== 'object') return e;
   const x = d as Record<string, unknown>;
@@ -312,6 +316,10 @@ function einstellungenLesen(d: unknown, basis: KonkurrenzEinstellungen): Konkurr
   if (sg !== undefined) e.startgeld = sg;
   const mt = zahl(x.maxTeilnehmer, 2, 1000);
   if (mt !== undefined) e.maxTeilnehmer = mt;
+  if ('praemie' in x) {
+    const pr = praemieLesen(x.praemie);
+    if (pr !== undefined) e.praemie = pr;
+  }
   const z = x.zulassung as Record<string, unknown> | undefined;
   if (z && typeof z === 'object') {
     for (const f of ['ttrMin', 'ttrMax'] as const) {
@@ -1504,6 +1512,30 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       z.checkin[sp.id] = d.da !== false;
       break;
     }
+    case ART.praemieAusgezahlt: {
+      if (!aufgaben.includes('kasse')) {
+        warnen('Prämien zahlen die Turnierleitung und die Kasse aus.');
+        break;
+      }
+      if (typeof d.storno === 'string') {
+        const a = z.auszahlungen.find((x) => x.id === d.storno);
+        if (a) a.storniert = true;
+        break;
+      }
+      const k = konkurrenz();
+      if (!k) break;
+      if (typeof d.id !== 'string' || !ID_MUSTER.test(d.id) || z.auszahlungen.some((x) => x.id === d.id)) {
+        warnen('Auszahlung ohne gültige Nummer.');
+        break;
+      }
+      const betrag = typeof d.betrag === 'number' && Number.isInteger(d.betrag) && d.betrag > 0 && d.betrag <= 10_000_000 ? d.betrag : 0;
+      if (!betrag || typeof d.teilnehmer !== 'string' || !k.meldungen.includes(d.teilnehmer)) {
+        warnen('Auszahlung ungültig.');
+        break;
+      }
+      z.auszahlungen.push({ id: d.id, konkurrenz: k.id, teilnehmer: d.teilnehmer, platz: text(d.platz, 20) ?? '', betrag, zeit: e.zeit, von: e.autor?.name ?? '', storniert: false });
+      break;
+    }
     case ART.konkurrenzCheckin: {
       if (!aufgaben.includes('kasse')) {
         warnen('Den Check-in abschließen dürfen die Turnierleitung und die Kasse.');
@@ -1887,6 +1919,8 @@ export const NICHT_RUECKGAENGIG: readonly string[] = [
   // Kassenbuch: Buchungen werden storniert, nie zurückgenommen (Quittungen bleiben gültig)
   ART.startgeldGebucht,
   ART.startgeldStorniert,
+  // Prämienauszahlung: Beleg bleibt, Korrektur per Storno
+  ART.praemieAusgezahlt,
 ];
 
 /**

@@ -203,6 +203,8 @@ final class Api
                 'POST konto.sperren' => $this->kontoSperren($a),
                 'POST konto.bedingungen' => $this->bedingungenAnnehmen($a),
                 'GET sparte' => $this->sparten->sparte($a),
+                'GET sparte.favoriten' => $this->sparten->favoriten($a),
+                'POST sparte.favoriten' => $this->sparten->favoritenSpeichern($a),
                 'GET sparten' => $this->sparten->sparten($a),
                 'POST sparte.anlegen' => $this->sparten->anlegen($a),
                 'POST sparte.aendern' => $this->sparten->aendern($a),

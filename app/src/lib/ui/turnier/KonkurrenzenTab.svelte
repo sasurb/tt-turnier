@@ -16,6 +16,7 @@
   import { alsEineAktion } from '../../aktion';
   import { linkZu } from '../../router.svelte';
   import { angeboten } from '../../engine/auswahl';
+  import { alsVorgabe, favoritenLaden, favoritenSetzen, type Favorit } from '../../favoriten.svelte';
 
   let { z, turnierId = '', eintragen }: { z: TurnierZustand; turnierId?: string; eintragen: (art: string, d: Record<string, unknown>) => Promise<unknown> } = $props();
   // svelte-ignore state_referenced_locally
@@ -85,6 +86,39 @@
     } finally {
       laeuft = false;
     }
+  }
+
+  /* Favoriten (ab 0.18) */
+  let favoriten = $state<Favorit[]>([]);
+  let favSparte = $state(false);
+  let favWahl = $state('');
+  let favMeldung = $state('');
+  const favStart = $derived.by(() => {
+    const f = favoriten.find((x) => x.name === favWahl);
+    return f ? alsVorgabe(f.einst) : undefined;
+  });
+  $effect(() => {
+    if (neu) void favoritenLaden().then((r) => ((favoriten = r.liste), (favSparte = r.sparte)));
+  });
+  async function alsFavorit(e: KonkurrenzEinstellungen) {
+    const name = prompt(T.favoriten.name, e.name)?.trim();
+    if (!name) return;
+    const liste = [{ name: name.slice(0, 80), einst: alsVorgabe(e) }, ...favoriten.filter((f) => f.name !== name)].slice(0, 50);
+    try {
+      await favoritenSetzen(liste);
+      favoriten = liste;
+      favWahl = name;
+      favMeldung = T.favoriten.gespeichert(name);
+    } catch (x) {
+      favMeldung = x instanceof Error ? x.message : String(x);
+    }
+  }
+  async function favoritLoeschen() {
+    if (!favWahl || !confirm(T.favoriten.loeschenFrage(favWahl))) return;
+    const liste = favoriten.filter((f) => f.name !== favWahl);
+    await favoritenSetzen(liste);
+    favoriten = liste;
+    favWahl = '';
   }
 
   async function anlegen(e: KonkurrenzEinstellungen) {
@@ -158,7 +192,20 @@
   <h2>{T.konk.titel}</h2>
   <p class="leise">{T.konk.text}</p>
   {#if neu}
-    <KonkurrenzForm knopf={T.konk.anlegen} {auswahl} speichern={anlegen} abbrechen={() => (neu = false)} />
+    {#if favoriten.length}
+      <div class="reihe favoriten">
+        <select bind:value={favWahl} aria-label={T.favoriten.waehlen} data-testid="favorit-wahl" class="wachsen">
+          <option value="">{T.favoriten.keiner}</option>
+          {#each favoriten as f (f.name)}<option value={f.name}>☆ {f.name}</option>{/each}
+        </select>
+        {#if favWahl}<button class="zweit klein" onclick={favoritLoeschen} aria-label={T.favoriten.loeschen}>✕</button>{/if}
+        <Hilfe text={favSparte ? T.favoriten.hilfeSparte : T.favoriten.hilfeGeraet} />
+      </div>
+    {/if}
+    {#if favMeldung}<p class="meldung ok" role="status">{favMeldung}</p>{/if}
+    {#key favWahl}
+      <KonkurrenzForm knopf={T.konk.anlegen} start={favStart} {auswahl} speichern={anlegen} abbrechen={() => (neu = false)} {alsFavorit} />
+    {/key}
     <p class="leise klein-text">{T.auswahl.text} <a href={linkZu(`t/${turnierId}/einstellungen/auswahl`)} data-testid="auswahl-link">{T.auswahl.titel} →</a></p>
     {#if z.spielerReihe.length}
       <p class="oder"><span class="leise">{T.app.oder}</span> <button class="zweit klein" onclick={() => { neu = false; assistent = true; }} data-testid="klassen-assistent">{T.konk.klassenAssistent}</button></p>

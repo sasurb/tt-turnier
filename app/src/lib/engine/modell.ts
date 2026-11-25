@@ -1,3 +1,4 @@
+import type { PraemieEinstellungen } from './praemie';
 import type { Autor } from '@shared/protokoll';
 import type { BegegnungDaten, Mannschaft, MannschaftEinstellungen } from './mannschaft';
 import { vorlageErkennen } from './stufen';
@@ -185,6 +186,8 @@ export interface KonkurrenzEinstellungen {
   startgeld: number | null;
   /** Höchstzahl Teilnehmer für die Online-Anmeldung (danach Warteliste); null = unbegrenzt */
   maxTeilnehmer: number | null;
+  /** Siegprämie aus dem bezahlten Startgeld (ab 0.18); null = keine */
+  praemie: PraemieEinstellungen | null;
   /** Mannschafts-Konkurrenz: Spielsystem (ab 0.13); null bei Einzel/Doppel */
   mannschaft: MannschaftEinstellungen | null;
   /** Zweite Stufe (Endrunde/Platzierungsgruppen) mit eigenen Gewinnsätzen bzw. eigenem Spielsystem; null = wie Vorrunde */
@@ -232,6 +235,7 @@ export function standardEinstellungen(name = ''): KonkurrenzEinstellungen {
     beschleunigt: false,
     beginn: null,
     startgeld: null,
+    praemie: null,
     maxTeilnehmer: null,
     mannschaft: null,
     endrunde: null,

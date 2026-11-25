@@ -113,6 +113,13 @@ export const HANDBUCH: HandbuchKapitel[] = [
     einleitung: 'Ein Turnier hat einen Namen, ein Datum und beliebig viele Konkurrenzen (z. B. „Herren A“, „Damen“, „Doppel“).',
     abschnitte: [
       {
+        titel: 'Schnelles Spiel und Favoriten',
+        text: [
+          'Schnelles Spiel (Startseite): ohne Anmeldung Spielsystem wählen, Namen eintippen, los – nur auf diesem Gerät. Mit Konto lässt es sich später unter „Einstellungen“ in ein Turnier deiner Sparte übernehmen.',
+          'Favoriten: Beim Anlegen einer Konkurrenz speichert „☆ Als Favorit speichern“ alle Vorgaben (Spielsystem, Gewinnsätze, Startgeld, Mannschaft …). Beim nächsten Turnier wählst du den Favoriten oben aus. Mit Konto gehören Favoriten der Sparte, ohne Konto dem Gerät.',
+        ],
+      },
+      {
         titel: 'Schritt für Schritt',
         text: [
           '1. Angemeldet „Neues Turnier“ wählen, Name und Datum eintragen. „Weiter: Turnier einrichten“ führt in 8 Schritten durch alles Wesentliche (siehe unten); „Turnier anlegen“ legt sofort an und lässt alles offen.',
@@ -414,6 +421,14 @@ export const HANDBUCH: HandbuchKapitel[] = [
     fuer: ['leitung', 'helfer'],
     einleitung: 'Im Reiter „Kasse & Check-in“ checkst du Spieler am Turniertag ein und buchst das Startgeld.',
     abschnitte: [
+      {
+        titel: 'Siegprämien',
+        text: [
+          'Unter „Kasse & Check-in“ → „Siegprämien“ richtet die Turnierleitung je Konkurrenz mit Startgeld eine Prämie ein: Einbehalt des Vereins (Prozent oder fester Betrag) und Verteilung (Prozent-Vorlage wie 50/30/20 oder feste Beträge je Platz).',
+          'Grundlage ist nur das tatsächlich bezahlte Startgeld (Erlassenes zählt nicht). Beträge werden auf volle Euro abgerundet, der Rest bleibt beim Verein. Geteilte Plätze teilen sich die Prämien, je Paar bzw. Mannschaft gibt es eine. Bis zum Ende der Konkurrenz steht „voraussichtlich“.',
+          'Ausgezahlt wird an der Kasse mit Beleg (Unterschrift der Empfängerin bzw. des Empfängers); eine falsche Auszahlung storniert die Turnierleitung. Bitte vor dem ersten Einsatz den Hinweis zur Gemeinnützigkeit (§ 67a AO) mit eurer Steuerberatung klären.',
+        ],
+      },
       {
         titel: 'Check-in vor der Auslosung, Mannschaften',
         text: [

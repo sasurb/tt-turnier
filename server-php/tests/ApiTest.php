@@ -2001,5 +2001,23 @@ pruefe(abgelehnt($s, $d, 'ungueltig'), 'Ohne Einstellung „Wechsel“ kein Wech
 [, $d] = rufe($api, 'GET', 'events', null, $blTok, ['turnier' => $et, 'ab' => '0']);
 pruefe(in_array('es-000010', array_column($d['ereignisse'], 'id'), true), 'Begleitperson sieht die eigene (noch verdeckte) Aufstellung');
 
+echo "Paket 0.18c: Favoriten der Sparte\n";
+[, $d] = rufe($api, 'GET', 'sparten', null, $adm);
+$fs = $d['sparten'][0]['id'];
+[$s, $d] = rufe($api, 'GET', 'sparte.favoriten', null, $adm, ['sparte' => (string)$fs]);
+pruefe($s === 200 && $d['favoriten'] === [], 'Favoriten zuerst leer');
+[$s, $d] = rufe($api, 'POST', 'sparte.favoriten', ['sparte' => $fs, 'favoriten' => [['name' => "Herren\nA", 'einst' => ['modus' => 'ko', 'bestOf' => 5]]]], $adm);
+pruefe($s === 200 && $d['favoriten'][0]['name'] === 'HerrenA' && $d['favoriten'][0]['einst']['bestOf'] === 5, 'Favorit gespeichert (Steuerzeichen entfernt)');
+[$s] = rufe($api, 'POST', 'sparte.favoriten', ['sparte' => $fs, 'favoriten' => [['name' => 'X', 'einst' => ['a' => str_repeat('x', 9000)]]]], $adm);
+pruefe($s === 400, 'zu große Vorgabe abgewiesen');
+[$s] = rufe($api, 'POST', 'sparte.favoriten', ['sparte' => $fs, 'favoriten' => array_fill(0, 51, ['name' => 'X', 'einst' => ['modus' => 'ko']])], $adm);
+pruefe($s === 400, 'höchstens 50 Favoriten');
+[$s] = rufe($api, 'GET', 'sparte.favoriten', null, $blTok, ['sparte' => (string)$fs]);
+pruefe($s === 401, 'Favoriten nur mit Konto');
+rufe($api, 'POST', 'registrieren', ['name' => 'Fremd', 'email' => 'fremd18@example.org', 'passwort' => 'geheim123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.18.3.1');
+[, $d] = rufe($api, 'POST', 'login', ['email' => 'fremd18@example.org', 'passwort' => 'geheim123']);
+[$s] = rufe($api, 'POST', 'sparte.favoriten', ['sparte' => $fs, 'favoriten' => []], $d['token'] ?? null);
+pruefe($s === 403, 'fremde Sparte: keine Favoriten');
+
 echo "\n$anzahl Prüfungen, $fehler Fehler\n";
 exit($fehler === 0 ? 0 : 1);

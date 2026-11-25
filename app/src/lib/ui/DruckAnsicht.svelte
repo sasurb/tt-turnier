@@ -31,7 +31,7 @@
    */
   let { id, art = '', param = null }: { id: string; art?: string; param?: string | null } = $props();
   /** Kassenliste und Quittungen (nur Leitung und Helfer – volle Sicht) */
-  const kassenArt = $derived<'kasse' | 'quittungen' | null>(art === 'kasse' || art === 'quittungen' ? art : null);
+  const kassenArt = $derived<'kasse' | 'quittungen' | 'praemien' | null>(art === 'kasse' || art === 'quittungen' || art === 'praemien' ? art : null);
   /** Spielberichtsbogen für Mannschafts-Begegnungen (param „<konkurrenz>~<spiel>“ = nur diese Begegnung) */
   const berichtArt = $derived(art === 'spielbericht');
 
@@ -230,6 +230,8 @@
   const quittungen = $derived(
     z && kassenArt === 'quittungen' ? z.buchungen.filter((b) => b.art !== 'erlassen' && (param ? b.id === param : !b.storniert)) : [],
   );
+  /** Ab 0.18: Belege der Prämienauszahlungen */
+  const auszahlungen = $derived(z && kassenArt === 'praemien' ? z.auszahlungen.filter((a) => (param ? a.id === param : !a.storniert)) : []);
   function zeitpunkt(iso: string) {
     return new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
   }
@@ -280,6 +282,7 @@
             <option value="kasse">{T.druck.kasseArten.kasse}</option>
             <option value="quittungen">{T.druck.kasseArten.quittungen}</option>
           {/if}
+          {#if allesSichtbar && z.auszahlungen.length}<option value="praemien">{T.druck.kasseArten.praemien}</option>{/if}
         </select>
       </div>
       {#if kassenArt || berichtArt}
@@ -423,6 +426,27 @@
           </tfoot>
         </table>
       </section>
+    {:else if kassenArt === 'praemien'}
+      {#if !auszahlungen.length}<p class="leer">{T.praemie.keineBelege}</p>{/if}
+      <div class="quittungen">
+        {#each auszahlungen as a (a.id)}
+          {@const k = z.konkurrenzen[a.konkurrenz]}
+          <article class="quittung" class:storniert={a.storniert} data-testid="praemie-beleg">
+            {#if a.storniert}<div class="storno">{T.quittung.storniert}</div>{/if}
+            <header>
+              <div><strong>{z.kasse?.aussteller || z.name}</strong>{#if z.kasse?.anschrift}<div class="klein vor">{z.kasse.anschrift}</div>{/if}</div>
+              <div class="rechts"><div class="q-titel">{T.praemie.beleg}</div><div>{T.quittung.nr} {quittungsNr(a).replace(/^Q/, 'P')}</div></div>
+            </header>
+            <dl>
+              <dt>{T.quittung.betrag}</dt><dd class="betrag">{euro(a.betrag)}</dd>
+              <dt>{T.praemie.an}</dt><dd>{k ? nameLang(z, a.teilnehmer, k) : a.teilnehmer}</dd>
+              <dt>{T.quittung.fuer}</dt><dd>{T.praemie.fuer(platzText(a.platz), k?.einst.name ?? '', z.name)}</dd>
+              <dt>{T.quittung.datum}</dt><dd>{zeitpunkt(a.zeit)}</dd>
+            </dl>
+            <div class="unterschrift"><span class="linie">{T.praemie.unterschriftEmpfang}</span><span class="linie">{T.praemie.unterschriftKasse}{a.von ? ` (${a.von})` : ''}</span></div>
+          </article>
+        {/each}
+      </div>
     {:else if kassenArt === 'quittungen' && (!z.kasse?.aussteller.trim() || !z.kasse?.anschrift.trim())}
       <!-- Frage 15A: Aussteller und Anschrift sind auf Quittungen Pflicht -->
       <p class="leer" data-testid="quittung-pflicht">{T.quittung.pflichtFehlt}</p>

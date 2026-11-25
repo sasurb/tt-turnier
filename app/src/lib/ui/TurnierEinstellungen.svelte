@@ -17,6 +17,7 @@
   import { appWertungAn, minderjaehrigeLautJahrgang } from '../engine/zustand';
   import { aktiveSparte, aktiveSparteId } from '../sparte.svelte';
   import ErgebnisVersand from './turnier/ErgebnisVersand.svelte';
+  import { alsOnlineTurnierHochladen } from '../hochladen';
 
   let {
     id,
@@ -244,6 +245,20 @@
     setzeLokaleSicherung(id, { ...lokaleSicherung(id), takt: lokalTakt });
   }
 
+  /** Ab 0.18: Turnier dieses Geräts (z. B. Schnelles Spiel) in die Sparte hochladen */
+  let hochladen = $state(false);
+  async function inSparte() {
+    hochladen = true;
+    try {
+      const r = await alsOnlineTurnierHochladen(await sicherung());
+      app.hinweis = T.schnell.uebernommen;
+      gehe('t/' + r.id);
+    } catch (x) {
+      app.hinweis = x instanceof Error ? x.message : String(x);
+    } finally {
+      hochladen = false;
+    }
+  }
   async function abschliessen() {
     if (!abgeschlossen && !confirm(T.einstellungen.abschliessenFrage)) return;
     await eintragen(abgeschlossen ? ART.turnierWiedereroeffnet : ART.turnierAbgeschlossen);
@@ -422,6 +437,12 @@
     <p class="leise">{T.einstellungen.abschliessenText}</p>
     <button class="zweit" onclick={abschliessen}>{abgeschlossen ? T.einstellungen.wiedereroeffnen : T.einstellungen.abschliessen}</button>
   </section>
+  {#if lokal && app.sitzung && app.server.art === 'bereit' && !app.server.info.zentrale}
+    <section data-testid="in-sparte">
+      <h3>{T.schnell.uebernehmen}<Hilfe text={T.schnell.uebernehmenHilfe} /></h3>
+      <button class="zweit" disabled={hochladen} onclick={inSparte} data-testid="in-sparte-knopf">{T.schnell.uebernehmen}</button>
+    </section>
+  {/if}
   {#if abgeschlossen && !lokal && token && app.server.art === 'bereit' && app.server.info.nachrichten && !app.server.info.zentrale}
     <ErgebnisVersand {z} turnierId={id} {token} />
   {/if}

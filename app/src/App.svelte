@@ -37,6 +37,7 @@
   import Ueber from './lib/ui/Ueber.svelte';
   import BedingungenDialog from './lib/ui/BedingungenDialog.svelte';
   import Verteiler from './lib/ui/Verteiler.svelte';
+  import SchnellesSpiel from './lib/ui/SchnellesSpiel.svelte';
   import { turnierIdNorm } from './lib/code';
 
   /** Turnierkennungen aus Links ohne Groß/klein (ab 0.17) */
@@ -79,6 +80,8 @@
     {#key route.param}<Einladung schluessel={route.param} />{/key}
   {:else if route.seite === 'partner' && tid && route.rest[0]}
     {#key route.rest[0]}<Partner turnier={tid} schluessel={route.rest[0]} />{/key}
+  {:else if route.seite === 'schnell'}
+    <SchnellesSpiel />
   {:else if route.seite === 'verteiler' && route.param === 'b' && route.rest[0]}
     {#key route.rest[0]}<Verteiler art="bestaetigen" wert={route.rest[0]} />{/key}
   {:else if route.seite === 'verteiler' && route.param === 'ab' && route.rest[0]}

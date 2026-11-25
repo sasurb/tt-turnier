@@ -103,6 +103,12 @@
   </a>
 {/if}
 
+<section class="karte einstieg">
+  <h2>⚡ {T.schnell.titel}</h2>
+  <p class="leise">{T.schnell.startText}</p>
+  <a class="knopf zweit" href={linkZu('schnell')} data-testid="schnelles-spiel">{T.schnell.knopf}</a>
+</section>
+
 {#if bereit && !angemeldet && !zentrale}
   <section class="karte einstieg">
     <h2>{T.start.leitungTitel}</h2>

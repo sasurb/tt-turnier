@@ -304,3 +304,53 @@ test('Gruppenanmeldung mit Mannschaft, Übernahme, Mannschafts-Check-in, Auslosu
   await expect(karte.getByTestId('checkin-konkurrenz')).toContainText('Check-in abgeschlossen');
   await expect(karte.getByTestId('auslosen')).toBeEnabled();
 });
+
+test('Schnelles Spiel, Übernahme in die Sparte, Favorit, Siegprämie', async ({ page }, info) => {
+  const geraet = info.project.name;
+  await alsAdmin(page);
+  await expect(page.getByTestId('neues-turnier')).toBeVisible();
+  await page.getByTestId('schnelles-spiel').click();
+  await page.getByTestId('schnell-namen').fill('Anna\nBen Berg\nCem\nBen Berg');
+  await expect(page.getByTestId('schnell-anzahl')).toHaveText('3 Spieler');
+  await layoutPruefen(page, page.getByTestId('schnell'));
+  await bild(page, '18-20-schnelles-spiel');
+  await page.getByTestId('schnell-los').click();
+  await expect(page).toHaveURL(/#\/t\/L[^/]+\/spiele|#\/t\/[^/]+\/spiele/);
+  await expect(page.locator('[data-testid=spiel]')).toHaveCount(3);
+  await bild(page, '18-21-schnell-spiele');
+
+  // Übernahme in ein Online-Turnier der Sparte
+  await nav(page).getByRole('link', { name: 'Einstellungen' }).click();
+  await page.getByTestId('in-sparte-knopf').click();
+  await expect(page.getByText('Verbunden')).toBeVisible();
+  await expect(page.locator('h1')).toContainText('Schnelles Spiel');
+  await expect(page.locator('[data-testid=spiel]')).toHaveCount(3);
+
+  // Favorit speichern und wieder übernehmen
+  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await page.getByRole('button', { name: '+ Neue Konkurrenz' }).click();
+  await page.getByLabel('Name', { exact: true }).fill(`Preis ${geraet}`);
+  await page.getByLabel(/K\.-o\.-System/).check();
+  await page.getByTestId('startgeld').fill('10');
+  page.once('dialog', (d) => void d.accept(`Mein KO ${geraet}`));
+  await page.getByTestId('als-favorit').click();
+  await expect(page.getByText(`„Mein KO ${geraet}“ als Favorit gespeichert.`)).toBeVisible();
+  await page.getByTestId('favorit-wahl').selectOption(`Mein KO ${geraet}`);
+  await expect(page.getByLabel('Name', { exact: true })).toHaveValue(`Preis ${geraet}`);
+  await expect(page.getByTestId('startgeld')).toHaveValue('10,00');
+  await layoutPruefen(page, page.locator('main'));
+  await bild(page, '18-22-favorit');
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+
+  // Siegprämie einrichten (voraussichtlich, Steuerhinweis)
+  await nav(page).getByRole('link', { name: /Kasse/ }).click();
+  const pr = page.getByTestId('kasse-praemien');
+  await expect(pr).toContainText('Gemeinnützigkeit');
+  await pr.getByTestId('praemie-einrichten').click();
+  await pr.getByTestId('praemie-einbehalt').fill('10');
+  await pr.getByTestId('praemie-vorlage').selectOption({ label: '50 / 30 / 20' });
+  await pr.getByTestId('praemie-speichern').click();
+  await expect(pr).toContainText('Bezahltes Startgeld');
+  await layoutPruefen(page, pr);
+  await bild(page, '18-23-praemie');
+});

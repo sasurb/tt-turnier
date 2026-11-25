@@ -148,6 +148,53 @@ final class Sparten
         return $sp;
     }
 
+    private const MAX_FAVORITEN = 50;
+    private const MAX_FAVORIT_BYTES = 8192;
+
+    /** Favoriten (Konkurrenz-Vorgaben) aus sparten.daten */
+    private static function favoritenAus(array $sp): array
+    {
+        $d = json_decode((string)($sp['daten'] ?? ''), true);
+        return is_array($d) && is_array($d['favoriten'] ?? null) ? array_values($d['favoriten']) : [];
+    }
+
+    /** GET sparte.favoriten&sparte= – Konkurrenz-Vorgaben der Sparte (ab 0.18), für alle Mitglieder */
+    public function favoriten(Anfrage $a): array
+    {
+        $sp = $this->sparteFuer($this->api->kontoSitzung($a), $a->query['sparte'] ?? null);
+        return ['favoriten' => self::favoritenAus($sp)];
+    }
+
+    /**
+     * POST sparte.favoriten { sparte, favoriten: [{ name, einst }] } – ersetzt die Liste (ab 0.18). Mitglieder mit
+     * Recht „Turniere anlegen“ und die Spartenleitung. Der Inhalt von einst wird erst beim Übernehmen in ein Turnier
+     * von der Engine geprüft; hier nur Größe und Form.
+     */
+    public function favoritenSpeichern(Anfrage $a): array
+    {
+        $sp = $this->sparteFuer($this->api->kontoSitzung($a), $a->rumpf['sparte'] ?? null, 'anlegen');
+        $roh = $a->rumpf['favoriten'] ?? null;
+        if (!is_array($roh) || !array_is_list($roh) || count($roh) > self::MAX_FAVORITEN) {
+            throw new ApiFehler('ungueltig', 'Höchstens ' . self::MAX_FAVORITEN . ' Favoriten.');
+        }
+        $liste = [];
+        foreach ($roh as $f) {
+            $f = $f instanceof \stdClass ? get_object_vars($f) : $f;
+            $name = is_array($f) && is_string($f['name'] ?? null) ? mb_substr(trim((string)preg_replace('/[\x00-\x1F\x7F]/u', '', $f['name'])), 0, 80) : '';
+            $einst = is_array($f) ? ($f['einst'] ?? null) : null;
+            $einst = $einst instanceof \stdClass ? json_decode((string)json_encode($einst), true) : $einst;
+            if ($name === '' || !is_array($einst) || array_is_list($einst) || strlen((string)json_encode($einst)) > self::MAX_FAVORIT_BYTES) {
+                throw new ApiFehler('ungueltig', 'Favorit ungültig (Name fehlt oder Vorgabe zu groß).');
+            }
+            $liste[] = ['name' => $name, 'einst' => $einst];
+        }
+        $d = json_decode((string)($sp['daten'] ?? ''), true);
+        $d = is_array($d) ? $d : [];
+        $d['favoriten'] = $liste;
+        $this->db->ausfuehren('UPDATE sparten SET daten = ? WHERE id = ?', [json_encode($d, JSON_UNESCAPED_UNICODE), (int)$sp['id']]);
+        return ['favoriten' => $liste];
+    }
+
     public function sparteLaden(int $id): array
     {
         $sp = $this->db->eine('SELECT s.*, v.name AS verein FROM sparten s JOIN vereine v ON v.id = s.verein_id WHERE s.id = ?', [$id]);
