@@ -34,7 +34,7 @@ function neueApi(?TestMailer $mailer = null): Api
     $pdo = new PDO($dsn, getenv('TT_TEST_USER') ?: null, getenv('TT_TEST_PASS') ?: null);
     if (str_starts_with($dsn, 'mysql:')) {
         $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
-        foreach (['meta', 'konten', 'turniere', 'sitzungen', 'ereignisse', 'versuche', 'rueckstellungen', 'codes', 'pool', 'anmeldungen', 'vereine', 'sparten', 'mitglieder', 'turnier_zugaenge', 'einladungen', 'ausschuesse', 'ausschuss_mitglieder', 'ausschuss_nachrichten', 'veranstaltungen', 'spieler_pool', 'kennungen_gesperrt', 'sicherung_empfaenger'] as $t) {
+        foreach (['meta', 'konten', 'turniere', 'sitzungen', 'ereignisse', 'versuche', 'rueckstellungen', 'codes', 'pool', 'anmeldungen', 'vereine', 'sparten', 'mitglieder', 'turnier_zugaenge', 'einladungen', 'ausschuesse', 'ausschuss_mitglieder', 'ausschuss_nachrichten', 'veranstaltungen', 'spieler_pool', 'kennungen_gesperrt', 'sicherung_empfaenger', 'mail_warteschlange', 'nachrichten', 'verteiler'] as $t) {
             $pdo->exec("DROP TABLE IF EXISTS $t");
         }
     }
@@ -289,7 +289,7 @@ $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
-pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.17.0' && $d['sparten'] === true && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
+pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.18.0' && $d['nachrichten'] === true && $d['sparten'] === true && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
 [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
@@ -1233,7 +1233,7 @@ $pdo->exec("INSERT INTO konten (name, email, passwort_hash, rolle, gesperrt, ang
 $pdo->exec("INSERT INTO turniere (id, konto_id, name, datum, leitung_hash, angelegt) VALUES ('altturnier', 1, 'Alt', NULL, '" . password_hash('altesPasswort', PASSWORD_DEFAULT) . "', 1000)");
 $apiAlt = new Api($alt, ['setup_code' => 'einrichtung-123456']);
 [$s, $d] = rufe($apiAlt, 'POST', 'login', ['email' => 'alt@example.org', 'passwort' => 'altpass12']);
-pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '9', 'Schema 1 → 9 angehoben, Anmeldung geht');
+pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '10', 'Schema 1 → 10 angehoben, Anmeldung geht');
 $altTok = $d['token'];
 [$s, $d] = rufe($apiAlt, 'GET', 'turnier', null, $altTok, ['id' => 'altturnier']);
 pruefe($s === 200 && $d['turnier']['rechte'] === 'leitung' && $d['turnier']['id'] === 'ALTTURNIER', 'alte Turnierkennung (10 Zeichen) bleibt erreichbar (ab 0.17 ohne Groß/klein)');
@@ -1709,6 +1709,182 @@ $lc = $d['turnier']['id'];
 [$s2] = rufe($api, 'POST', 'zentrale.freigeben', ['turnier' => $lc, 'zentraleId' => 'z-lea0000001',
     'einstellungen' => ['sicherungAn' => ['neu7@example.org']]], $lea);
 pruefe($s === 200 && $s2 === 200 && mailAn($mailerS, 'neu7@example.org') !== null, 'Rückgabe von der Zentrale: Bestätigungsmail an neuen Empfänger');
+
+echo "Paket 0.18a: SMTP, Warteschlange, Posteingang, Rundmail, Ergebnis-Mail, Verteiler\n";
+// SMTP gegen einen kleinen Test-Server (eigener Prozess, ohne TLS)
+$protokoll = tempnam(sys_get_temp_dir(), 'smtp');
+$skript = '$s = stream_socket_server("tcp://127.0.0.1:0", $e, $t); echo stream_socket_get_name($s, false), "\n"; flush();'
+    . '$c = stream_socket_accept($s, 10); $log = ""; $w = function($x) use ($c) { fwrite($c, $x . "\r\n"); };'
+    . '$w("220 test ESMTP"); $daten = false;'
+    . 'while (($z = fgets($c)) !== false) { $log .= $z;'
+    . ' if ($daten) { if ($z === ".\r\n") { $daten = false; $w("250 angenommen"); } continue; }'
+    . ' $b = strtoupper(substr(trim($z), 0, 4));'
+    . ' if ($b === "EHLO") { fwrite($c, "250-test\r\n250 AUTH LOGIN\r\n"); }'
+    . ' elseif ($b === "AUTH") { $w("334 VXNlcm5hbWU6"); $u = fgets($c); $log .= $u; $w("334 UGFzc3dvcmQ6"); $p = fgets($c); $log .= $p; $w(trim($p) === base64_encode("geheim") ? "235 ok" : "535 falsch"); }'
+    . ' elseif ($b === "MAIL" || $b === "RCPT") { $w("250 ok"); }'
+    . ' elseif ($b === "DATA") { $daten = true; $w("354 los"); }'
+    . ' elseif ($b === "QUIT") { $w("221 tschuess"); break; } }'
+    . 'file_put_contents(' . var_export($protokoll, true) . ', $log);';
+$proz = proc_open([PHP_BINARY, '-r', $skript], [1 => ['pipe', 'w']], $rohre);
+$adresse = trim((string)fgets($rohre[1]));
+$port = (int)substr($adresse, strrpos($adresse, ':') + 1);
+$smtp = new \TtTurnier\SmtpMailer('127.0.0.1', $port, 'tt@example.org', 'geheim', 'tt@example.org', 'keine');
+$ok = $smtp->senden(new \TtTurnier\Mail('ziel@example.org', 'Grüße', "Zeile 1\n.Punkt am Anfang\nÄ"));
+proc_close($proz);
+$log = (string)file_get_contents($protokoll);
+@unlink($protokoll);
+pruefe($ok && str_contains($log, 'MAIL FROM:<tt@example.org>') && str_contains($log, 'RCPT TO:<ziel@example.org>') && str_contains($log, "Subject: =?UTF-8?Q?Gr=C3=BC=C3=9Fe?=")
+    && str_contains($log, 'Content-Transfer-Encoding: base64') && !str_contains($log, 'geheim'), 'SMTP: Anmeldung, Umschlag, Betreff kodiert, Passwort nur Base64');
+$kaputt = new \TtTurnier\SmtpMailer('127.0.0.1', 1, '', '', 'tt@example.org', 'keine', 'X', 1.0);
+pruefe($kaputt->senden(new \TtTurnier\Mail('ziel@example.org', 'x', 'y')) === false && $kaputt->fehler() !== '', 'SMTP: nicht erreichbarer Server → false mit Fehlertext');
+pruefe((new \TtTurnier\SmtpMailer('h', 465, 'u', 'p', 'tt@example.org'))->senden(new \TtTurnier\Mail("a@b.de\r\nRCPT TO:<x@y.de>", 'x', 'y')) === false, 'SMTP: Adresse mit Zeilenumbruch abgewiesen');
+
+$mailer18 = new TestMailer();
+$api = neueApi($mailer18);
+rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
+[, $d] = rufe($api, 'POST', 'login', ['email' => 'admin@example.org', 'passwort' => 'geheim123']);
+$adm = $d['token'];
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Nikolaus-Cup', 'datum' => gmdate('Y-m-d', $zeit + 20 * 86400)], $adm);
+$nt = $d['turnier']['id'];
+rufe($api, 'POST', 'anmeldung.einstellungen', ['turnier' => $nt, 'offen' => true, 'schluss' => null, 'hinweis' => '', 'angaben' => [], 'ort' => '',
+    'konkurrenzen' => [['id' => 'herren', 'name' => 'Herren', 'art' => 'einzel', 'max' => 1, 'startgeld' => null]], 'bank' => null], $adm);
+$melden = function (string $vn, string $mail, bool $verteiler) use ($api, $nt, $mailer18): string {
+    rufe($api, 'POST', 'anmeldung.senden', ['turnier' => $nt, 'vorname' => $vn, 'nachname' => 'Test', 'verein' => 'TV', 'email' => $mail,
+        'konkurrenzen' => [['id' => 'herren']], 'volljaehrig' => true, 'datenschutz' => true, 'verteiler' => $verteiler], null, [], '10.18.0.' . strlen($vn));
+    preg_match('~#/meldung/' . $nt . '/([a-f0-9]{64})~', mailAn($mailer18, $mail)?->text ?? '', $x);
+    rufe($api, 'POST', 'anmeldung.bestaetigen', ['turnier' => $nt, 'schluessel' => $x[1] ?? '']);
+    return $x[1] ?? '';
+};
+$melden('Ole', 'ole@example.org', true);
+$melden('Pia', 'pia@example.org', false);
+$bestaetigt = mailAn($mailer18, 'ole@example.org');
+pruefe(str_contains($bestaetigt->text, 'Ankündigungen künftiger Turniere: eingetragen') && str_contains($bestaetigt->text, '#/verteiler/ab/'), 'Anmeldung mit Häkchen „Verteiler“: Eintrag mit Abmeldelink');
+pruefe(!str_contains(mailAn($mailer18, 'pia@example.org')->text, 'verteiler/ab'), 'ohne Häkchen kein Verteiler-Eintrag');
+[, $d] = rufe($api, 'GET', 'anmeldungen', null, $adm, ['turnier' => $nt]);
+$oleId = array_values(array_filter($d['anmeldungen'], fn($x) => $x['vorname'] === 'Ole'))[0]['id'];
+$piaId = array_values(array_filter($d['anmeldungen'], fn($x) => $x['vorname'] === 'Pia'))[0]['id'];
+[, $d] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $nt, 'eintraege' => [
+    ['rolle' => 'spieler', 'bezug' => $oleId, 'name' => 'Ole Test'], ['rolle' => 'spieler', 'bezug' => 'spx', 'name' => 'Xaver'],
+    ['rolle' => 'helfer', 'bezug' => 'h-eva', 'name' => 'Eva'], ['rolle' => 'leitung', 'bezug' => 'l-lea', 'name' => 'Lea']]], $adm);
+$kennung = [];
+foreach ($d['codes'] as $c) {
+    $kennung[$c['bezug']] = $c['code'];
+}
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $nt, 'code' => $kennung[$oleId]]);
+$oleTok = $d['token'];
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $nt, 'code' => $kennung['spx']]);
+$xTok = $d['token'];
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $nt, 'code' => $kennung['h-eva']]);
+$evaTok = $d['token'];
+[$s, $d] = rufe($api, 'GET', 'nachrichten', null, $oleTok, ['turnier' => $nt]);
+pruefe($s === 200 && $d['nachrichten'] === [] && $d['ungelesen'] === 0, 'Posteingang zuerst leer');
+[$s] = rufe($api, 'GET', 'nachrichten', null, null, ['turnier' => $nt]);
+pruefe($s === 401, 'Posteingang ohne Kennung: nicht angemeldet');
+[$s] = rufe($api, 'POST', 'rundmail', ['turnier' => $nt, 'betreff' => 'Hallo', 'text' => 'Test', 'spieler' => [$oleId]], $oleTok);
+pruefe($s === 403, 'Rundmail nur Turnierleitung');
+[$s] = rufe($api, 'POST', 'rundmail', ['turnier' => $nt, 'betreff' => 'Hallo', 'text' => 'Test', 'spieler' => ['<script>']], $adm);
+pruefe($s === 400, 'Rundmail: ungültige Spieler-ID abgewiesen');
+[$s] = rufe($api, 'POST', 'rundmail', ['turnier' => $nt, 'betreff' => 'Hallo', 'text' => 'Test'], $adm);
+pruefe($s === 400, 'Rundmail ohne Empfänger abgewiesen');
+$vorher = count($mailer18->mails);
+[$s, $d] = rufe($api, 'POST', 'rundmail', ['turnier' => $nt, 'betreff' => 'Beginn 10 Uhr', 'text' => "Bitte <b>pünktlich</b>.\nHalle 2", 'gruppe' => 'Herren',
+    'spieler' => [$oleId, $piaId, 'spx'], 'helfer' => true, 'warteliste' => ['herren'], 'mail' => true], $adm);
+pruefe($s === 200 && $d['postfach'] === 3 && $d['mails'] === 2 && count($mailer18->mails) === $vorher && $api->nachrichten->wartend($nt) === 2,
+    'Rundmail: Posteingang für Kennungen (Ole, Xaver, Helferin), Mails an Online-Angemeldete in die Warteschlange');
+[, $d] = rufe($api, 'GET', 'nachrichten', null, $oleTok, ['turnier' => $nt]);
+pruefe($d['ungelesen'] === 1 && $d['nachrichten'][0]['titel'] === 'Beginn 10 Uhr' && $d['nachrichten'][0]['text'] === "Bitte <b>pünktlich</b>.\nHalle 2" && $d['nachrichten'][0]['von'] === 'Turnierleitung', 'Posteingang zeigt die Nachricht (Text unverändert, die App zeigt ihn als Text)');
+[, $d] = rufe($api, 'GET', 'nachrichten', null, $evaTok, ['turnier' => $nt]);
+pruefe($d['ungelesen'] === 1, 'Helferin bekommt die Nachricht');
+[, $d2] = rufe($api, 'GET', 'nachrichten', null, $xTok, ['turnier' => $nt]);
+[$s] = rufe($api, 'POST', 'nachrichten.gelesen', ['turnier' => $nt, 'bis' => $d2['nachrichten'][0]['id']], $oleTok);
+[, $d] = rufe($api, 'GET', 'nachrichten', null, $oleTok, ['turnier' => $nt]);
+pruefe($s === 200 && $d['ungelesen'] === 0, 'gelesen markieren (nur eigene)');
+[, $d2] = rufe($api, 'GET', 'nachrichten', null, $xTok, ['turnier' => $nt]);
+pruefe($d2['ungelesen'] === 1, 'andere Kennung bleibt ungelesen');
+[, $d] = rufe($api, 'GET', 'nachrichten', null, $adm, ['turnier' => $nt]);
+pruefe($d['gesendet'] === true && str_contains($d['nachrichten'][0]['text'], 'Posteingang: 3 · E-Mails: 2') && $d['wartend'] === 2, 'Leitung mit Konto sieht „Gesendet“ und wartende Mails');
+$n = $api->nachrichten->abarbeiten(25, 5.0);
+$m = mailAn($mailer18, 'pia@example.org');
+pruefe($n === 2 && $api->nachrichten->wartend($nt) === 0 && $m !== null && str_contains($m->betreff, 'Beginn 10 Uhr') && $m->antwortAn === 'admin@example.org', 'Warteschlange: Mails gesendet, Antwort an die Leitung');
+// Drosselung: höchstens je_minute (Test: Standard 20)
+for ($i = 0; $i < 25; $i++) {
+    $api->nachrichten->vormerken("massen$i@example.org", 'x', 'y', null, 'test', $nt);
+}
+$n = $api->nachrichten->abarbeiten(100, 5.0);
+pruefe($n === 18 && $api->nachrichten->wartend($nt) === 7, 'Drosselung: höchstens 20 Mails je Minute (2 schon gesendet)');
+$zeit += 61;
+pruefe($api->nachrichten->abarbeiten(100, 5.0) === 7, 'nach einer Minute geht der Rest raus');
+// Wiederholung bei Fehlern
+$wackel = new class implements \TtTurnier\Mailer {
+    public int $n = 0;
+    public function bereit(): bool { return true; }
+    public function senden(\TtTurnier\Mail $m): bool { $this->n++; return false; }
+};
+$apiW = new Api((fn() => $this->db)->call($api), ['app_url' => 'https://example.org/tt', 'mail' => ['absender' => 'tt@example.org']], function () use (&$zeit) { global $zeit; return $zeit; }, $wackel);
+$apiW->nachrichten->vormerken('fehl@example.org', 'x', 'y', null, 'test', $nt);
+$apiW->nachrichten->abarbeiten(5, 2.0);
+$apiW->nachrichten->abarbeiten(5, 2.0);
+pruefe($wackel->n === 1 && $apiW->nachrichten->wartend($nt) === 1, 'Fehlschlag: erneuter Versuch erst nach Wartezeit');
+for ($i = 0; $i < 8; $i++) {
+    $zeit += 7 * 3600;
+    $apiW->nachrichten->abarbeiten(5, 2.0);
+}
+pruefe($wackel->n === 6 && $apiW->nachrichten->wartend($nt) === 0, 'nach sechs Versuchen verworfen');
+// Ergebnis-Mail
+[$s] = rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $nt, 'liste' => 'Herren: 1. Ole', 'plaetze' => []], $adm);
+pruefe($s === 409, 'Ergebnis-Mail erst nach dem Abschluss');
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('ab-000001', 'turnier.abgeschlossen', [])]], $adm, ['turnier' => $nt]);
+[$s] = rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $nt, 'liste' => 'x', 'plaetze' => [['spieler' => $oleId, 'text' => str_repeat('a', 700)]]], $adm);
+pruefe($s === 400, 'Ergebnis: zu langer Platzierungstext abgewiesen');
+[$s] = rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $nt, 'liste' => 'x', 'plaetze' => []], $evaTok);
+pruefe($s === 403, 'Ergebnis-Mail nur Leitung');
+[$s, $d] = rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $nt, 'liste' => "Herren\n1. Ole Test\n2. Pia Test", 'plaetze' => [['spieler' => $oleId, 'text' => 'Herren: Platz 1'], ['spieler' => $piaId, 'text' => 'Herren: Platz 2']]], $adm);
+$api->nachrichten->abarbeiten(25, 5.0);
+$m = mailAn($mailer18, 'ole@example.org');
+pruefe($s === 200 && $d['postfach'] === 1 && $d['mails'] === 2 && $d['verbleibend'] === 2 && str_contains($m->text, 'Herren: Platz 1') && !str_contains($m->text, 'Platz 2' . "\n\nHerren")
+    && str_contains($m->text, '#/verteiler/' . $nt), 'Ergebnis-Mail: eigene Platzierung, Liste, Link zum Verteiler');
+[, $d] = rufe($api, 'GET', 'nachrichten', null, $oleTok, ['turnier' => $nt]);
+pruefe($d['nachrichten'][0]['art'] === 'ergebnis' && str_starts_with($d['nachrichten'][0]['text'], 'Herren: Platz 1'), 'Ergebnis im Posteingang');
+rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $nt, 'liste' => 'x', 'plaetze' => []], $adm);
+rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $nt, 'liste' => 'x', 'plaetze' => []], $adm);
+[$s] = rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $nt, 'liste' => 'x', 'plaetze' => []], $adm);
+pruefe($s === 429, 'Ergebnis-Mail höchstens dreimal je Turnier');
+// Verteiler
+[$s] = rufe($api, 'POST', 'verteiler.eintragen', ['turnier' => $nt, 'name' => 'Kai', 'email' => 'kai@example.org', 'datenschutz' => true], null, [], '10.18.1.1');
+pruefe($s === 400, 'Verteiler: ohne „mindestens 18“ bzw. Einverständnis der Erziehungsberechtigten abgewiesen');
+[$s] = rufe($api, 'POST', 'verteiler.eintragen', ['turnier' => $nt, 'name' => 'Kai', 'email' => 'kai@example.org', 'erziehungsberechtigte' => true, 'datenschutz' => true], null, [], '10.18.1.1');
+$km = mailAn($mailer18, 'kai@example.org');
+preg_match('~#/verteiler/b/([a-f0-9]{64})~', $km?->text ?? '', $vx);
+pruefe($s === 200 && isset($vx[1]) && !str_contains($km->text, 'Kai'), 'Verteiler: Bestätigungsmail (ohne eingegebenen Namen)');
+[, $d] = rufe($api, 'GET', 'sparten', null, $adm);
+$sid = $d['sparten'][0]['id'];
+[$s, $d] = rufe($api, 'GET', 'verteiler', null, $adm, ['sparte' => (string)$sid]);
+$kai = array_values(array_filter($d['eintraege'], fn($x) => $x['email'] === 'kai@example.org'))[0];
+pruefe($s === 200 && count($d['eintraege']) === 2 && $kai['bestaetigt'] === null && $kai['jugend'] === true, 'Liste der Spartenleitung: Ole bestätigt, Kai offen (unter 18)');
+[$s] = rufe($api, 'GET', 'verteiler', null, $oleTok, ['sparte' => (string)$sid]);
+pruefe($s === 401, 'Verteiler-Liste nur mit Konto der Spartenleitung');
+[$s, $d] = rufe($api, 'POST', 'verteiler.bestaetigen', ['schluessel' => $vx[1]]);
+pruefe($s === 200 && preg_match('/^[a-z2-9]{12}-[a-f0-9]{24}$/', $d['abmelden']), 'Verteiler bestätigt');
+[$s, $d] = rufe($api, 'POST', 'verteiler.senden', ['sparte' => $sid, 'betreff' => 'Neues Turnier', 'text' => 'Am 1. März'], $adm);
+$api->nachrichten->abarbeiten(25, 5.0);
+$km = mailAn($mailer18, 'kai@example.org');
+preg_match('~#/verteiler/ab/([a-z0-9-]+)~', $km?->text ?? '', $ab);
+pruefe($s === 200 && $d['mails'] === 2 && ($km->zusatz['List-Unsubscribe'] ?? '') !== '' && isset($ab[1]), 'Ankündigung an alle Bestätigten mit Abmeldelink');
+[$s] = rufe($api, 'POST', 'verteiler.abmelden', ['kennung' => substr($ab[1], 0, -1) . 'x']);
+pruefe($s === 410, 'gefälschter Abmeldelink abgewiesen');
+[$s] = rufe($api, 'POST', 'verteiler.abmelden', ['kennung' => $ab[1]]);
+[, $d] = rufe($api, 'GET', 'verteiler', null, $adm, ['sparte' => (string)$sid]);
+pruefe($s === 200 && count($d['eintraege']) === 1, 'Abmelden löscht den Eintrag');
+rufe($api, 'POST', 'verteiler.senden', ['sparte' => $sid, 'betreff' => 'Zwei', 'text' => 'zwei'], $adm);
+rufe($api, 'POST', 'verteiler.senden', ['sparte' => $sid, 'betreff' => 'Drei', 'text' => 'drei'], $adm);
+[$s] = rufe($api, 'POST', 'verteiler.senden', ['sparte' => $sid, 'betreff' => 'Vier', 'text' => 'vier'], $adm);
+pruefe($s === 429, 'höchstens drei Ankündigungen je Tag');
+// Kennung entfernen löscht ihren Posteingang, Turnier löschen alles
+rufe($api, 'POST', 'code.entfernen', ['turnier' => $nt, 'rolle' => 'spieler', 'bezug' => 'spx'], $adm);
+$pdo18 = (fn() => $this->db)->call($api);
+pruefe((int)$pdo18->eine("SELECT COUNT(*) AS n FROM nachrichten WHERE bezug = 'spx'")['n'] === 0, 'Kennung entfernt: Posteingang gelöscht');
+$api->turnierEntfernen($nt);
+pruefe((int)$pdo18->eine('SELECT COUNT(*) AS n FROM nachrichten WHERE turnier_id = ?', [$nt])['n'] === 0, 'Turnier gelöscht: Nachrichten gelöscht');
 
 echo "\n$anzahl Prüfungen, $fehler Fehler\n";
 exit($fehler === 0 ? 0 : 1);

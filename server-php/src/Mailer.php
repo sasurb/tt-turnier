@@ -14,6 +14,8 @@ final class Mail
         public readonly ?string $anhangName = null,
         public readonly ?string $anhangInhalt = null,
         public readonly string $anhangTyp = 'application/json',
+        /** Weitere Kopfzeilen (ab 0.18, z. B. List-Unsubscribe); Name => Wert, ohne Zeilenumbrüche */
+        public readonly array $zusatz = [],
     ) {
     }
 }
@@ -51,6 +53,148 @@ final class PhpMailer implements Mailer
         } catch (\Throwable $t) {
             error_log('tt-turnier mail: ' . $t->getMessage());
             return false;
+        }
+    }
+}
+
+/**
+ * Versand über SMTP eines Postfachs (ab 0.18, z. B. Strato: smtp.strato.de, Port 465 mit SSL oder 587 mit STARTTLS).
+ * Reines PHP ohne Zusatzpakete: EHLO, STARTTLS, AUTH LOGIN, MAIL FROM, RCPT TO, DATA. Eine Verbindung je Mail;
+ * die gedrosselte Warteschlange (Nachrichten::abarbeiten) sorgt dafür, dass nicht zu viele auf einmal gehen.
+ */
+final class SmtpMailer implements Mailer
+{
+    private string $letzterFehler = '';
+
+    /**
+     * @param string $sicherheit 'ssl' (Port 465), 'starttls' (Port 587) oder 'keine' (nur für Tests und lokale Relays)
+     * @param float $zeitlimit Sekunden je Schritt
+     */
+    public function __construct(
+        private readonly string $host,
+        private readonly int $port,
+        private readonly string $benutzer,
+        private readonly string $passwort,
+        private readonly string $absender,
+        private readonly string $sicherheit = 'ssl',
+        private readonly string $absenderName = 'Tischtennis-Turnier',
+        private readonly float $zeitlimit = 15.0,
+    ) {
+    }
+
+    public function bereit(): bool
+    {
+        return $this->host !== '' && filter_var($this->absender, FILTER_VALIDATE_EMAIL) !== false;
+    }
+
+    public function fehler(): string
+    {
+        return $this->letzterFehler;
+    }
+
+    public function senden(Mail $m): bool
+    {
+        $this->letzterFehler = '';
+        if (!$this->bereit() || filter_var($m->an, FILTER_VALIDATE_EMAIL) === false || preg_match('/[\r\n<>]/', $m->an)) {
+            $this->letzterFehler = 'ungültige Adresse';
+            return false;
+        }
+        $verbindung = null;
+        try {
+            $ziel = ($this->sicherheit === 'ssl' ? 'ssl://' : 'tcp://') . $this->host . ':' . $this->port;
+            $kontext = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true, 'peer_name' => $this->host]]);
+            $verbindung = @stream_socket_client($ziel, $nr, $text, $this->zeitlimit, STREAM_CLIENT_CONNECT, $kontext);
+            if ($verbindung === false) {
+                throw new \RuntimeException("Verbindung zu {$this->host}:{$this->port} fehlgeschlagen ({$text})");
+            }
+            stream_set_timeout($verbindung, (int)ceil($this->zeitlimit));
+            $this->erwarte($verbindung, [220]);
+            $ich = $this->rechnername();
+            $this->befehl($verbindung, "EHLO {$ich}", [250]);
+            if ($this->sicherheit === 'starttls') {
+                $this->befehl($verbindung, 'STARTTLS', [220]);
+                if (!@stream_socket_enable_crypto($verbindung, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT)) {
+                    throw new \RuntimeException('STARTTLS fehlgeschlagen');
+                }
+                $this->befehl($verbindung, "EHLO {$ich}", [250]);
+            }
+            if ($this->benutzer !== '') {
+                $this->befehl($verbindung, 'AUTH LOGIN', [334]);
+                $this->befehl($verbindung, base64_encode($this->benutzer), [334]);
+                $this->befehl($verbindung, base64_encode($this->passwort), [235], true);
+            }
+            $this->befehl($verbindung, "MAIL FROM:<{$this->absender}>", [250]);
+            $this->befehl($verbindung, "RCPT TO:<{$m->an}>", [250, 251]);
+            $this->befehl($verbindung, 'DATA', [354]);
+            [$kopf, $rumpf] = MailAufbau::bauen($m, $this->absender, $this->absenderName);
+            $nachricht = 'To: ' . $m->an . "\r\n"
+                . 'Subject: ' . mb_encode_mimeheader($m->betreff, 'UTF-8', 'Q', "\r\n") . "\r\n"
+                . 'Date: ' . date(DATE_RFC2822) . "\r\n"
+                . 'Message-ID: <' . bin2hex(random_bytes(12)) . '@' . (explode('@', $this->absender)[1] ?? 'localhost') . ">\r\n"
+                . $kopf . "\r\n\r\n" . $rumpf;
+            // Punkt am Zeilenanfang verdoppeln (RFC 5321, 4.5.2)
+            $nachricht = preg_replace('/^\./m', '..', str_replace("\r\n", "\n", $nachricht)) ?? '';
+            $nachricht = str_replace("\n", "\r\n", rtrim($nachricht, "\n"));
+            $this->schreiben($verbindung, $nachricht . "\r\n.");
+            $this->erwarte($verbindung, [250]);
+            @fwrite($verbindung, "QUIT\r\n");
+            return true;
+        } catch (\Throwable $t) {
+            $this->letzterFehler = mb_substr($t->getMessage(), 0, 240);
+            error_log('tt-turnier smtp: ' . $this->letzterFehler);
+            return false;
+        } finally {
+            if (is_resource($verbindung)) {
+                @fclose($verbindung);
+            }
+        }
+    }
+
+    private function rechnername(): string
+    {
+        $h = explode('@', $this->absender)[1] ?? 'localhost';
+        return preg_match('/^[A-Za-z0-9.-]{1,190}$/', $h) ? $h : 'localhost';
+    }
+
+    /** @param resource $v */
+    private function schreiben($v, string $zeile): void
+    {
+        if (@fwrite($v, $zeile . "\r\n") === false) {
+            throw new \RuntimeException('Schreiben zum SMTP-Server fehlgeschlagen');
+        }
+    }
+
+    /**
+     * @param resource $v
+     * @param list<int> $codes
+     */
+    private function befehl($v, string $zeile, array $codes, bool $geheim = false): void
+    {
+        $this->schreiben($v, $zeile);
+        $this->erwarte($v, $codes, $geheim ? 'AUTH' : explode(' ', $zeile)[0]);
+    }
+
+    /**
+     * Antwort lesen (mehrzeilig „250-…“ bis „250 …“) und Code prüfen.
+     * @param resource $v
+     * @param list<int> $codes
+     */
+    private function erwarte($v, array $codes, string $schritt = 'Begrüßung'): void
+    {
+        $antwort = '';
+        while (true) {
+            $z = fgets($v, 1024);
+            if ($z === false) {
+                throw new \RuntimeException("SMTP: keine Antwort ({$schritt})");
+            }
+            $antwort .= $z;
+            if (strlen($z) < 4 || $z[3] !== '-') {
+                break;
+            }
+        }
+        $code = (int)substr($antwort, 0, 3);
+        if (!in_array($code, $codes, true)) {
+            throw new \RuntimeException("SMTP {$schritt}: " . trim(preg_replace('/\s+/', ' ', $antwort) ?? ''));
         }
     }
 }
@@ -123,6 +267,11 @@ final class MailAufbau
         ];
         if ($m->antwortAn !== null && filter_var($m->antwortAn, FILTER_VALIDATE_EMAIL) !== false) {
             $kopf[] = 'Reply-To: ' . $m->antwortAn;
+        }
+        foreach ($m->zusatz as $name => $wert) {
+            if (is_string($name) && preg_match('/^[A-Za-z][A-Za-z0-9-]{1,40}$/', $name) && is_string($wert) && !preg_match('/[\r\n]/', $wert)) {
+                $kopf[] = $name . ': ' . $wert;
+            }
         }
         $text = self::zeilenumbrueche($m->text);
         if ($m->anhangName === null || $m->anhangInhalt === null) {

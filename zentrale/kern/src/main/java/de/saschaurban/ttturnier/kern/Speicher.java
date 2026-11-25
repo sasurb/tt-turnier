@@ -56,6 +56,8 @@ public final class Speicher {
         public final List<Map<String, Object>> ereignisse = new ArrayList<>();
         public final Map<String, Integer> index = new HashMap<>();
         public final List<Map<String, Object>> codes = new ArrayList<>();
+        /** Posteingang je Kennung (ab 0.18): { id, rolle, bezug, art, titel, text, von, zeit, gelesen } */
+        public final List<Map<String, Object>> nachrichten = new ArrayList<>();
 
         public Turnier(String id, Map<String, Object> kopf) {
             this.id = id;
@@ -128,6 +130,11 @@ public final class Speicher {
                     Map<String, Object> m = Json.alsObjekt(c);
                     if (m != null) t.codes.add(m);
                 }
+                List<Object> nachrichten = Files.isRegularFile(p.resolve("nachrichten.json")) ? Json.alsListe(lesenJson(p.resolve("nachrichten.json"))) : null;
+                if (nachrichten != null) for (Object n : nachrichten) {
+                    Map<String, Object> m = Json.alsObjekt(n);
+                    if (m != null) t.nachrichten.add(m);
+                }
                 Path j = p.resolve("ereignisse.jsonl");
                 if (Files.isRegularFile(j)) {
                     try (BufferedReader r = new BufferedReader(new InputStreamReader(Files.newInputStream(j), StandardCharsets.UTF_8))) {
@@ -165,6 +172,10 @@ public final class Speicher {
 
     public void kopfSpeichern(Turnier t) {
         schreibenAtomar(turnierOrdner(t.id).resolve("turnier.json"), Json.schreiben(t.kopf));
+    }
+
+    public void nachrichtenSpeichern(Turnier t) {
+        schreibenAtomar(turnierOrdner(t.id).resolve("nachrichten.json"), Json.schreiben(t.nachrichten));
     }
 
     public void codesSpeichern(Turnier t) {

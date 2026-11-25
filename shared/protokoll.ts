@@ -332,6 +332,8 @@ export interface InfoAntwort {
   sparten?: boolean;
   /** Aktuelle Fassung der Nutzungsbedingungen (ab 0.17) */
   bedingungen?: string;
+  /** Posteingang je Kennung, Rundmail, Ergebnis-Mail, Verteiler (ab 0.18; die Zentrale nur Posteingang) */
+  nachrichten?: boolean;
   /** Nur bei der Android-Zentrale (ab 0.5) */
   zentrale?: {
     version: string;
@@ -879,6 +881,8 @@ export interface AnmeldungSendenAnfrage {
   volljaehrig: boolean;
   /** Datenschutzhinweis zur Kenntnis genommen */
   datenschutz: boolean;
+  /** Ab 0.18: auch für Ankündigungen künftiger Turniere der Sparte eintragen (bestätigt mit dem Link der Anmeldung) */
+  verteiler?: boolean;
   website?: string;
 }
 /** Sicht der angemeldeten Person auf ihre Anmeldung (nach Bestätigung bzw. über den Link aus der Mail) */
@@ -1004,4 +1008,88 @@ export interface OnlineTurnier extends TurnierInfo {
   /** liegt auf dieser Zentrale (übernommen, nicht zurückgegeben) */
   aufDieserZentrale: boolean;
   vonDieserZentrale: boolean;
+}
+
+/* ---------- Nachrichten (ab 0.18) ----------
+ * Posteingang je Kennung im Turnier (Spieler, Helfer, Leitung) – keine Spielerkonten. Die Turnierleitung schickt
+ * Rundmails an Gruppen (die App bestimmt die Spieler-IDs, der Server kennt keine Turnierlogik); Online-Angemeldete
+ * bekommen sie zusätzlich per Mail (gedrosselte Warteschlange). Nach „Turnier abschließen“ gehen die Ergebnisse
+ * mit der eigenen Platzierung raus. Die Zentrale stellt nur in den Posteingang zu.
+ */
+export const NACHRICHT_MAX_TITEL = 150;
+export const NACHRICHT_MAX_TEXT = 5000;
+export type NachrichtArt = 'rundmail' | 'ergebnis' | 'hinweis';
+export interface Nachricht {
+  id: number;
+  art: NachrichtArt;
+  titel: string;
+  /** Reiner Text (mehrzeilig) – nie als HTML anzeigen */
+  text: string;
+  von: string;
+  zeit: string;
+  gelesen: boolean;
+}
+/** GET nachrichten&turnier= */
+export interface PostfachAntwort {
+  nachrichten: Nachricht[];
+  ungelesen: number;
+  /** true: Leitung mit Konto – Liste „Gesendet“ statt Posteingang */
+  gesendet: boolean;
+  /** Mails dieses Turniers in der Warteschlange (nur „Gesendet“) */
+  wartend: number;
+}
+/** POST rundmail (nur Leitung) */
+export interface RundmailAnfrage {
+  turnier: string;
+  betreff: string;
+  text: string;
+  /** Beschreibung der Empfänger für „Gesendet“, z. B. „Herren A, Helfer“ */
+  gruppe: string;
+  spieler: string[];
+  helfer: boolean;
+  leitung: boolean;
+  /** Konkurrenz-IDs der Online-Anmeldung, deren Warteliste per Mail informiert wird */
+  warteliste: string[];
+  /** Online-Angemeldete (bzw. ihre Mannschaftsleitung) zusätzlich per Mail */
+  mail: boolean;
+}
+export interface RundmailAntwort {
+  postfach: number;
+  mails: number;
+}
+/** POST turnier.ergebnis (nur Leitung, nach dem Abschluss, höchstens dreimal je Turnier) */
+export interface ErgebnisAnfrage {
+  turnier: string;
+  liste: string;
+  plaetze: { spieler: string; text: string }[];
+}
+export interface ErgebnisAntwort {
+  postfach: number;
+  mails: number;
+  verbleibend: number;
+}
+/** Verteiler je Sparte (Double-Opt-In, Abmeldelink in jeder Mail) */
+export interface VerteilerEintrag {
+  id: string;
+  name: string;
+  email: string;
+  bestaetigt: string | null;
+  /** unter 18, Erziehungsberechtigte einverstanden */
+  jugend: boolean;
+  /** Turnier, über das eingetragen wurde */
+  quelle: string | null;
+}
+export interface VerteilerAntwort {
+  eintraege: VerteilerEintrag[];
+  gesendetHeute: number;
+  jeTag: number;
+}
+export interface VerteilerEintragenAnfrage {
+  turnier: string;
+  name: string;
+  email: string;
+  volljaehrig: boolean;
+  erziehungsberechtigte: boolean;
+  datenschutz: boolean;
+  website?: string;
 }

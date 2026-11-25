@@ -16,6 +16,7 @@
   import Textbaustein from './turnier/Textbaustein.svelte';
   import { appWertungAn, minderjaehrigeLautJahrgang } from '../engine/zustand';
   import { aktiveSparte, aktiveSparteId } from '../sparte.svelte';
+  import ErgebnisVersand from './turnier/ErgebnisVersand.svelte';
 
   let {
     id,
@@ -311,6 +312,9 @@
     <p class="leise">{T.appwertung.profiling}</p>
     {@render hinweis('jugend')}
     <Textbaustein verein={app.sitzung?.konto.sparten?.find((s) => s.id === aktiveSparteId())?.verein ?? ''} />
+    {#if !lokal && app.server.art === 'bereit' && app.server.info.nachrichten && !app.server.info.zentrale}
+      <p class="leise verteiler-link">{T.verteiler.link}<Hilfe text={T.verteiler.linkHilfe} />: <a href={`#/verteiler/${id}`} data-testid="verteiler-link">{location.origin + location.pathname}#/verteiler/{id}</a></p>
+    {/if}
   </section>
 
   {#if loeschfristMoeglich && einst}
@@ -418,6 +422,9 @@
     <p class="leise">{T.einstellungen.abschliessenText}</p>
     <button class="zweit" onclick={abschliessen}>{abgeschlossen ? T.einstellungen.wiedereroeffnen : T.einstellungen.abschliessen}</button>
   </section>
+  {#if abgeschlossen && !lokal && token && app.server.art === 'bereit' && app.server.info.nachrichten && !app.server.info.zentrale}
+    <ErgebnisVersand {z} turnierId={id} {token} />
+  {/if}
 
   {#if lokal || onlineLoeschbar}
     <section>
@@ -444,6 +451,7 @@
 </details>
 
 <style>
+  .verteiler-link { overflow-wrap: anywhere; }
   .einstellungen section { border-top: 1px solid var(--linie); padding-top: 14px; margin-top: 14px; }
   .einstellungen section:first-of-type { border-top: 0; margin-top: 8px; padding-top: 0; }
   .empf + .empf { margin-top: 8px; }

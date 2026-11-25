@@ -36,6 +36,7 @@
   import Bedingungen from './lib/ui/Bedingungen.svelte';
   import Ueber from './lib/ui/Ueber.svelte';
   import BedingungenDialog from './lib/ui/BedingungenDialog.svelte';
+  import Verteiler from './lib/ui/Verteiler.svelte';
   import { turnierIdNorm } from './lib/code';
 
   /** Turnierkennungen aus Links ohne Groß/klein (ab 0.17) */
@@ -78,6 +79,12 @@
     {#key route.param}<Einladung schluessel={route.param} />{/key}
   {:else if route.seite === 'partner' && tid && route.rest[0]}
     {#key route.rest[0]}<Partner turnier={tid} schluessel={route.rest[0]} />{/key}
+  {:else if route.seite === 'verteiler' && route.param === 'b' && route.rest[0]}
+    {#key route.rest[0]}<Verteiler art="bestaetigen" wert={route.rest[0]} />{/key}
+  {:else if route.seite === 'verteiler' && route.param === 'ab' && route.rest[0]}
+    {#key route.rest[0]}<Verteiler art="abmelden" wert={route.rest[0]} />{/key}
+  {:else if route.seite === 'verteiler' && tid}
+    {#key tid}<Verteiler art="eintragen" wert={tid} />{/key}
   {:else if route.seite === 'sicherung' && tid && route.rest[0]}
     {#key route.rest[0]}<SicherungLink turnier={tid} schluessel={route.rest[0]} />{/key}
   {:else if route.seite === 'bedingungen'}

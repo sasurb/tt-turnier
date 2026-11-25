@@ -381,6 +381,10 @@ final class Anmeldung
             throw new ApiFehler('ungueltig', 'Online anmelden können sich nur Volljährige. Unter 18 meldet euch bitte über euren Verein bzw. eine Mannschaftsleitung bei der Turnierleitung.');
         }
         $d['volljaehrig'] = true;
+        // Ab 0.18: Einwilligung in Ankündigungen der Sparte (Verteiler); bestätigt mit dem Link der Anmeldung
+        if (($r['verteiler'] ?? false) === true) {
+            $d['verteiler'] = true;
+        }
         $wahl = $r['konkurrenzen'] ?? null;
         if (!is_array($wahl) || !array_is_list($wahl) || $wahl === [] || count($wahl) > self::MAX_KONKURRENZEN) {
             throw new ApiFehler('ungueltig', 'Bitte mindestens eine Konkurrenz wählen.');
@@ -452,6 +456,7 @@ final class Anmeldung
             . "bitte bestätige die Anmeldung zu „{$t['name']}“ (" . self::datumText($t) . ") über diesen Link:\n\n"
             . $this->link($t, $schluessel) . "\n\n"
             . "Der Link gilt 24 Stunden. Erst mit der Bestätigung bekommst du einen Platz bzw. einen Platz auf der Warteliste.\n"
+            . (($d['verteiler'] ?? false) ? "Mit der Bestätigung trägst du dich außerdem für Ankündigungen künftiger Turniere des Vereins ein (jederzeit abbestellbar).\n" : '')
             . "Hast du dich nicht angemeldet? Dann ignoriere diese Mail – die Angaben werden nach 24 Stunden gelöscht.\n\n"
             . "Datenschutzhinweis: " . $this->api->appUrl() . "#/datenschutz");
         return ['ok' => true, 'mail' => true];
@@ -573,12 +578,18 @@ final class Anmeldung
             return $this->stand2($t, $this->zeile($t, (string)$z['id']));
         }
         $zeilen = $this->zeilen((string)$t['id']);
+        $verteiler = '';
+        if ($neu && ($z['d']['verteiler'] ?? false) === true) {
+            $this->api->nachrichten->ausAnmeldung($t, (string)$z['email'], self::name($z));
+            $ab = $this->api->nachrichten->abmeldeLinkFuer($t, (string)$z['email']);
+            $verteiler = $ab === null ? '' : "\nAnkündigungen künftiger Turniere: eingetragen. Abbestellen: {$ab}\n";
+        }
         if ($neu) {
             $this->mailen($t, (string)$z['email'], "Anmeldung bestätigt: {$t['name']}", "Hallo {$z['d']['vorname']},\n\n"
                 . "deine Anmeldung zu „{$t['name']}“ (" . self::datumText($t) . ") ist bestätigt.\n\n"
                 . $this->standText($t, $e, $z, $zeilen)
                 . "\nStand ansehen oder abmelden: " . $this->link($t, (string)$a->rumpf['schluessel']) . "\n"
-                . "Bitte hebe diese Mail auf. Rückst du von der Warteliste nach, bekommst du eine Mail.");
+                . "Bitte hebe diese Mail auf. Rückst du von der Warteliste nach, bekommst du eine Mail.\n" . $verteiler);
             $this->leitungHinweisen($t, $e, $z, $zeilen);
             $this->partnerEinladen($t, $e, $z);
         }

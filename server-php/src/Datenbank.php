@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 9;
+    public const SCHEMA_VERSION = 10;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -199,7 +199,77 @@ final class Datenbank
             $this->spartenUebernehmen();
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['9', 'schema']);
         }
-        // Spätere Versionen: if ($version < 10) { … UPDATE meta … }
+        if ($version < 10) {
+            foreach ($this->schemaV10() as $sql) {
+                try {
+                    $this->pdo->exec($sql);
+                } catch (\PDOException $e) {
+                    if (!preg_match('/duplicate|already exists|exists/i', $e->getMessage())) {
+                        throw $e;
+                    }
+                }
+            }
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['10', 'schema']);
+        }
+        // Spätere Versionen: if ($version < 11) { … UPDATE meta … }
+    }
+
+    /**
+     * Version 10 (Paket 0.18): Mail-Warteschlange (gedrosselt, mit Wiederholung), Posteingang je Kennung,
+     * Verteiler je Sparte mit Double-Opt-In, Zähler für Ergebnis-Mails je Turnier.
+     * @return list<string>
+     */
+    private function schemaV10(): array
+    {
+        $mysql = $this->treiber === 'mysql';
+        $pk = $mysql ? 'BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+        $lang = $mysql ? 'MEDIUMTEXT' : 'TEXT';
+        $nach = $mysql ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '';
+        return [
+            "CREATE TABLE mail_warteschlange (
+                id $pk,
+                an VARCHAR(190) NOT NULL,
+                betreff VARCHAR(250) NOT NULL,
+                text $lang NOT NULL,
+                antwort VARCHAR(190) NULL,
+                zusatz TEXT NULL,
+                art VARCHAR(20) NOT NULL,
+                turnier_id VARCHAR(16) NULL,
+                sparte_id BIGINT NULL,
+                angelegt BIGINT NOT NULL,
+                naechster BIGINT NOT NULL,
+                versuche INTEGER NOT NULL DEFAULT 0,
+                fehler VARCHAR(250) NULL
+            )$nach",
+            'CREATE INDEX idx_warteschlange_naechster ON mail_warteschlange (naechster)',
+            "CREATE TABLE nachrichten (
+                id $pk,
+                turnier_id VARCHAR(16) NOT NULL,
+                rolle VARCHAR(10) NOT NULL,
+                bezug VARCHAR(40) NOT NULL,
+                art VARCHAR(20) NOT NULL,
+                titel VARCHAR(160) NOT NULL,
+                text $lang NOT NULL,
+                von VARCHAR(120) NOT NULL,
+                zeit BIGINT NOT NULL,
+                gelesen BIGINT NULL
+            )$nach",
+            'CREATE INDEX idx_nachrichten_empfaenger ON nachrichten (turnier_id, rolle, bezug, id)',
+            "CREATE TABLE verteiler (
+                id VARCHAR(16) NOT NULL PRIMARY KEY,
+                sparte_id BIGINT NOT NULL,
+                email VARCHAR(190) NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                schluessel_hash CHAR(64) NOT NULL,
+                angelegt BIGINT NOT NULL,
+                bestaetigt BIGINT NULL,
+                jugend INTEGER NOT NULL DEFAULT 0,
+                quelle VARCHAR(16) NULL
+            )$nach",
+            'CREATE UNIQUE INDEX idx_verteiler_adresse ON verteiler (sparte_id, email)',
+            'CREATE INDEX idx_verteiler_schluessel ON verteiler (schluessel_hash)',
+            'ALTER TABLE turniere ADD COLUMN ergebnis_mails INTEGER NOT NULL DEFAULT 0',
+        ];
     }
 
     /**

@@ -348,6 +348,50 @@ export const HANDBUCH: HandbuchKapitel[] = [
     ],
   },
   {
+    id: 'nachrichten',
+    titel: 'Nachrichten, Posteingang und Verteiler',
+    fuer: ['leitung', 'helfer', 'spieler'],
+    einleitung:
+      'Die Turnierleitung erreicht alle Beteiligten direkt in der App: Jede Kennung hat einen Posteingang (Glocke oben im Turnier). Wer sich online angemeldet hat, bekommt Nachrichten zusätzlich per E-Mail.',
+    abschnitte: [
+      {
+        titel: 'Posteingang',
+        text: [
+          'Mit deiner Kennung angemeldet, zeigt die Glocke 🔔 neben dem Turniernamen, wie viele Nachrichten neu sind. Antippen öffnet den Posteingang; dabei gelten die Nachrichten als gelesen.',
+          'Kommt eine neue Nachricht, während das Turnier offen ist, erscheint oben ein Hinweis. Die App fragt alle zwei Minuten nach.',
+          'Mit einem Konto (ohne Kennung) siehst du statt des Posteingangs ✉ die gesendeten Nachrichten des Turniers und wie viele E-Mails noch in der Warteschlange sind.',
+        ],
+      },
+      {
+        titel: 'Nachricht an Teilnehmer (Turnierleitung)',
+        text: [
+          'Unter „Teilnehmer“ → „Nachricht an Teilnehmer“ wählst du die Empfänger – auch mehrere Gruppen zugleich:',
+          '• alle Teilnehmer oder die einer Konkurrenz',
+          '• eingecheckt bzw. noch nicht eingecheckt (z. B. „Bitte bis 9:45 an der Kasse melden“)',
+          '• Mannschaftsführung, Helfer, weitere Turnierleitungen',
+          '• Warteliste der Online-Anmeldung (nur per E-Mail, weil sie noch keine Kennung haben)',
+          'Mit dem Häkchen „zusätzlich per E-Mail“ bekommen Online-Angemeldete die Nachricht auch als Mail, bei Gruppenanmeldungen die Mannschaftsleitung. Die Mails gehen gedrosselt raus; bei vielen Empfängern dauert es einige Minuten. Auf der Zentrale gibt es nur den Posteingang.',
+          'Höchstens 10 Nachrichten je Turnier und Tag.',
+        ],
+      },
+      {
+        titel: 'Ergebnisse verschicken',
+        text: [
+          'Nach „Turnier abschließen“ (Einstellungen) erscheint „Ergebnisse verschicken“. Jede Person mit Kennung bekommt ihre Platzierung und die Ergebnisliste in den Posteingang, Online-Angemeldete zusätzlich per E-Mail.',
+          'Die Liste folgt euren Einstellungen: Namen in Kurzform, wenn so eingestellt (bei Jugendturnieren immer), verdeckte Konkurrenzen ohne Stand. Vorher unter „Sichtbarkeit“ veröffentlichen.',
+          'Das geht höchstens dreimal je Turnier – z. B. nach einer Korrektur und erneutem Abschluss.',
+        ],
+      },
+      {
+        titel: 'Verteiler für künftige Turniere',
+        text: [
+          'Wer Einladungen zu euren nächsten Turnieren möchte, setzt bei der Online-Anmeldung ein Häkchen oder trägt sich über den Link aus den Einstellungen des Turniers ein. Jede Person bestätigt per Mail (Double-Opt-In); unter 18 nur mit Einverständnis der Erziehungsberechtigten.',
+          'Die Spartenleitung sieht den Verteiler unter „Sparte“ und schickt dort Ankündigungen (höchstens drei am Tag). In jeder Mail steht ein Link zum Abbestellen; dann ist der Eintrag sofort gelöscht.',
+        ],
+      },
+    ],
+  },
+  {
     id: 'kasse',
     titel: 'Kasse, Check-in und Quittungen',
     fuer: ['leitung', 'helfer'],

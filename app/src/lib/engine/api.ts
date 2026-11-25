@@ -46,6 +46,13 @@ import type {
   TurnierKontenAntwort,
   PartnerAntwort,
   KontoLoeschenAnfrage,
+  ErgebnisAnfrage,
+  ErgebnisAntwort,
+  PostfachAntwort,
+  RundmailAnfrage,
+  RundmailAntwort,
+  VerteilerAntwort,
+  VerteilerEintragenAnfrage,
 } from '@shared/protokoll';
 
 export interface IchAntwort {
@@ -392,6 +399,37 @@ export class Api {
   }
   anmeldungLoeschen(token: string, turnier: string, id: string) {
     return this.rufe<AnmeldungenAntwort>('POST', 'anmeldung.loeschen', { token, rumpf: { turnier, id } });
+  }
+  /* ---------- Nachrichten (ab 0.18) ---------- */
+  postfach(token: string, turnier: string) {
+    return this.rufe<PostfachAntwort>('GET', 'nachrichten', { token, query: { turnier } });
+  }
+  postfachGelesen(token: string, turnier: string, bis: number) {
+    return this.rufe<{ ok: true }>('POST', 'nachrichten.gelesen', { token, rumpf: { turnier, bis } });
+  }
+  rundmail(token: string, a: RundmailAnfrage) {
+    return this.rufe<RundmailAntwort>('POST', 'rundmail', { token, rumpf: a });
+  }
+  ergebnisSenden(token: string, a: ErgebnisAnfrage) {
+    return this.rufe<ErgebnisAntwort>('POST', 'turnier.ergebnis', { token, rumpf: a }, 30_000);
+  }
+  verteilerEintragen(a: VerteilerEintragenAnfrage) {
+    return this.rufe<{ ok: true }>('POST', 'verteiler.eintragen', { rumpf: a });
+  }
+  verteilerBestaetigen(schluessel: string) {
+    return this.rufe<{ verein: string; sparte: string; abmelden: string }>('POST', 'verteiler.bestaetigen', { rumpf: { schluessel } });
+  }
+  verteilerAbmelden(kennung: string) {
+    return this.rufe<{ ok: true }>('POST', 'verteiler.abmelden', { rumpf: { kennung } });
+  }
+  verteiler(token: string, sparte: number) {
+    return this.rufe<VerteilerAntwort>('GET', 'verteiler', { token, query: { sparte: String(sparte) } });
+  }
+  verteilerEntfernen(token: string, sparte: number, id: string) {
+    return this.rufe<VerteilerAntwort>('POST', 'verteiler.entfernen', { token, rumpf: { sparte, id } });
+  }
+  verteilerSenden(token: string, sparte: number, betreff: string, text: string) {
+    return this.rufe<{ mails: number }>('POST', 'verteiler.senden', { token, rumpf: { sparte, betreff, text } });
   }
   /** Turnier endgültig löschen (Eigentümer-Konto/Admin, mit Passwort) */
   turnierLoeschen(token: string, turnier: string, passwort: string) {

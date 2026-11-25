@@ -373,6 +373,7 @@ final class Sparten
             $this->db->anfangen();
         }
         try {
+            $this->api->nachrichten->sparteEntfernt($id);
             foreach ($this->db->alle('SELECT id FROM turniere WHERE sparte_id = ?', [$id]) as $t) {
                 $this->api->turnierEntfernen((string)$t['id']);
             }

@@ -10,7 +10,7 @@ namespace TtTurnier;
  */
 final class Api
 {
-    public const VERSION = '0.17.0';
+    public const VERSION = '0.18.0';
     public const PROTOKOLL = 1;
     private const MAX_EREIGNISSE = 200;
     private const MAX_JE_TURNIER = 50000;
@@ -84,6 +84,7 @@ final class Api
     private readonly Mailer $mailer;
     private readonly Anmeldung $anmeldung;
     public readonly Sparten $sparten;
+    public readonly Nachrichten $nachrichten;
 
     /**
      * @param array{setup_code?:string,app_url?:string,mail?:array{absender?:string,admin?:string},ohne_warten?:bool} $config
@@ -99,6 +100,7 @@ final class Api
         $this->mailer = $mailer ?? new KeinMailer();
         $this->anmeldung = new Anmeldung($this, $db);
         $this->sparten = new Sparten($this, $db);
+        $this->nachrichten = new Nachrichten($this, $db, $this->mailer, $config);
     }
 
     /** Adresse der App mit abschließendem „/“, z. B. https://saschaurban.de/tt-turnier/ */
@@ -123,13 +125,43 @@ final class Api
     /** @param string|null $antwortAn Antworten an diese Adresse (z. B. Turnierleitung) statt an den Betreiber */
     public function mail(string $an, string $betreff, string $text, ?string $anhangName = null, ?string $anhang = null, ?string $antwortAn = null): bool
     {
-        $fuss = "\n\n-- \nTischtennis-Turnier · " . $this->appUrl()
-            . "\nDiese Mail wurde automatisch versendet. Antworten erreichen " . ($antwortAn !== null ? 'die Turnierleitung.' : 'den Betreiber.');
-        $ok = $this->mailer->senden(new Mail($an, $betreff, $text . $fuss, $antwortAn ?? ($this->adminMail() ?: null), $anhangName, $anhang));
+        $antwort = $antwortAn ?? ($this->adminMail() ?: null);
+        $ok = $this->mailer->senden(new Mail($an, $betreff, $text . $this->mailFuss($antwortAn !== null), $antwort, $anhangName, $anhang));
         if (!$ok) {
             error_log("tt-turnier: Mail an {$an} konnte nicht gesendet werden ({$betreff})");
+            // Ab 0.18: ohne Anhang später erneut versuchen (Warteschlange, bis zu sechs Versuche)
+            if ($anhang === null && $this->mailer->bereit()) {
+                try {
+                    $this->nachrichten->vormerken($an, $betreff, $text . $this->mailFuss($antwortAn !== null), $antwort, 'system', null, null, [], 1);
+                    return true;
+                } catch (\Throwable $t) {
+                    error_log('tt-turnier: Warteschlange: ' . $t->getMessage());
+                }
+            }
         }
         return $ok;
+    }
+
+    /** Fußzeile aller Mails; $leitung: Antworten erreichen die Turnierleitung statt den Betreiber */
+    public function mailFuss(bool $leitung): string
+    {
+        return "\n\n-- \nTischtennis-Turnier · " . $this->appUrl()
+            . "\nDiese Mail wurde automatisch versendet. Antworten erreichen " . ($leitung ? 'die Turnierleitung.' : 'den Betreiber.');
+    }
+
+    /** Geheimnis des Servers (für Prüfsummen in Links, z. B. Abmelden vom Verteiler); beim ersten Bedarf erzeugt */
+    public function geheimnis(): string
+    {
+        $z = $this->db->eine("SELECT wert FROM meta WHERE schluessel = 'geheimnis'");
+        if ($z !== null && strlen((string)$z['wert']) === 64) {
+            return (string)$z['wert'];
+        }
+        try {
+            $this->db->ausfuehren("INSERT INTO meta (schluessel, wert) VALUES ('geheimnis', ?)", [bin2hex(random_bytes(32))]);
+        } catch (\PDOException) {
+            // gleichzeitig angelegt
+        }
+        return (string)($this->db->eine("SELECT wert FROM meta WHERE schluessel = 'geheimnis'")['wert'] ?? '');
     }
 
     public function jetzt(): int
@@ -231,6 +263,16 @@ final class Api
                 'POST zentrale.rueckgabe' => $this->zentraleRueckgabe($a),
                 'POST zentrale.freigeben' => $this->zentraleFreigeben($a),
                 'POST sicherung.senden' => $this->sicherungVonZentrale($a),
+                'GET nachrichten' => $this->nachrichten->postfach($a),
+                'POST nachrichten.gelesen' => $this->nachrichten->gelesen($a),
+                'POST rundmail' => $this->nachrichten->rundmail($a),
+                'POST turnier.ergebnis' => $this->nachrichten->ergebnis($a),
+                'POST verteiler.eintragen' => $this->nachrichten->eintragen($a),
+                'POST verteiler.bestaetigen' => $this->nachrichten->bestaetigen($a),
+                'POST verteiler.abmelden' => $this->nachrichten->abmelden($a),
+                'GET verteiler' => $this->nachrichten->liste($a),
+                'POST verteiler.entfernen' => $this->nachrichten->entfernen($a),
+                'POST verteiler.senden' => $this->nachrichten->senden($a),
                 default => throw new ApiFehler('nicht_gefunden', 'Unbekannte Route: ' . $schluessel),
             };
             return new Antwort(200, $daten);
@@ -644,6 +686,8 @@ final class Api
             'anmeldung' => $this->mailBereit(),
             'sparten' => true,
             'bedingungen' => self::BEDINGUNGEN_FASSUNG,
+            // ab 0.18: Posteingang je Kennung, Rundmail, Ergebnis-Mail, Verteiler
+            'nachrichten' => true,
         ];
     }
 
@@ -1805,6 +1849,7 @@ final class Api
         $this->db->ausfuehren('DELETE FROM turnier_zugaenge WHERE turnier_id = ?', [$id]);
         $this->db->ausfuehren('DELETE FROM sicherung_empfaenger WHERE turnier_id = ?', [$id]);
         $this->db->ausfuehren("DELETE FROM einladungen WHERE art = 'turnier' AND ziel = ?", [$id]);
+        $this->nachrichten->turnierEntfernt($id);
         $this->db->ausfuehren('DELETE FROM turniere WHERE id = ?', [$id]);
         $this->db->ausfuehren('DELETE FROM kennungen_gesperrt WHERE id = ?', [$id]);
         $this->db->ausfuehren('INSERT INTO kennungen_gesperrt (id, bis) VALUES (?, ?)', [$id, $this->jetzt() + self::KENNUNG_SPERRE_TAGE * self::TAG]);
@@ -2817,6 +2862,7 @@ final class Api
         $this->letzteLeitungPruefen($t, $rolle, $bezug);
         $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
         $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        $this->nachrichten->kennungEntfernt((string)$t['id'], $rolle, $bezug);
         return ['ok' => true];
     }
 
@@ -3162,6 +3208,7 @@ final class Api
             $this->db->ausfuehren('DELETE FROM versuche WHERE zeit < ?', [$jetzt - self::TAG]);
             $this->anmeldung->aufraeumen();
             $this->sparten->aufraeumen();
+            $this->nachrichten->aufraeumen();
             $this->db->ausfuehren('DELETE FROM kennungen_gesperrt WHERE bis < ?', [$jetzt]);
             $this->db->ausfuehren('DELETE FROM sicherung_empfaenger WHERE bestaetigt IS NULL AND angelegt < ?', [$jetzt - 30 * self::TAG]);
             $this->db->ausfuehren('DELETE FROM sicherung_empfaenger WHERE angelegt < ? AND turnier_id NOT IN (SELECT id FROM turniere)', [$jetzt - 365 * self::TAG]);

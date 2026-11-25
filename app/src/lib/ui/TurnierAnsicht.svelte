@@ -42,6 +42,8 @@
   import DruckExport from './turnier/DruckExport.svelte';
   import KasseTab from './turnier/KasseTab.svelte';
   import AnmeldungTab from './turnier/AnmeldungTab.svelte';
+  import Postfach from './turnier/Postfach.svelte';
+  import Rundmail from './turnier/Rundmail.svelte';
   import MitteilungKarte from './turnier/MitteilungKarte.svelte';
   import { meinAufruf, name as tnName } from '../engine/abfragen';
   import { appHinweisAn, neueAnmeldungen } from '../anmeldeHinweis';
@@ -145,6 +147,10 @@
   const darfAufgabe = (a: Aufgabe) => aufgaben.includes(a);
   /** Fremde Ergebnisse eintragen (amtlich) */
   const helferRecht = $derived(!leitung && (darfAufgabe('ergebnisse') || darfAufgabe('oberschiri')));
+  /** Posteingang je Kennung und Rundmail (ab Server 0.18) */
+  const nachrichtenMoeglich = $derived(!lokal && app.server.art === 'bereit' && !!app.server.info.nachrichten);
+  let postfachHinweis = $state<string | null>(null);
+  let postfach: { neuLaden: () => Promise<void> } | undefined = $state();
   const anmeldungMoeglich = $derived(!lokal && app.server.art === 'bereit' && !!app.server.info.anmeldung && !app.server.info.zentrale);
   /** Token, mit dem dieses Gerät sendet: Kennung vor Konto */
   const schreibToken = $derived(eintrag?.token ?? kontoToken);
@@ -692,10 +698,20 @@
     </div>
   {/if}
 
+  {#if postfachHinweis}
+    <div class="meldung aufruf reihe" role="status" data-testid="postfach-hinweis">
+      <span class="wachsen">✉ {postfachHinweis}</span>
+      <button class="klein" onclick={() => (postfachHinweis = null)}>{T.mitteilung.schliessen}</button>
+    </div>
+  {/if}
+
   <section class="kopf">
     <h1>{name}</h1>
     <div class="reihe">
       <StatusAnzeige {status} {lokal} />
+      {#if nachrichtenMoeglich && schreibToken}
+        {#key schreibToken}<Postfach bind:this={postfach} turnierId={id} token={schreibToken} onNeu={(n) => (postfachHinweis = T.postfach.neuHinweis(n))} />{/key}
+      {/if}
       {#if zustand?.abgeschlossen}<span class="marke">{T.turnier.abgeschlossen}</span>{/if}
       {#if !lokal && eintrag?.token}
         <span class="leise" data-testid="angemeldet-als">{T.zugang.angemeldet(eintrag.wer ?? '', rolle === 'spieler' && eintrag.helfer ? T.zugang.spielerHelfer : T.rollen[rolle])}</span>
@@ -757,6 +773,9 @@
       <Tabellen z={zustand} {leitung} {eintragen} {oeffnen} />
       <p class="leise live-link"><a href={linkZu(`live/${id}`)} data-testid="live-link">{T.live.linkTabellen}</a></p>
     {:else if aktiv === 'teilnehmer'}
+      {#if nachrichtenMoeglich && schreibToken && leitung}
+        <Rundmail z={zustand} turnierId={id} token={schreibToken} gesendet={() => void postfach?.neuLaden()} />
+      {/if}
       <SpielerTab z={zustand} {eintragen} />
       {#if anmeldungMoeglich && schreibToken && leitung}
         <AnmeldungTab z={zustand} turnierId={id} token={schreibToken} {eintragen} neuGesehen={() => (anmeldungNeu = 0)} />

@@ -32,6 +32,8 @@
   /** Ab 0.17 (Frage 8C): online nur ab 18 */
   let volljaehrig = $state(false);
   let datenschutz = $state(false);
+  /** Ab 0.18: Ankündigungen künftiger Turniere (Verteiler der Sparte) */
+  let verteiler = $state(false);
   let website = $state(''); // Fangfeld für Bots
 
   const pflicht = $derived(new Set(info?.einstellungen.angaben ?? []));
@@ -103,6 +105,7 @@
         konkurrenzen: gewaehlt.map(([id, w]) => ({ id, ...(w.partner.trim() ? { partner: w.partner.trim(), partnerEmail: w.partnerEmail.trim() } : {}) })),
         volljaehrig,
         datenschutz,
+        ...(verteiler ? { verteiler: true } : {}),
         website,
       });
       gesendet = true;
@@ -258,6 +261,10 @@
       {#if zuJung}<div class="meldung info">{T.meldung.zuJung}</div>{/if}
       <p class="leise textbaustein">{T.textbaustein.text(info.turnier.veranstalter)}</p>
       <label class="haken"><input type="checkbox" bind:checked={datenschutz} data-testid="meldung-datenschutz" /> <span>{T.meldung.datenschutz} <a href={linkZu('datenschutz')} target="_blank" rel="noopener">{T.meldung.datenschutzLink}</a></span></label>
+      <div class="label-zeile">
+        <label class="haken"><input type="checkbox" bind:checked={verteiler} data-testid="meldung-verteiler" /> {T.verteiler.ausAnmeldung}</label>
+        <Hilfe text={T.verteiler.hilfe} />
+      </div>
       <div class="fang" aria-hidden="true"><label for="mw">Website</label><input id="mw" bind:value={website} tabindex="-1" autocomplete="off" /></div>
       {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
       <button type="submit" class="breit" disabled={sendet || !vollstaendig} data-testid="meldung-senden">{T.meldung.senden}</button>

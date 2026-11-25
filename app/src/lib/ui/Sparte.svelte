@@ -8,6 +8,7 @@
   import { aktiveSparte, meineSparten, setzeAktiveSparte, spartenName } from '../sparte.svelte';
   import Hilfe from './Hilfe.svelte';
   import PasswortFeld from './PasswortFeld.svelte';
+  import SparteVerteiler from './SparteVerteiler.svelte';
 
   /**
    * #/sparte[/<id>] (ab 0.17): Verein und Sparte, Mitglieder (Spartenleitung, Turnierleitungen mit Recht
@@ -348,6 +349,10 @@
         <button type="submit" class="zweit">{T.sparte.ausschussAnlegen}</button>
       </form>
     </section>
+
+    {#if sitzung && app.server.art === 'bereit' && app.server.info.nachrichten}
+      <SparteVerteiler sparte={daten.sparte.id} token={sitzung.token} frei={daten.sparte.anmeldung !== 'gesperrt'} />
+    {/if}
 
     <details class="karte" data-testid="veranstaltungen">
       <summary>{T.sparte.veranstaltungen}</summary>

@@ -36,6 +36,11 @@ jobs:
       SETUP_CODE: ${{ secrets.SETUP_CODE }}
       ADMIN_MAIL: ${{ secrets.ADMIN_MAIL }}          # Info-Mails (neue Konten, Rückmeldungen); Antworten auf System-Mails
       MAIL_ABSENDER: ${{ vars.BETREIBER_MAIL }}      # Postfach der eigenen Domain, z. B. tt-turnier@saschaurban.de
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}            # ab 0.18 optional: Versand über SMTP, z. B. smtp.strato.de (leer = PHP-mail())
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}            # 465 (SSL) oder 587 (STARTTLS); leer = 465
+      SMTP_USER: ${{ secrets.SMTP_USER }}            # meist die Adresse des Postfachs (= BETREIBER_MAIL)
+      SMTP_PASSWORT: ${{ secrets.SMTP_PASSWORT }}
+      MAIL_JE_MINUTE: ${{ vars.MAIL_JE_MINUTE }}     # optional: Drosselung der Warteschlange (Standard 20)
       APP_URL: ${{ vars.WEBSPACE_URL }}              # Adresse der App, z. B. https://saschaurban.de/tt-turnier
       VITE_BETREIBER_NAME: ${{ vars.BETREIBER_NAME }}
       VITE_BETREIBER_ANSCHRIFT: ${{ vars.BETREIBER_ANSCHRIFT }}
@@ -96,6 +101,13 @@ jobs:
               "mail" => [
                 "absender" => getenv("MAIL_ABSENDER") ?: "",
                 "admin" => getenv("ADMIN_MAIL") ?: "",
+                "je_minute" => (int)(getenv("MAIL_JE_MINUTE") ?: 20),
+                "smtp" => getenv("SMTP_HOST") ? [
+                  "host" => getenv("SMTP_HOST"),
+                  "port" => (int)(getenv("SMTP_PORT") ?: 465),
+                  "user" => getenv("SMTP_USER") ?: (getenv("MAIL_ABSENDER") ?: ""),
+                  "pass" => getenv("SMTP_PASSWORT") ?: "",
+                ] : [],
               ],
             ];
             file_put_contents("paket/config.php", "<?php\nreturn " . var_export($c, true) . ";\n");

@@ -99,6 +99,7 @@ public final class KernTest {
         etappe9();
         etappe10();
         etappe11();
+        paket18();
         http();
         String online = System.getenv("TT_ONLINE");
         if (online != null && !online.isEmpty()) zusammenspiel(online);
@@ -480,7 +481,7 @@ public final class KernTest {
         z.setzePort(8080);
         String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
         A a = rufe(z, "GET", "info", null, null);
-        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.17.0".equals(a.g("version")), "info: Aufgaben ja, Online-Anmeldung nein");
+        pruefe(Boolean.TRUE.equals(a.g("aufgaben")) && Boolean.FALSE.equals(a.g("anmeldung")) && "0.18.0".equals(a.g("version")) && Boolean.TRUE.equals(a.g("nachrichten")), "info: Aufgaben ja, Online-Anmeldung nein, Posteingang ja");
         a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Kassencup", "datum", "2027-02-01"), konto);
         String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
         String leit = a.t("token");
@@ -720,4 +721,50 @@ public final class KernTest {
         op = o.rufe(basis, "pool", null, null, vk);
         pruefe(Json.alsListe(op.get("spieler")).size() == 1, "Löschen auf der Zentrale wirkt online");
     }
+    static void paket18() throws Exception {
+        System.out.println("Paket 0.18: Posteingang und Rundmail auf der Zentrale");
+        Path ordner = neuerOrdner();
+        Zentrale z = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
+        z.setzePort(8080);
+        String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
+        A a = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Posteingang-Cup"), konto);
+        String tid = (String) Json.alsObjekt(a.g("turnier")).get("id");
+        String leit = a.t("token");
+        a = rufe(z, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(
+            Json.obj("rolle", "spieler", "bezug", "sp1", "name", "Anna"), Json.obj("rolle", "spieler", "bezug", "sp2", "name", "Ben"),
+            Json.obj("rolle", "helfer", "bezug", "h1", "name", "Hilde"))), leit);
+        Map<String, String> codes = new LinkedHashMap<>();
+        for (Object o : a.l("codes")) codes.put((String) Json.alsObjekt(o).get("bezug"), (String) Json.alsObjekt(o).get("code"));
+        String anna = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("sp1")), null).t("token");
+        String ben = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("sp2")), null).t("token");
+        String hilde = rufe(z, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("h1")), null).t("token");
+        pruefe(rufe(z, "GET", "nachrichten", null, null, q("turnier", tid), false).s == 401, "Posteingang ohne Kennung abgewiesen");
+        pruefe(rufe(z, "POST", "rundmail", Json.obj("turnier", tid, "betreff", "Hallo", "text", "x", "spieler", liste("sp1")), anna).s == 403, "Rundmail nur Leitung");
+        pruefe(rufe(z, "POST", "rundmail", Json.obj("turnier", tid, "betreff", "Hallo", "text", "x", "spieler", liste("../x")), leit).s == 400, "ungültige Spieler-ID abgewiesen");
+        a = rufe(z, "POST", "rundmail", Json.obj("turnier", tid, "betreff", "Pause", "text", "Zehn Minuten\nPause", "spieler", liste("sp1"), "helfer", true, "mail", true), leit);
+        pruefe(a.s == 200 && zahlAus(a.g("postfach")) == 2 && zahlAus(a.g("mails")) == 0, "Rundmail: Posteingang für Anna und Hilde, keine Mails auf der Zentrale");
+        a = rufe(z, "GET", "nachrichten", null, anna, q("turnier", tid), false);
+        Map<String, Object> n = Json.alsObjekt(a.l("nachrichten").get(0));
+        pruefe(a.s == 200 && zahlAus(a.g("ungelesen")) == 1 && "Pause".equals(n.get("titel")) && "Zehn Minuten\nPause".equals(n.get("text")), "Anna sieht die Nachricht");
+        pruefe(zahlAus(rufe(z, "GET", "nachrichten", null, ben, q("turnier", tid), false).g("ungelesen")) == 0, "Ben bekommt nichts");
+        pruefe(zahlAus(rufe(z, "GET", "nachrichten", null, hilde, q("turnier", tid), false).g("ungelesen")) == 1, "Hilde bekommt die Nachricht");
+        rufe(z, "POST", "nachrichten.gelesen", Json.obj("turnier", tid, "bis", n.get("id")), anna);
+        pruefe(zahlAus(rufe(z, "GET", "nachrichten", null, anna, q("turnier", tid), false).g("ungelesen")) == 0, "gelesen markiert");
+        pruefe(zahlAus(rufe(z, "GET", "nachrichten", null, hilde, q("turnier", tid), false).g("ungelesen")) == 1, "fremde bleiben ungelesen");
+        a = rufe(z, "GET", "nachrichten", null, leit, q("turnier", tid), false);
+        pruefe(Boolean.TRUE.equals(a.g("gesendet")) && ((String) Json.alsObjekt(a.l("nachrichten").get(0)).get("text")).contains("Posteingang: 2"), "Leitung sieht „Gesendet“");
+        // nach Neustart noch da
+        Zentrale z2 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
+        String hilde2 = rufe(z2, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", codes.get("h1")), null).t("token");
+        pruefe(zahlAus(rufe(z2, "GET", "nachrichten", null, hilde2, q("turnier", tid), false).g("ungelesen")) == 1, "Posteingang übersteht einen Neustart");
+        rufe(z2, "POST", "code.entfernen", Json.obj("turnier", tid, "rolle", "helfer", "bezug", "h1"), rufe(z2, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token"));
+        Zentrale z3 = new Zentrale(new Speicher(ordner), new PlattformJvm(null), new Online(2000), () -> uhr);
+        String k3 = rufe(z3, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
+        a = rufe(z3, "POST", "codes.anlegen", Json.obj("turnier", tid, "eintraege", liste(Json.obj("rolle", "helfer", "bezug", "h1", "name", "Hilde"))), k3);
+        String neu = null;
+        for (Object o : a.l("codes")) if ("h1".equals(Json.alsObjekt(o).get("bezug"))) neu = (String) Json.alsObjekt(o).get("code");
+        String hilde3 = rufe(z3, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", neu), null).t("token");
+        pruefe(zahlAus(rufe(z3, "GET", "nachrichten", null, hilde3, q("turnier", tid), false).g("ungelesen")) == 0, "Kennung entfernt: Posteingang gelöscht");
+    }
+
 }

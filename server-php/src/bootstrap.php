@@ -9,6 +9,7 @@ require_once __DIR__ . '/Mailer.php';
 require_once __DIR__ . '/Api.php';
 require_once __DIR__ . '/Anmeldung.php';
 require_once __DIR__ . '/Sparten.php';
+require_once __DIR__ . '/Nachrichten.php';
 
 /**
  * Lädt die Konfiguration. Reihenfolge:
@@ -37,6 +38,12 @@ function mailer(array $cfg): Mailer
     if (!empty($m['datei'])) {
         return new DateiMailer((string)$m['datei'], (string)($m['absender'] ?? 'test@example.org'));
     }
+    $smtp = $m['smtp'] ?? [];
+    if (!empty($m['absender']) && is_array($smtp) && !empty($smtp['host'])) {
+        $port = (int)($smtp['port'] ?? 465) ?: 465;
+        $sicherheit = in_array($smtp['sicherheit'] ?? '', ['ssl', 'starttls', 'keine'], true) ? $smtp['sicherheit'] : ($port === 587 ? 'starttls' : 'ssl');
+        return new SmtpMailer((string)$smtp['host'], $port, (string)($smtp['user'] ?? ''), (string)($smtp['pass'] ?? ''), (string)$m['absender'], $sicherheit);
+    }
     if (!empty($m['absender'])) {
         return new PhpMailer((string)$m['absender']);
     }
@@ -45,6 +52,7 @@ function mailer(array $cfg): Mailer
 
 function ausfuehren(): void
 {
+    $api = null;
     try {
         $cfg = konfiguration();
         $api = new Api(Datenbank::verbinden($cfg['db']), $cfg, null, mailer($cfg));
@@ -56,4 +64,14 @@ function ausfuehren(): void
         $antwort = new Antwort(500, ['fehler' => 'serverfehler', 'meldung' => 'Keine Verbindung zur Datenbank.']);
     }
     $antwort->senden();
+    // Ab 0.18: gedrosselte Mail-Warteschlange nach der Antwort abarbeiten (ohne Cronjob). Mit FastCGI wartet der
+    // Browser nicht darauf; sonst nur wenige Mails, damit die Anfrage nicht spürbar länger dauert.
+    if ($api !== null) {
+        $frei = function_exists('fastcgi_finish_request') && @fastcgi_finish_request();
+        try {
+            $api->nachrichten->abarbeiten($frei ? 25 : 3, $frei ? 20.0 : 4.0);
+        } catch (\Throwable $t) {
+            error_log('tt-turnier Warteschlange: ' . $t);
+        }
+    }
 }

@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  * Übernahme und Rückgabe von Online-Turnieren, Sicherungen über den Online-Server.
  */
 public final class Zentrale implements HttpServer.Bearbeiter {
-    public static final String VERSION = "0.17.0";
+    public static final String VERSION = "0.18.0";
     /** Platzhalter für Namen entfernter Spieler (wie PHP Api::ENTFERNT_NAME) */
     static final String ENTFERNT_NAME = "Entfernt";
     public static final int PROTOKOLL = 1;
@@ -318,6 +318,9 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             case "POST turnier.uebersicht": return uebersichtSetzen(a);
             case "GET events": return abholen(a);
             case "POST events": return senden(a);
+            case "GET nachrichten": return postfach(a);
+            case "POST nachrichten.gelesen": return gelesen(a);
+            case "POST rundmail": return rundmail(a);
 
             case "POST login":
                 throw new ApiFehler("nicht_eingerichtet", "Auf der Zentrale meldet sich niemand mit E-Mail an: Turniere legt man am Gerät der Zentrale an, "
@@ -722,6 +725,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             "kennungen", true,
             "aufgaben", true,
             "anmeldung", false,
+            "nachrichten", true,
             "zentrale", Json.obj("version", VERSION, "adresse", adresse, "online", verbunden()));
     }
 
@@ -1695,6 +1699,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             t.codes.removeIf(c -> z[0].equals(c.get("rolle")) && z[1].equals(c.get("bezug")));
             speicher.codesSpeichern(t);
             sitzungenEntfernen(t.id, z[0], z[1]);
+            if (t.nachrichten.removeIf(n -> z[0].equals(n.get("rolle")) && z[1].equals(n.get("bezug")))) speicher.nachrichtenSpeichern(t);
             return Json.obj("ok", true);
         }
     }
@@ -2370,4 +2375,116 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     public synchronized Iterator<String> turnierIds() {
         return new ArrayList<>(turniere.keySet()).iterator();
     }
+    /* ======================================================================
+     * Posteingang je Kennung (ab 0.18; Mails verschickt nur der Online-Server)
+     * ==================================================================== */
+
+    private static final int MAX_NACHRICHTEN = 5000;
+    private static final int MAX_POSTFACH = 200;
+    private static final Pattern P_ID = Pattern.compile("^[a-z0-9]{1,16}$");
+
+    /** Empfänger der Sitzung: {rolle, bezug} einer Kennung oder {"gesendet", ""} für die Leitung am Gerät */
+    private String[] empfaengerDerSitzung(Anf a, Speicher.Turnier t) {
+        Map<String, Object> s = sitzung(a);
+        if (s == null) throw new ApiFehler("nicht_angemeldet", "Der Posteingang gehört zu einer Kennung. Bitte mit deiner Kennung anmelden.");
+        Object r = s.get("rolle");
+        if (!istKonto(s) && t.id.equals(s.get("turnier")) && s.get("bezug") instanceof String
+            && ("spieler".equals(r) || "helfer".equals(r) || "leitung".equals(r))) {
+            return new String[] {(String) r, (String) s.get("bezug")};
+        }
+        if (leitungsRecht(s, t)) return new String[] {"gesendet", ""};
+        throw new ApiFehler("keine_berechtigung", "Kein Posteingang für dieses Turnier.");
+    }
+
+    private Map<String, Object> postfach(Anf a) {
+        Speicher.Turnier t = turnierLaden(a.q("turnier"), a);
+        String[] e = empfaengerDerSitzung(a, t);
+        List<Object> liste = new ArrayList<>();
+        long ungelesen = 0;
+        synchronized (this) {
+            for (int i = t.nachrichten.size() - 1; i >= 0 && liste.size() < MAX_POSTFACH; i--) {
+                Map<String, Object> n = t.nachrichten.get(i);
+                if (!e[0].equals(n.get("rolle")) || !e[1].equals(n.get("bezug"))) continue;
+                boolean gelesen = n.get("gelesen") != null;
+                if (!gelesen) ungelesen++;
+                liste.add(Json.obj("id", n.get("id"), "art", n.get("art"), "titel", n.get("titel"), "text", n.get("text"),
+                    "von", n.get("von"), "zeit", iso(zahl(n.get("zeit"), 0)), "gelesen", gelesen));
+            }
+        }
+        return Json.obj("nachrichten", liste, "ungelesen", ungelesen, "gesendet", "gesendet".equals(e[0]), "wartend", 0L);
+    }
+
+    private Map<String, Object> gelesen(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
+        String[] e = empfaengerDerSitzung(a, t);
+        long bis = zahl(a.rumpf.get("bis"), 0);
+        if (bis < 1) throw new ApiFehler("ungueltig", "Feld „bis“ fehlt.");
+        synchronized (this) {
+            boolean geaendert = false;
+            for (Map<String, Object> n : t.nachrichten) {
+                if (e[0].equals(n.get("rolle")) && e[1].equals(n.get("bezug")) && zahl(n.get("id"), 0) <= bis && n.get("gelesen") == null) {
+                    n.put("gelesen", jetzt());
+                    geaendert = true;
+                }
+            }
+            if (geaendert) speicher.nachrichtenSpeichern(t);
+        }
+        return Json.obj("ok", true);
+    }
+
+    private void zustellen(Speicher.Turnier t, String rolle, String bezug, String art, String titel, String text, String von) {
+        long id = t.nachrichten.isEmpty() ? 1 : zahl(t.nachrichten.get(t.nachrichten.size() - 1).get("id"), 0) + 1;
+        t.nachrichten.add(Json.obj("id", id, "rolle", rolle, "bezug", bezug, "art", art, "titel", kuerzen(titel, 160), "text", text,
+            "von", kuerzen(von, 120), "zeit", jetzt(), "gelesen", null));
+        while (t.nachrichten.size() > MAX_NACHRICHTEN) t.nachrichten.remove(0);
+    }
+
+    private static List<String> idListe(Object roh, String feld) {
+        if (roh == null) return new ArrayList<>();
+        List<Object> l = Json.alsListe(roh);
+        if (l == null || l.size() > 2000) throw new ApiFehler("ungueltig", "Feld „" + feld + "“ muss eine Liste sein (höchstens 2000).");
+        Set<String> aus = new LinkedHashSet<>();
+        for (Object o : l) {
+            if (!(o instanceof String) || !P_ID.matcher((String) o).matches()) throw new ApiFehler("ungueltig", "Ungültige Kennung in „" + feld + "“.");
+            aus.add((String) o);
+        }
+        return new ArrayList<>(aus);
+    }
+
+    /** POST rundmail – wie beim PHP-Server, aber nur in den Posteingang (die Zentrale kennt keine Mail-Adressen) */
+    private Map<String, Object> rundmail(Anf a) {
+        Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
+        leitungPruefen(a, t);
+        String betreff = text(a, "betreff", 2, 150).replaceAll("[\\x00-\\x1F\\x7F]", " ");
+        String inhalt = text(a, "text", 2, 5000).replaceAll("[\\x00-\\x09\\x0B-\\x1F\\x7F]", "");
+        String gruppe = Json.alsText(a.rumpf.get("gruppe"));
+        gruppe = gruppe == null ? "" : kuerzen(gruppe.replaceAll("[\\x00-\\x1F\\x7F]", "").trim(), 120);
+        List<String> spieler = idListe(a.rumpf.get("spieler"), "spieler");
+        idListe(a.rumpf.get("warteliste"), "warteliste");
+        boolean helfer = Boolean.TRUE.equals(a.rumpf.get("helfer"));
+        boolean leitung = Boolean.TRUE.equals(a.rumpf.get("leitung"));
+        if (spieler.isEmpty() && !helfer && !leitung) throw new ApiFehler("ungueltig", "Bitte mindestens eine Empfängergruppe wählen.");
+        begrenzen("rundmail|" + t.id, 10, 86400, "Heute wurden für dieses Turnier schon viele Nachrichten verschickt. Bitte morgen wieder.");
+        Map<String, Object> s = sitzung(a);
+        long n = 0;
+        synchronized (this) {
+            Set<String> sp = new HashSet<>(spieler);
+            for (Map<String, Object> c : t.codes) {
+                if (wahr(c.get("gesperrt")) || !(c.get("bezug") instanceof String)) continue;
+                String r = (String) c.get("rolle");
+                String b = (String) c.get("bezug");
+                boolean an = ("spieler".equals(r) && sp.contains(b)) || ("helfer".equals(r) && helfer)
+                    || ("leitung".equals(r) && leitung && !(s != null && !istKonto(s) && b.equals(s.get("bezug"))));
+                if (an) {
+                    zustellen(t, r, b, "rundmail", betreff, inhalt, "Turnierleitung");
+                    n++;
+                }
+            }
+            zustellen(t, "gesendet", "", "rundmail", betreff, (gruppe.isEmpty() ? "" : "An: " + gruppe + "\n") + "Posteingang: " + n + " · E-Mails: 0\n\n" + inhalt,
+                s != null && s.get("name") instanceof String ? (String) s.get("name") : "Turnierleitung");
+            speicher.nachrichtenSpeichern(t);
+        }
+        return Json.obj("postfach", n, "mails", 0L);
+    }
+
 }
