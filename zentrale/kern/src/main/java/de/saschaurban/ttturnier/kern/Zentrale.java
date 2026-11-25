@@ -5,6 +5,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.Objects;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -1355,6 +1359,17 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             List<Map<String, Object>> neu = new ArrayList<>();
             Map<String, Long> inDiesemAufruf = new HashMap<>();
             long seq = t.hoechsteSeq();
+            LocalDate ende = null;
+            for (Map<String, Object> eintrag : t.ereignisse) {
+                Map<String, Object> daten = Json.alsObjekt(eintrag.get("daten"));
+                Map<String, Object> verfasser = Json.alsObjekt(eintrag.get("autor"));
+                if ("turnier.daten".equals(eintrag.get("art")) && verfasser != null && "leitung".equals(verfasser.get("rolle"))
+                    && daten != null && daten.containsKey("enddatum")) {
+                    LocalDate datum = enddatumLesen(daten.get("enddatum"), Objects.toString(t.kopf.get("datum"), ""));
+                    if (datum != null || daten.get("enddatum") == null) ende = datum;
+                }
+            }
+            LocalDate eingang = berlinDatum(Instant.ofEpochSecond(jetzt()));
             for (Map<String, Object> e : geprueft) {
                 String id = (String) e.get("id");
                 Integer pos = t.index.get(id);
@@ -1368,6 +1383,24 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                     continue;
                 }
                 Map<String, Object> z = new LinkedHashMap<>(e);
+                String art = (String) e.get("art");
+                Map<String, Object> daten = Json.alsObjekt(e.get("daten"));
+                String meldung = null;
+                if ("turnier.daten".equals(art) && daten.containsKey("enddatum")) {
+                    LocalDate datum = enddatumLesen(daten.get("enddatum"), Objects.toString(t.kopf.get("datum"), ""));
+                    if (datum == null && daten.get("enddatum") != null) {
+                        meldung = "Das Enddatum muss gültig sein und darf nicht vor dem Startdatum liegen.";
+                    } else ende = datum;
+                }
+                if (ende != null && eingang.isAfter(ende) && Arrays.asList("spiel.ergebnis", "spiel.aufgerufen", "phase.gestartet").contains(art)) {
+                    if ("spiel.ergebnis".equals(art) && rechtzeitigErfasst((String) e.get("zeit"), ende)) {
+                        z.put("art", "spiel.ergebnis_spaet");
+                    } else meldung = "Das Turnier ist beendet. Für neue Spiele bitte das Enddatum verlängern.";
+                }
+                if (meldung != null) {
+                    abgelehnt.add(Json.obj("id", id, "fehler", "ungueltig", "meldung", meldung));
+                    continue;
+                }
                 z.put("seq", ++seq);
                 z.put("empfangen", iso(jetzt()));
                 z.put("autor", autor);
@@ -1383,6 +1416,28 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             Map<String, Object> aus = Json.obj("angenommen", angenommen, "hoechsteSeq", t.hoechsteSeq());
             if (!abgelehnt.isEmpty()) aus.put("abgelehnt", abgelehnt);
             return aus;
+        }
+    }
+
+    private static LocalDate berlinDatum(Instant zeit) {
+        return zeit.atZone(ZoneId.of("Europe/Berlin")).toLocalDate();
+    }
+
+    private static boolean rechtzeitigErfasst(String zeit, LocalDate ende) {
+        try {
+            return !berlinDatum(Instant.parse(zeit)).isAfter(ende);
+        } catch (DateTimeParseException e) {
+            return false;
+        }
+    }
+
+    private static LocalDate enddatumLesen(Object wert, String startdatum) {
+        if (!(wert instanceof String) || !((String) wert).matches("[0-9]{4}-[0-9]{2}-[0-9]{2}")) return null;
+        try {
+            LocalDate datum = LocalDate.parse((String) wert);
+            return datum.getYear() > 0 && datum.toString().compareTo(startdatum) >= 0 ? datum : null;
+        } catch (DateTimeParseException e) {
+            return null;
         }
     }
 

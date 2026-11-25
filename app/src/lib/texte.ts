@@ -1,3 +1,5 @@
+import type { Autor } from '@shared/protokoll';
+
 /**
  * Alle Texte der Oberfläche an einer Stelle. Weitere Sprachen: eine zweite
  * Datei mit derselben Struktur anlegen und hier auswählen.
@@ -247,7 +249,7 @@ export const T = {
       'Du bekommst eine persönliche Leitungskennung; weitere Turnierleiter bekommen eigene.',
       'Helfer bekommen eine Helferkennung mit Aufgaben: Ergebnisse, Spielaufruf, Kasse, Oberschiedsrichter.',
       'Jeder Spieler kann eine eigene Spielerkennung (QR-Zettel) bekommen und trägt dann seine Ergebnisse selbst ein.',
-      'Zuschauer brauchen nur die 8-stellige Turnierkennung.',
+      'Zuschauer brauchen nur die Turnierkennung.',
     ] as string[],
     zugaengeLokal: 'Auf diesem Gerät trägt nur die Turnierleitung ein – Kennungen gibt es bei Turnieren auf mehreren Geräten.',
     danach: 'Danach weiter mit',
@@ -1014,7 +1016,7 @@ export const T = {
     satz: (n: number) => `Satz ${n}`,
     satzGewinner: 'Satz gewonnen von',
     verliererPunkte: 'Punkte des Verlierers',
-    verliererHilfe: 'Nur die Punkte des Verlierers eingeben: 9 wird 11:9, 10 wird 12:10, 14 wird 16:14.',
+    verliererHilfe: 'Tippe auf den Satzgewinner. Gib anschließend nur die Ballpunkte des Verlierers ein. Die Gewinnerpunkte werden automatisch berechnet.',
     satzEntfernen: 'Satz entfernen',
     art: {
       normal: 'Gespielt',
@@ -1035,11 +1037,15 @@ export const T = {
     zuruecksetzen: 'Ergebnis löschen',
     zuruecksetzenFrage: 'Ergebnis löschen?',
     woHinweis: 'Nach WO D 7.9 scheidet der Spieler damit aus der Gruppe aus; seine Gruppenspiele werden gestrichen.',
-    von: (name: string, zeit: string) => `eingetragen von ${name}, ${zeit}`,
+    von: (name: string | undefined, zeit: string) => name?.trim() ? `eingetragen von ${name}, ${zeit}` : zeit,
     angefochtenVon: (name: string) => `angefochten von ${name}`,
     gespeichert: 'Gespeichert.',
     nurEigene: 'Du kannst nur deine eigenen Spiele eintragen.',
-    leitungHat: 'Das Ergebnis hat die Turnierleitung eingetragen. Stimmt etwas nicht, sprich bitte die Leitung an.',
+    amtlicherEintrag: (autor: Autor | null) => {
+      if (autor?.rolle === 'helfer' || (autor?.rolle === 'spieler' && autor.helfer)) return 'Das Ergebnis wurde mit Helferrechten eingetragen.';
+      if (autor && ['leitung', 'veranstalter', 'admin'].includes(autor.rolle)) return 'Das Ergebnis hat die Turnierleitung eingetragen.';
+      return 'Das Ergebnis wurde amtlich eingetragen.';
+    },
     du: 'du',
     festText: (n: number) => `Es werden genau ${n} Sätze gespielt – Unentschieden ist möglich.`,
     unentschieden: 'Unentschieden',
@@ -1386,6 +1392,8 @@ export const T = {
     'spiel.bestaetigt': 'Ergebnis bestätigt',
     'spiel.angefochten': 'Ergebnis angefochten',
     'spiel.entschieden': 'Leitung hat entschieden',
+    'spiel.ergebnis_spaet': 'Offline-Meldung nach Turnierende eingegangen',
+    'spiel.spaet_geprueft': 'Verspätete Meldung geprüft',
     'spiel.zurueckgesetzt': 'Ergebnis gelöscht',
     'spiel.aufgerufen': 'Spiel aufgerufen',
     'spiel.aufruf_zurueck': 'Aufruf zurückgenommen',

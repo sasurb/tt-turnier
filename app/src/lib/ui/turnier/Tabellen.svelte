@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { wertungVorlaeufig } from '../../engine/modell';
   import { alsEineAktion } from '../../aktion';
   import { ART } from '@shared/protokoll';
   import { T } from '../../texte';
@@ -49,7 +50,7 @@
   {/if}
 
   <section class="karte">
-    <h2>{k.einst.name} <span class="marke">{T.konk.status[istRundenModus(k.einst.modus) && k.status === 'gruppen' ? 'runden' : k.status]}</span></h2>
+    <h2>{k.einst.name}{#if wertungVorlaeufig(k)} <span class="marke">Wertung vorläufig</span>{/if} <span class="marke">{T.konk.status[istRundenModus(k.einst.modus) && k.status === 'gruppen' ? 'runden' : k.status]}</span></h2>
     {#if !zeige.tabellen && k.gruppen.length}
       <p class="meldung info" data-testid="verdeckt">{T.tab.verdeckt}</p>
     {/if}

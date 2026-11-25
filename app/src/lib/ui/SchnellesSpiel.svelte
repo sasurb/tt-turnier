@@ -16,6 +16,7 @@
   import Hilfe from './Hilfe.svelte';
 
   const MODI: Modus[] = ['jgj', 'ko', 'gruppen_ko', 'schweizer', 'kaiser'];
+  let nurTeilnehmer = $state(false);
   let modus = $state<Modus>('jgj');
   let bestOf = $state(3);
   let namenText = $state('');
@@ -23,7 +24,7 @@
   let laeuft = $state(false);
 
   const namen = $derived([...new Set(namenText.split(/\n|,|;/).map((x) => x.trim().replace(/\s+/g, ' ')).filter(Boolean))].slice(0, 64));
-  const minimum = $derived(modus === 'kaiser' ? 4 : 2);
+  const minimum = $derived(nurTeilnehmer ? 1 : modus === 'kaiser' ? 4 : 2);
 
   async function los(e: SubmitEvent) {
     e.preventDefault();
@@ -47,6 +48,10 @@
         ids.push(sid);
         await s.eintragen(ART.spielerAngelegt, { id: sid, vorname: teile[0]!.slice(0, 80), nachname: teile.slice(1).join(' ').slice(0, 80), verein: '' });
       }
+      if (nurTeilnehmer) {
+        gehe(`t/${id}/konkurrenzen`);
+        return;
+      }
       const kid = kurzId();
       await s.eintragen(ART.konkurrenzAngelegt, { id: kid, einst: { ...standardEinstellungen(), name: T.schnell.konkurrenz, modus, bestOf } });
       for (const sid of ids) await s.eintragen(ART.teilnehmerGemeldet, { konkurrenz: kid, id: sid });
@@ -67,6 +72,8 @@
 <h1>⚡ {T.schnell.titel}</h1>
 <p class="leise">{T.schnell.text}</p>
 <form class="karte" onsubmit={los} data-testid="schnell">
+  <label class="haken"><input type="checkbox" bind:checked={nurTeilnehmer} /> Nur Teilnehmer anlegen, Konkurrenzen später einrichten</label>
+  {#if !nurTeilnehmer}
   <div class="label-zeile"><label for="sm">{T.schnell.modus}</label><Hilfe text={T.schnell.modusHilfe} /></div>
   <select id="sm" bind:value={modus} data-testid="schnell-modus">
     {#each MODI as m (m)}<option value={m}>{T.konk.modi[m]}</option>{/each}
@@ -75,6 +82,7 @@
   <select id="sb" bind:value={bestOf}>
     {#each [1, 3, 5, 7] as b (b)}<option value={b}>{T.schnell.saetzeWahl(b)}</option>{/each}
   </select>
+  {/if}
   <div class="label-zeile"><label for="sn">{T.schnell.namen}</label><Hilfe text={T.schnell.namenHilfe} /></div>
   <textarea id="sn" bind:value={namenText} rows="8" placeholder={T.schnell.namenBeispiel} data-testid="schnell-namen"></textarea>
   <p class="leise" data-testid="schnell-anzahl">{T.schnell.anzahl(namen.length)}</p>

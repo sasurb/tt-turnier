@@ -41,7 +41,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await anmelden(page);
   await page.getByTestId('neues-turnier').click();
   await page.getByLabel('Name des Turniers').fill(`Herbstcup ${geraet}`);
-  await page.getByLabel('Datum').fill('2027-10-02');
+  await page.getByLabel('Startdatum', { exact: true }).fill('2027-10-02');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;

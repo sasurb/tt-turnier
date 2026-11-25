@@ -34,7 +34,7 @@ function neueApi(?TestMailer $mailer = null): Api
     $pdo = new PDO($dsn, getenv('TT_TEST_USER') ?: null, getenv('TT_TEST_PASS') ?: null);
     if (str_starts_with($dsn, 'mysql:')) {
         $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
-        foreach (['meta', 'konten', 'turniere', 'sitzungen', 'ereignisse', 'versuche', 'rueckstellungen', 'codes', 'pool', 'anmeldungen', 'vereine', 'sparten', 'mitglieder', 'turnier_zugaenge', 'einladungen', 'ausschuesse', 'ausschuss_mitglieder', 'ausschuss_nachrichten', 'veranstaltungen', 'spieler_pool', 'kennungen_gesperrt', 'sicherung_empfaenger', 'mail_warteschlange', 'nachrichten', 'verteiler'] as $t) {
+        foreach (['registrierlinks', 'meta', 'konten', 'turniere', 'sitzungen', 'ereignisse', 'versuche', 'rueckstellungen', 'codes', 'pool', 'anmeldungen', 'vereine', 'sparten', 'mitglieder', 'turnier_zugaenge', 'einladungen', 'ausschuesse', 'ausschuss_mitglieder', 'ausschuss_nachrichten', 'veranstaltungen', 'spieler_pool', 'kennungen_gesperrt', 'sicherung_empfaenger', 'mail_warteschlange', 'nachrichten', 'verteiler'] as $t) {
             $pdo->exec("DROP TABLE IF EXISTS $t");
         }
     }
@@ -44,10 +44,14 @@ function neueApi(?TestMailer $mailer = null): Api
         'app_url' => 'https://example.org/tt',
         'mail' => ['absender' => 'tt@example.org', 'admin' => 'betreiber@example.org'],
     ];
-    return new Api(new Datenbank($pdo), $config, function () use (&$zeit) {
+    $mailer ??= new TestMailer();
+    $api = new Api(new Datenbank($pdo), $config, function () use (&$zeit) {
         global $zeit;
         return $zeit;
-    }, $mailer ?? new TestMailer());
+    }, $mailer);
+    $GLOBALS['testMails'] ??= new WeakMap();
+    $GLOBALS['testMails'][$api] = $mailer;
+    return $api;
 }
 
 /** Letzte Mail an eine Adresse */
@@ -59,6 +63,13 @@ function mailAn(TestMailer $m, string $an): ?\TtTurnier\Mail
         }
     }
     return null;
+}
+
+function botAufgabe(Api $api, string $ip): array
+{
+    [, $a] = rufe($api, 'GET', 'registrieraufgabe', null, null, [], $ip);
+    for ($n = 0; !str_starts_with(hash('sha256', $a['aufgabe'] . ':' . $n), '000'); $n++) {}
+    return $a + ['nonce' => $n];
 }
 
 /** @return array{0:int,1:array<string,mixed>} */
@@ -77,6 +88,19 @@ function abgelehnt(int $s, ?array $d, string $fehler = 'keine_berechtigung'): bo
 {
     return $s === 200 && ($d['angenommen'] ?? null) === [] && count($d['abgelehnt'] ?? []) > 0
         && array_reduce($d['abgelehnt'], fn(bool $ok, array $x): bool => $ok && $x['fehler'] === $fehler, true);
+}
+
+function registrierungMitMail(Api $api, array $daten, ?string $token = null, array $query = [], string $ip = '10.0.0.1'): array
+{
+    $mailer = $GLOBALS['testMails'][$api];
+    [$s, $info] = rufe($api, 'POST', 'registrierlink', ['email' => $daten['email'], 'einladung' => $daten['einladung'] ?? ''] + botAufgabe($api, $ip), null, [], $ip);
+    foreach (array_reverse($mailer->mails) as $brief) {
+        if ($brief->an !== strtolower($daten['email']) || $brief->betreff !== 'E-Mail-Adresse bestätigen') continue;
+        preg_match('~#/aktivieren/([a-f0-9]{64})~', $brief->text, $link);
+        $daten['nachweis'] = $link[1];
+        break;
+    }
+    return rufe($api, 'POST', 'registrieren', $daten, $token, $query, $ip);
 }
 
 function ereignis(string $id, string $art = 'test.notiz', array|object $daten = ['text' => 'Hallo']): array
@@ -290,26 +314,35 @@ $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
 [$s, $d] = rufe($api, 'GET', 'info');
 pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.18.0' && $d['nachrichten'] === true && $d['sparten'] === true && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.1');
+$probe = ['name' => 'Probe', 'email' => 'probe@example.org', 'passwort' => 'probepass1', 'volljaehrig' => true, 'bedingungen' => true];
+[$s] = rufe($api, 'POST', 'registrieren', $probe, null, [], '10.11.0.1');
+pruefe($s === 400, 'F-019: ohne bestätigte Adresse kein Konto und keine Sitzung');
+[$s] = rufe($api, 'POST', 'registrierlink', ['email' => $probe['email']] + botAufgabe($api, '10.11.0.1'), null, [], '10.11.0.1');
+preg_match('~#/aktivieren/([a-f0-9]{64})~', mailAn($mailer, $probe['email'])->text, $treffer);
+[$s] = rufe($api, 'POST', 'registrierlink', ['email' => $probe['email']] + botAufgabe($api, '10.11.0.1'), null, [], '10.11.0.1');
+pruefe($s === 429, 'F-023: Neuversand innerhalb von 15 Minuten begrenzt');
+[$s] = rufe($api, 'POST', 'registrieren', array_merge($probe, ['email' => 'andere@example.org', 'nachweis' => $treffer[1]]), null, [], '10.11.0.1');
+pruefe($s === 400, 'F-018: Bestätigung ist an die Empfängeradresse gebunden');
+[$s, $d] = registrierungMitMail($api, ['name' => 'TSV Nord', 'email' => 'Nord@Example.org', 'passwort' => 'nordpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.1');
 pruefe($s === 200 && strlen($d['token']) === 64 && $d['konto']['rolle'] === 'veranstalter' && $d['konto']['email'] === 'nord@example.org', 'Registrierung legt Veranstalter an und meldet an');
 $nordTok = $d['token'];
 $w = mailAn($mailer, 'nord@example.org');
 pruefe($w !== null && str_contains($w->text, 'https://example.org/tt/') && $w->antwortAn === 'betreiber@example.org', 'Willkommensmail mit Link, Antwort an Betreiber');
 $i = mailAn($mailer, 'betreiber@example.org');
 pruefe($i !== null && str_contains($i->betreff, 'TSV Nord') && str_contains($i->text, 'nord@example.org'), 'Info-Mail an den Administrator');
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Doppelt', 'email' => 'nord@example.org', 'passwort' => 'nordpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.2');
-pruefe($s === 409, 'doppelte E-Mail bei Registrierung abgewiesen');
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Bot', 'email' => 'bot@example.org', 'passwort' => 'botpass12', 'website' => 'http://spam', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.3');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Doppelt', 'email' => 'nord@example.org', 'passwort' => 'nordpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.2');
+pruefe($s === 400 && $d['fehler'] === 'ungueltig', 'Verbrauchter Nachweis kann kein zweites Konto für dieselbe Adresse anlegen');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Bot', 'email' => 'bot@example.org', 'passwort' => 'botpass12', 'website' => 'http://spam', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.3');
 pruefe($s === 400, 'Fangfeld ausgefüllt: abgewiesen');
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Kurz', 'email' => 'kurz@example.org', 'passwort' => 'kurz', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.4');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Kurz', 'email' => 'kurz@example.org', 'passwort' => 'kurz', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.4');
 pruefe($s === 400, 'zu kurzes Passwort bei Registrierung');
 for ($n = 1; $n <= 5; $n++) {
-    [$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => "Massen {$n}", 'email' => "m{$n}@example.org", 'passwort' => 'massen123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.9.9');
+    [$s, $d] = registrierungMitMail($api, ['name' => "Massen {$n}", 'email' => "m{$n}@example.org", 'passwort' => 'massen123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.9.9');
 }
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Massen 6', 'email' => 'm6@example.org', 'passwort' => 'massen123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.9.9');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Massen 6', 'email' => 'm6@example.org', 'passwort' => 'massen123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.9.9');
 pruefe($s === 429, 'höchstens 5 neue Konten je Stunde und Anschluss');
 $zeit += 3601;
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Massen 6', 'email' => 'm6@example.org', 'passwort' => 'massen123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.9.9');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Massen 6', 'email' => 'm6@example.org', 'passwort' => 'massen123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.9.9');
 pruefe($s === 200, 'nach einer Stunde wieder möglich');
 
 echo "Etappe 2b: Passwort vergessen\n";
@@ -497,7 +530,7 @@ echo "Etappe 3: Spieler- und Helfer-Codes\n";
 $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Nord', 'email' => 'nord@example.org', 'passwort' => 'nordnord1', 'volljaehrig' => true, 'bedingungen' => true]);
+[, $d] = registrierungMitMail($api, ['name' => 'TTC Nord', 'email' => 'nord@example.org', 'passwort' => 'nordnord1', 'volljaehrig' => true, 'bedingungen' => true]);
 $vk = $d['token'];
 [, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Pokal', 'datum' => null], $vk);
 $tid = $d['turnier']['id'];
@@ -614,7 +647,7 @@ pruefe($s === 401, 'Konto-Einstellungen nur für Konten');
 $lid = $dl['turnier']['id'];
 [$s] = rufe($api, 'POST', 'turnier.loeschen', ['turnier' => $lid, 'passwort' => 'veranst123'], $tokSp);
 pruefe($s === 401, 'Turnier löschen: nicht mit Spielerkennung');
-[$sr, $fremd] = rufe($api, 'POST', 'registrieren', ['name' => 'Fremd', 'email' => 'fremd@example.org', 'passwort' => 'fremdfremd1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.77.0.1');
+[$sr, $fremd] = registrierungMitMail($api, ['name' => 'Fremd', 'email' => 'fremd@example.org', 'passwort' => 'fremdfremd1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.77.0.1');
 [$s, $dd] = rufe($api, 'POST', 'turnier.loeschen', ['turnier' => $lid, 'passwort' => 'fremdfremd1'], $fremd['token'] ?? null);
 pruefe($s === 403, 'Turnier löschen: nicht mit fremdem Konto');
 [$s] = rufe($api, 'POST', 'turnier.loeschen', ['turnier' => $lid, 'passwort' => 'falsch'], $vk);
@@ -646,7 +679,7 @@ pruefe(!isset($h['h2']['ttrGeschaetzt']) && !isset($h['h2']['appSpiele']) && !is
 [$s] = rufe($api, 'POST', 'pool.speichern', ['spieler' => [['id' => "h3\n", 'vorname' => 'X', 'nachname' => 'Y', 'verein' => '']]], $vk);
 pruefe($s === 400, 'Pool-ID mit Zeilenumbruch abgewiesen');
 rufe($api, 'POST', 'pool.loeschen', ['ids' => ['h1', 'h2']], $vk);
-[, $d2] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Süd', 'email' => 'sued@example.org', 'passwort' => 'suedsued1', 'volljaehrig' => true, 'bedingungen' => true]);
+[, $d2] = registrierungMitMail($api, ['name' => 'TTC Süd', 'email' => 'sued@example.org', 'passwort' => 'suedsued1', 'volljaehrig' => true, 'bedingungen' => true]);
 [, $d] = rufe($api, 'GET', 'pool', null, $d2['token']);
 pruefe($d['spieler'] === [], 'Pool ist je Konto getrennt');
 [$s] = rufe($api, 'POST', 'pool.speichern', ['spieler' => [['id' => 'p3', 'vorname' => '', 'nachname' => '', 'verein' => '']]], $vk);
@@ -669,9 +702,9 @@ echo "Etappe 4: Android-Zentrale (Übernahme, Rückgabe, Sicherung)\n";
 $mailer4 = new TestMailer();
 $api = neueApi($mailer4);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Zentral', 'email' => 'z@example.org', 'passwort' => 'zentral12', 'volljaehrig' => true, 'bedingungen' => true]);
+[, $d] = registrierungMitMail($api, ['name' => 'TTC Zentral', 'email' => 'z@example.org', 'passwort' => 'zentral12', 'volljaehrig' => true, 'bedingungen' => true]);
 $zk = $d['token'];
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Fremd', 'email' => 'f@example.org', 'passwort' => 'fremd1234', 'volljaehrig' => true, 'bedingungen' => true]);
+[, $d] = registrierungMitMail($api, ['name' => 'Fremd', 'email' => 'f@example.org', 'passwort' => 'fremd1234', 'volljaehrig' => true, 'bedingungen' => true]);
 $fk = $d['token'];
 [, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Hallenturnier', 'datum' => '2026-12-12'], $zk);
 $tid = $d['turnier']['id'];
@@ -777,7 +810,7 @@ pruefe($s === 401, 'Sicherung von der Zentrale nur mit Konto');
 echo "Etappe 7: Datenschutz beim Abholen (Zuschauer)\n";
 $api = neueApi(new TestMailer());
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Süd', 'email' => 'sued@example.org', 'passwort' => 'suedsued1', 'volljaehrig' => true, 'bedingungen' => true]);
+[, $d] = registrierungMitMail($api, ['name' => 'TTC Süd', 'email' => 'sued@example.org', 'passwort' => 'suedsued1', 'volljaehrig' => true, 'bedingungen' => true]);
 $vk = $d['token'];
 [, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Jugend', 'datum' => null], $vk);
 $tid = $d['turnier']['id'];
@@ -823,7 +856,7 @@ $zeit = 1_800_000_000; // 15.01.2027
 $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Süd', 'email' => 'sued@example.org', 'passwort' => 'suedpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.9.0.1');
+[, $d] = registrierungMitMail($api, ['name' => 'TTC Süd', 'email' => 'sued@example.org', 'passwort' => 'suedpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.9.0.1');
 $konto = $d['token'];
 [, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Frühjahrsturnier', 'datum' => '2027-02-20'], $konto);
 $tid = $d['turnier']['id'];
@@ -1142,7 +1175,7 @@ $zeit = 1_800_000_000;
 $mailer = new TestMailer();
 $api = neueApi($mailer);
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'TTC Nord', 'email' => 'nord@example.org', 'passwort' => 'nordnord1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.10.0.1');
+[, $d] = registrierungMitMail($api, ['name' => 'TTC Nord', 'email' => 'nord@example.org', 'passwort' => 'nordnord1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.10.0.1');
 $konto = $d['token'];
 [, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Herbstturnier', 'datum' => '2027-03-01'], $konto);
 $tid = $d['turnier']['id'];
@@ -1233,7 +1266,7 @@ $pdo->exec("INSERT INTO konten (name, email, passwort_hash, rolle, gesperrt, ang
 $pdo->exec("INSERT INTO turniere (id, konto_id, name, datum, leitung_hash, angelegt) VALUES ('altturnier', 1, 'Alt', NULL, '" . password_hash('altesPasswort', PASSWORD_DEFAULT) . "', 1000)");
 $apiAlt = new Api($alt, ['setup_code' => 'einrichtung-123456']);
 [$s, $d] = rufe($apiAlt, 'POST', 'login', ['email' => 'alt@example.org', 'passwort' => 'altpass12']);
-pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '10', 'Schema 1 → 10 angehoben, Anmeldung geht');
+pruefe($s === 200 && $pdo->query("SELECT wert FROM meta WHERE schluessel = 'schema'")->fetchColumn() === '11', 'Schema 1 → 11 angehoben, Anmeldung geht');
 $altTok = $d['token'];
 [$s, $d] = rufe($apiAlt, 'GET', 'turnier', null, $altTok, ['id' => 'altturnier']);
 pruefe($s === 200 && $d['turnier']['rechte'] === 'leitung' && $d['turnier']['id'] === 'ALTTURNIER', 'alte Turnierkennung (10 Zeichen) bleibt erreichbar (ab 0.17 ohne Groß/klein)');
@@ -1336,11 +1369,11 @@ $einlLink = function () use ($mailer17): array {
     return [];
 };
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Sara Sparte', 'email' => 'sara@example.org', 'passwort' => 'sarasara1', 'bedingungen' => true], null, [], '10.17.0.1');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Sara Sparte', 'email' => 'sara@example.org', 'passwort' => 'sarasara1', 'bedingungen' => true], null, [], '10.17.0.1');
 pruefe($s === 400 && str_contains($d['meldung'], '18'), 'Registrieren ohne „mindestens 18“ abgewiesen');
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Sara Sparte', 'email' => 'sara@example.org', 'passwort' => 'sarasara1', 'volljaehrig' => true], null, [], '10.17.0.1');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Sara Sparte', 'email' => 'sara@example.org', 'passwort' => 'sarasara1', 'volljaehrig' => true], null, [], '10.17.0.1');
 pruefe($s === 400 && str_contains($d['meldung'], 'Nutzungsbedingungen'), 'Registrieren ohne Zustimmung abgewiesen');
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Sara Sparte', 'email' => 'sara@example.org', 'passwort' => 'sarasara1', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'TSV Musterdorf', 'sparte' => 'Tischtennis'], null, [], '10.17.0.1');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Sara Sparte', 'email' => 'sara@example.org', 'passwort' => 'sarasara1', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'TSV Musterdorf', 'sparte' => 'Tischtennis'], null, [], '10.17.0.1');
 pruefe($s === 200 && $d['konto']['sparten'][0]['verein'] === 'TSV Musterdorf' && $d['konto']['sparten'][0]['rolle'] === 'spartenleitung' && $d['konto']['bedingungen'] === true, 'Registrieren legt Verein und Sparte an (Spartenleitung)');
 $sara = $d['token'];
 $sid = $d['konto']['sparten'][0]['id'];
@@ -1378,9 +1411,9 @@ pruefe(str_contains((string)mailAn($mailer17, 'tom@example.org')?->text, $tomKey
 pruefe($s === 200 && $d['einladung']['verein'] === 'TSV Musterdorf' && $d['einladung']['rolle'] === 'turnierleitung' && $d['einladung']['email'] === 'to…@example.org', 'Einladung lesbar, Adresse gekürzt');
 [$s] = rufe($api, 'POST', 'einladung.info', ['schluessel' => str_repeat('c', 64)]);
 pruefe($s === 410, 'unbekannte Einladung');
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Tom', 'email' => 'anders@example.org', 'passwort' => 'tomtom123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $tomKey], null, [], '10.17.0.2');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Tom', 'email' => 'anders@example.org', 'passwort' => 'tomtom123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $tomKey], null, [], '10.17.0.2');
 pruefe($s === 400, 'Registrieren mit Einladung nur mit der eingeladenen Adresse');
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Tom Turnier', 'email' => 'tom@example.org', 'passwort' => 'tomtom123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $tomKey], null, [], '10.17.0.2');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Tom Turnier', 'email' => 'tom@example.org', 'passwort' => 'tomtom123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $tomKey], null, [], '10.17.0.2');
 pruefe($s === 200 && count($d['konto']['sparten']) === 1 && $d['konto']['sparten'][0]['id'] === $sid && $d['konto']['sparten'][0]['rolle'] === 'turnierleitung' && $d['konto']['sparten'][0]['anlegen'] === false, 'Mit Einladung: Konto gehört zur Sparte (Turnierleitung), keine eigene Sparte');
 $tom = $d['token'];
 $tomId = $d['konto']['id'];
@@ -1409,7 +1442,7 @@ pruefe(count($d['turniere']) === 3 && in_array($toms, array_column($d['turniere'
 pruefe($d['turnier']['rechte'] === 'leitung', 'Spartenleitung leitet auch Turniere der Turnierleitungen');
 
 // Turnier-Einladung: Konto-Zugang zu genau einem Turnier
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Fremd', 'email' => 'fremd17@example.org', 'passwort' => 'fremdfremd', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Anderer Verein'], null, [], '10.17.0.3');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Fremd', 'email' => 'fremd17@example.org', 'passwort' => 'fremdfremd', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Anderer Verein'], null, [], '10.17.0.3');
 $fremd = $d['token'];
 $fremdSparte = $d['konto']['sparten'][0]['id'];
 [$s, $d] = rufe($api, 'POST', 'sparte.einladen', ['turnier' => $kr, 'email' => 'fremd17@example.org', 'name' => 'Fremd'], $fremd);
@@ -1426,6 +1459,8 @@ pruefe($s === 403, 'Einladung gilt nur für die eingeladene Adresse');
 pruefe($s === 200 && $d['turnier'] === $kr && count($d['sparten']) === 2, 'Einladung angenommen: zweite Sparte, Ziel Turnier');
 [, $d] = rufe($api, 'GET', 'turnier', null, $fremd, ['id' => $kr]);
 pruefe($d['turnier']['rechte'] === 'leitung', 'Konto-Zugang: leitet das Turnier');
+[$s, $beleg] = rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('rechte-paritaet-01')]], $fremd, ['turnier' => $kr]);
+pruefe($s === 200 && count($beleg['angenommen']) === 1, 'F-013: eingeladene Turnierleitung kann mit eigenem Konto schreiben');
 [, $d] = rufe($api, 'GET', 'turnier', null, $fremd, ['id' => $vm]);
 pruefe($d['turnier']['rechte'] === null, 'aber keine anderen Turniere der Sparte');
 [$s, $d] = rufe($api, 'GET', 'turnier.konten', null, $sara, ['id' => $kr]);
@@ -1440,6 +1475,8 @@ pruefe(count($d['spieler']) === 1 && $d['spieler'][0]['vorname'] === 'Pia', 'Poo
 [$s, $d] = rufe($api, 'POST', 'turnier.konto.entfernen', ['turnier' => $kr, 'konto' => array_values(array_filter(rufe($api, 'GET', 'sparte', null, $sara, ['id' => (string)$sid])[1]['mitglieder'], fn($m) => $m['name'] === 'Fremd'))[0]['konto']], $sara);
 [, $d2] = rufe($api, 'GET', 'turnier', null, $fremd, ['id' => $kr]);
 pruefe($s === 200 && $d['konten'] === [] && $d2['turnier']['rechte'] === null, 'Konto-Zugang entfernt');
+[$s] = rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('rechte-paritaet-02')]], $fremd, ['turnier' => $kr]);
+pruefe($s === 403, 'F-013: nach Entzug kein Schreiben mehr mit derselben Sitzung');
 
 // Mitglieder: letzte Spartenleitung bleibt
 $saraId = rufe($api, 'GET', 'ich', null, $sara)[1]['konto']['id'];
@@ -1456,7 +1493,7 @@ pruefe($s === 200 && $d['ausschuss']['name'] === 'Sommerfest' && count($d['mitgl
 $aid = $d['ausschuss']['id'];
 [$s, $d] = rufe($api, 'POST', 'ausschuss.einladen', ['ausschuss' => $aid, 'email' => 'mia@example.org', 'name' => 'Mia'], $sara);
 $ex = $einlLink();
-[$s, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Mia', 'email' => 'mia@example.org', 'passwort' => 'miamia123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1]], null, [], '10.17.0.4');
+[$s, $d] = registrierungMitMail($api, ['name' => 'Mia', 'email' => 'mia@example.org', 'passwort' => 'miamia123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1]], null, [], '10.17.0.4');
 pruefe($s === 200 && $d['konto']['sparten'] === [] && $d['konto']['ausschuesse'][0]['id'] === $aid, 'Ausschussmitglied ohne Sparten-Rolle');
 $mia = $d['token'];
 [$s] = rufe($api, 'GET', 'pool', null, $mia);
@@ -1466,7 +1503,7 @@ pruefe($s === 200 && $d['nachrichten'][0]['von'] === 'Mia' && $d['nachrichten'][
 [$s, $d] = rufe($api, 'POST', 'ausschuss.einladen', ['ausschuss' => $aid, 'email' => 'nils@example.org', 'name' => 'Nils'], $mia);
 pruefe($s === 200, 'Mitglied lädt weiteres Mitglied ein');
 $ex = $einlLink();
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Nils', 'email' => 'nils@example.org', 'passwort' => 'nilsnils1', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1]], null, [], '10.17.0.5');
+[, $d] = registrierungMitMail($api, ['name' => 'Nils', 'email' => 'nils@example.org', 'passwort' => 'nilsnils1', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1]], null, [], '10.17.0.5');
 $nils = $d['token'];
 $nilsId = $d['konto']['id'];
 [$s, $d] = rufe($api, 'GET', 'ausschuss', null, $nils, ['id' => (string)$aid]);
@@ -1557,7 +1594,7 @@ pruefe($s === 401, 'Konto der Spartenleitung gelöscht');
 echo "Paket 0.17: Sparte löschen, weitere Sparte anlegen\n";
 $api = neueApi();
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Olaf', 'email' => 'olaf@example.org', 'passwort' => 'olafolaf1', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'SV Ost'], null, [], '10.17.2.1');
+[, $d] = registrierungMitMail($api, ['name' => 'Olaf', 'email' => 'olaf@example.org', 'passwort' => 'olafolaf1', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'SV Ost'], null, [], '10.17.2.1');
 $olaf = $d['token'];
 [$s] = rufe($api, 'POST', 'sparte.anlegen', ['verein' => 'SV Ost', 'name' => 'Badminton'], $olaf);
 pruefe($s === 400, 'weitere Sparte nur mit Zustimmung zur AVV');
@@ -1578,7 +1615,7 @@ $mailerS = new TestMailer();
 $api = neueApi($mailerS);
 $zeit = 1_800_000_000;
 rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Admin', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Lea', 'email' => 'lea@example.org', 'passwort' => 'lealea123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'TV Süd'], null, [], '10.18.0.1');
+[, $d] = registrierungMitMail($api, ['name' => 'Lea', 'email' => 'lea@example.org', 'passwort' => 'lealea123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'TV Süd'], null, [], '10.18.0.1');
 $lea = $d['token'];
 $lsp = $d['konto']['sparten'][0]['id'];
 [, $d] = rufe($api, 'POST', 'login', ['email' => 'admin@example.org', 'passwort' => 'geheim123'], null, [], '10.18.0.9');
@@ -1595,7 +1632,7 @@ rufe($api, 'POST', 'sparte.anmeldung', ['id' => $lsp, 'anmeldung' => 'frei'], $a
 [, $d] = rufe($api, 'POST', 'sparte.einladen', ['sparte' => $lsp, 'email' => 'ole@example.org', 'name' => 'Ole', 'rolle' => 'turnierleitung'], $lea);
 $ex = [];
 preg_match('~#/einladung/([a-f0-9]{64})~', (string)mailAn($mailerS, 'ole@example.org')?->text, $ex);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Ole', 'email' => 'ole@example.org', 'passwort' => 'oleole123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1] ?? ''], null, [], '10.18.0.2');
+[, $d] = registrierungMitMail($api, ['name' => 'Ole', 'email' => 'ole@example.org', 'passwort' => 'oleole123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $ex[1] ?? ''], null, [], '10.18.0.2');
 $ole = $d['token'];
 $oleId = $d['konto']['id'];
 [$s] = rufe($api, 'POST', 'konto.einstellungen', ['kasse' => ['aussteller' => 'X', 'anschrift' => '', 'ust' => 'keiner', 'ustSatz' => 19, 'fusstext' => '', 'empfaenger' => 'Ole', 'iban' => 'DE02120300000000202051', 'bic' => '']], $ole);
@@ -1642,7 +1679,7 @@ pruefe($s === 401 && $s2 === 401, 'Entferntes Mitglied: eigene Leitungskennung g
 [$s] = rufe($api, 'POST', 'einladung.info', ['schluessel' => $evx[1] ?? '']);
 pruefe($s === 410, 'Einladungen eines entfernten Mitglieds verfallen');
 // Zentrale: fremde Turnierkennung nicht nutzbar
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Max', 'email' => 'max@example.org', 'passwort' => 'maxmax123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Max e. V.'], null, [], '10.18.0.3');
+[, $d] = registrierungMitMail($api, ['name' => 'Max', 'email' => 'max@example.org', 'passwort' => 'maxmax123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Max e. V.'], null, [], '10.18.0.3');
 $max = $d['token'];
 rufe($api, 'POST', 'sparte.anmeldung', ['id' => $d['konto']['sparten'][0]['id'], 'anmeldung' => 'frei'], $adm);
 [$s] = rufe($api, 'POST', 'sicherung.senden', ['turnier' => ['id' => $sc, 'name' => 'Falsch'], 'empfaenger' => ['lea@example.org'],
@@ -1661,7 +1698,7 @@ echo "Paket 0.17: zweite Sicherheitsprüfung\n";
 // Kennungen eines Kontos bleiben nach der Rückgabe von der Zentrale am Konto
 rufe($api, 'POST', 'sparte.einladen', ['sparte' => $lsp, 'email' => 'pia@example.org', 'name' => 'Pia', 'rolle' => 'turnierleitung'], $lea);
 preg_match('~#/einladung/([a-f0-9]{64})~', (string)mailAn($mailerS, 'pia@example.org')?->text, $px);
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Pia', 'email' => 'pia@example.org', 'passwort' => 'piapia123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $px[1] ?? ''], null, [], '10.18.0.4');
+[, $d] = registrierungMitMail($api, ['name' => 'Pia', 'email' => 'pia@example.org', 'passwort' => 'piapia123', 'volljaehrig' => true, 'bedingungen' => true, 'einladung' => $px[1] ?? ''], null, [], '10.18.0.4');
 $pia = $d['token'];
 $piaId = $d['konto']['id'];
 rufe($api, 'POST', 'mitglied.aendern', ['sparte' => $lsp, 'konto' => $piaId, 'anlegen' => true], $lea);
@@ -1688,7 +1725,7 @@ rufe($api, 'POST', 'mitglied.entfernen', ['sparte' => $lsp, 'konto' => $piaId], 
 [$s3] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $pc, 'code' => '58392174']);
 pruefe($s === 401 && $s2 === 200 && $s3 === 200, 'Nach Rückgabe von der Zentrale: eigene Kennung des entfernten Kontos gesperrt, für andere angelegte gelten weiter');
 // Neue Sparte: fremde Sicherungsempfänger weder beim Anlegen noch über die Zentrale
-[, $d] = rufe($api, 'POST', 'registrieren', ['name' => 'Nina', 'email' => 'nina@example.org', 'passwort' => 'ninanina123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Nina e. V.'], null, [], '10.18.0.5');
+[, $d] = registrierungMitMail($api, ['name' => 'Nina', 'email' => 'nina@example.org', 'passwort' => 'ninanina123', 'volljaehrig' => true, 'bedingungen' => true, 'verein' => 'Nina e. V.'], null, [], '10.18.0.5');
 $nina = $d['token'];
 $vorher = count($mailerS->mails);
 [$s] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Fremdcup', 'datum' => null, 'sicherungAn' => ['fremd9@example.org']], $nina);
@@ -2063,10 +2100,35 @@ pruefe($s === 400, 'zu große Vorgabe abgewiesen');
 pruefe($s === 400, 'höchstens 50 Favoriten');
 [$s] = rufe($api, 'GET', 'sparte.favoriten', null, $blTok, ['sparte' => (string)$fs]);
 pruefe($s === 401, 'Favoriten nur mit Konto');
-rufe($api, 'POST', 'registrieren', ['name' => 'Fremd', 'email' => 'fremd18@example.org', 'passwort' => 'geheim123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.18.3.1');
+registrierungMitMail($api, ['name' => 'Fremd', 'email' => 'fremd18@example.org', 'passwort' => 'geheim123', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.18.3.1');
 [, $d] = rufe($api, 'POST', 'login', ['email' => 'fremd18@example.org', 'passwort' => 'geheim123']);
 [$s] = rufe($api, 'POST', 'sparte.favoriten', ['sparte' => $fs, 'favoriten' => []], $d['token'] ?? null);
 pruefe($s === 403, 'fremde Sparte: keine Favoriten');
+
+echo "V-002: Ergebnisfrist in Europe/Berlin\n";
+$zeit = strtotime('2026-12-06T22:55:00Z');
+$apiFrist = neueApi();
+[, $neu] = rufe($apiFrist, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Frist Test', 'email' => 'frist@example.org', 'passwort' => 'fristpasswort123']);
+[, $login] = rufe($apiFrist, 'POST', 'login', ['email' => 'frist@example.org', 'passwort' => 'fristpasswort123']);
+[, $turnierFrist] = rufe($apiFrist, 'POST', 'turnier.anlegen', ['name' => 'Adventscup', 'datum' => '2026-12-06'], $login['token']);
+$idFrist = $turnierFrist['turnier']['id'];
+$tokenFrist = $turnierFrist['token'];
+$frageFrist = ['turnier' => $idFrist];
+$frist = ereignis('frist-0001', 'turnier.daten', ['enddatum' => '2026-12-06']);
+$rechtzeitig = array_replace(ereignis('frist-0002', 'spiel.ergebnis'), ['zeit' => '2026-12-06T22:55:00Z']);
+[, $aFrist] = rufe($apiFrist, 'POST', 'events', ['ereignisse' => [$frist, $rechtzeitig]], $tokenFrist, $frageFrist);
+pruefe(count($aFrist['angenommen']) === 2, 'V-002: am letzten Tag bis Mitternacht eingeben');
+$zeit = strtotime('2026-12-06T23:10:00Z');
+$offline = array_replace($rechtzeitig, ['id' => 'frist-0003']);
+$zuSpaet = array_replace($rechtzeitig, ['id' => 'frist-0004', 'zeit' => '2026-12-06T23:05:00Z']);
+[, $aFrist] = rufe($apiFrist, 'POST', 'events', ['ereignisse' => [$rechtzeitig, $offline, $zuSpaet]], $tokenFrist, $frageFrist);
+pruefe(count($aFrist['angenommen']) === 2 && $aFrist['abgelehnt'][0]['id'] === 'frist-0004', 'V-002: rechtzeitig offline Erfasstes bleibt erhalten, Neueingabe gesperrt');
+[, $eFrist] = rufe($apiFrist, 'GET', 'events', null, $tokenFrist, $frageFrist);
+$artenFrist = array_column($eFrist['ereignisse'], 'art', 'id');
+pruefe($artenFrist['frist-0002'] === 'spiel.ergebnis' && $artenFrist['frist-0003'] === 'spiel.ergebnis_spaet', 'V-002: Nachversand bleibt wartend, Wiederholung ändert vorhandenen Eintrag nicht');
+$verlaengern = ereignis('frist-0005', 'turnier.daten', ['enddatum' => '2026-12-07']);
+[, $aFrist] = rufe($apiFrist, 'POST', 'events', ['ereignisse' => [$verlaengern, $zuSpaet]], $tokenFrist, $frageFrist);
+pruefe(count($aFrist['angenommen']) === 2, 'V-002: nach Verlängerung neue Ergebnisse annehmen');
 
 echo "\n$anzahl Prüfungen, $fehler Fehler\n";
 exit($fehler === 0 ? 0 : 1);

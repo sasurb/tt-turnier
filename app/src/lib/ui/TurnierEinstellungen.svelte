@@ -74,12 +74,15 @@
   let tName = $state(z.name);
   // svelte-ignore state_referenced_locally
   let tDatum = $state(z.datum ?? '');
+  // svelte-ignore state_referenced_locally
+  let tEnde = $state(z.enddatum ?? '');
   async function kopfSpeichern(e: SubmitEvent) {
     e.preventDefault();
     const datum = /^\d{4}-\d{2}-\d{2}$/.test(tDatum) ? tDatum : null;
     try {
       if (!lokal && token) await api.einstellungenSetzen(token, { turnier: id, name: tName.trim(), datum });
       await eintragen(ART.turnierUmbenannt, { name: tName.trim(), datum });
+      if ((tEnde || null) !== z.enddatum) await eintragen(ART.turnierDaten, { enddatum: tEnde || null });
       zeige('kopf', true, T.app.gespeichert);
     } catch (x) {
       zeige('kopf', false, fehlerText(x, T.app.fehlerAllgemein));
@@ -252,7 +255,7 @@
     try {
       const r = await alsOnlineTurnierHochladen(await sicherung());
       app.hinweis = T.schnell.uebernommen;
-      gehe('t/' + r.id);
+      gehe('t/' + r.id + '/spiele');
     } catch (x) {
       app.hinweis = x instanceof Error ? x.message : String(x);
     } finally {
@@ -284,6 +287,9 @@
       <label>{T.neu.name}<input bind:value={tName} minlength="2" maxlength="160" required /></label>
       <div class="label-zeile"><label for="te-datum">{T.neu.datum}</label><Hilfe text={T.einstellungen.datumHilfe} /></div>
       <input id="te-datum" type="date" bind:value={tDatum} data-testid="turnier-datum" />
+      <label for="te-ende">Enddatum – optional</label>
+      <input id="te-ende" type="date" min={tDatum} bind:value={tEnde} />
+      <small class="leise">Ergebnisse sind bis zum Ende dieses Tages (Europe/Berlin) möglich. Zum Verlängern ein späteres Enddatum speichern.</small>
       <button type="submit" class="zweit" disabled={tName.trim().length < 2}>{T.app.speichern}</button>
     </form>
     {@render hinweis('kopf')}

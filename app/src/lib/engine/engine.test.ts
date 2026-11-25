@@ -1,3 +1,4 @@
+import { sitzungsbindung } from './sitzungsbindung';
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { ART } from '@shared/protokoll';
@@ -198,7 +199,7 @@ describe('Online-Abgleich zwischen zwei Geräten', () => {
     const a = geraet(server, 'a');
     const b = geraet(server, 'b');
     for (let i = 0; i < 450; i++) await a.speicher.hinzufuegen({
-      id: neueId(), art: ART.testNotiz, daten: { text: String(i) }, zeit: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+      id: neueId(), art: ART.testNotiz, daten: { text: String(i) }, sitzung: sitzungsbindung('tok-a'), zeit: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
       geraet: 'geraet-a', turnier: 'turnier001', status: 'ausstehend', seq: null, empfangen: null, autor: null,
     });
     for (let i = 0; i < 3; i++) await a.sitzung.abgleich!.durchlauf();

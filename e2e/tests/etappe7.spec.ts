@@ -84,8 +84,8 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await einst.getByTestId('pause').selectOption('3');
   await einst.getByTestId('automatisch').check();
   const tische = page.getByTestId('tische').locator('li');
-  await expect(tische.nth(0)).toContainText('–');
-  await expect(tische.nth(1)).toContainText('–');
+  await expect(tische.nth(0).getByRole('button', { name: /Spielinformationen Tisch 1: .+ gegen .+/ })).toBeVisible();
+  await expect(tische.nth(1).getByRole('button', { name: /Spielinformationen Tisch 2: .+ gegen .+/ })).toBeVisible();
   await expect(page.getByTestId('tische').getByText('frei')).toHaveCount(0);
   await layoutPruefen(page, einst);
   await bild(page, '40-tische-automatisch');

@@ -50,7 +50,7 @@ test('Teilnehmer je Konkurrenz und Reiter Spielerpool', async ({ page }, info) =
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await page.getByTestId('neues-turnier').click();
   await page.getByLabel('Name des Turniers').fill(`Wintercup ${geraet}`);
-  await page.getByLabel('Datum').fill('2027-12-04');
+  await page.getByLabel('Startdatum', { exact: true }).fill('2027-12-04');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;

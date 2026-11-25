@@ -83,6 +83,24 @@ describe('0.16: Gruppen + Platzierungsgruppen', () => {
     return t;
   }
 
+  it('F-017: Vakanz behält die Qualifikationsgrenze bei und erhält den Rückzug beim Zurücknehmen', () => {
+    const t = vorrunde();
+    allesSpielen(t, 'k', ids, 2);
+    const vorher = platzGruppenBilden(t.z.konkurrenzen.k!);
+    if (!vorher.ok) throw new Error(vorher.grund);
+    const id = vorher.gruppen[0]!.mitglieder[0]!;
+    t.e(ART.teilnehmerAbgemeldet, { konkurrenz: 'k', id });
+    const k = t.z.konkurrenzen.k!;
+    const vakanz = platzGruppenBilden(k, true);
+    if (!vakanz.ok) throw new Error(vakanz.grund);
+    expect(vakanz.gruppen.map((g) => g.mitglieder)).toEqual(vorher.gruppen.map((g) => g.mitglieder.filter((x) => x !== id)));
+    expect(platzGruppenBilden(k)).not.toEqual(vakanz);
+    t.e(ART.phaseGestartet, { konkurrenz: 'k', phase: 'ko', rueckzugUebergang: 'vakanz', gruppen: vakanz.gruppen.map((g) => g.mitglieder) });
+    expect(t.z.konkurrenzen.k!.gestartet.ko).toBe(true);
+    t.e(ART.phaseZurueck, { konkurrenz: 'k', phase: 'ko' });
+    expect(zurueckgezogen(t.z.konkurrenzen.k!)).toContain(id);
+  });
+
   it('Vorrunde 2 Gruppen à 4, dann Plätze 1–4 und 5–8 neu jeder gegen jeden, Gesamtplatzierung 1–8', () => {
     const t = vorrunde();
     let k = t.z.konkurrenzen.k!;

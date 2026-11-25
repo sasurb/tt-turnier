@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { wertungVorlaeufig } from '../engine/modell';
   import { onDestroy, onMount } from 'svelte';
   import { T } from '../texte';
   import { linkZu, ersetze } from '../router.svelte';
@@ -536,7 +537,7 @@
             {@const t = tabelle(k, g.nr)}
             {@const m = t.zeilen.map((r) => r.id)}
             <section class="block gruppe">
-              <h2>{z.name} · {k.einst.name}{k.gruppen.length > 1 ? ` · ${gruppeTitel(k, g.nr)}` : ''}</h2>
+              <h2>{z.name} · {k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if}{k.gruppen.length > 1 ? ` · ${gruppeTitel(k, g.nr)}` : ''}</h2>
               <table class="kreuz">
                 <thead>
                   <tr>
@@ -580,7 +581,7 @@
           {#each baeume(k) as b (b)}
             {#each baumTeile(k, b) as teil, ti (ti)}
               <section class="seite quer baum-seite">
-                <h2>{z.name} · {k.einst.name} · {b === 'haupt' ? (k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko) : T.konk.baeume[b]}{teil.titel ? ` · ${teil.titel}` : ''}</h2>
+                <h2>{z.name} · {k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if} · {b === 'haupt' ? (k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko) : T.konk.baeume[b]}{teil.titel ? ` · ${teil.titel}` : ''}</h2>
                 <div class="baum" style:--n={Math.max(1, teil.spalten[0]?.spiele.length ?? 1)}>
                   {#each teil.spalten as sp, i (i)}
                     <div class="runde">

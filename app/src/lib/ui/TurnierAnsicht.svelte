@@ -10,12 +10,12 @@
   import { TurnierSitzung } from '../engine/turnier';
   import type { AbgleichStatus } from '../engine/abgleich';
   import type { LokalesEreignis } from '../engine/typen';
-  import { berechnen, type TurnierZustand } from '../engine/zustand';
+  import { berechnen, fristgebundeneAktion, nachTurnierende, type TurnierZustand } from '../engine/zustand';
   import { name as spName } from '../engine/abfragen';
   import { ergebnisText } from '../engine/ergebnis';
   import type { Spiel } from '../engine/modell';
   import { uebersichtText } from '../engine/uebersicht';
-  import { anzeigeName, geraetId, gemerktesTurnier, turnierAbmelden, turnierMerken, type GemerktesTurnier } from '../einstellungen';
+  import { anzeigeName, kontoSitzung, geraetId, gemerktesTurnier, turnierAbmelden, turnierMerken, type GemerktesTurnier } from '../einstellungen';
   import { codeAnzeige } from '../code';
   import { appBasis } from '../zentrale.svelte';
   import { nativ } from '../nativ';
@@ -54,6 +54,7 @@
   const lokal = $derived(id.startsWith('l'));
   let eintrag = $state<GemerktesTurnier | null>(null);
   let sitzung: TurnierSitzung | null = null;
+  let wechsel = $state(false);
   let fehler = $state('');
   let laedt = $state(true);
   let zustand = $state<TurnierZustand | null>(null);
@@ -80,10 +81,11 @@
   /** Turnierinfo vom Server holen; mit Konto-Token auch die Rechte dieses Kontos */
   async function infoLaden() {
     const s = app.sitzung;
-    const kennung = gemerktesTurnier(id)?.token ?? null;
+    const kennung = eintrag?.token ?? null;
     try {
       // Mit Kennung: prüfen, ob sie noch gilt (gesperrt/neu ausgegeben → Gerät wird Zuschauer)
       const a = await api.turnier(id, kennung ?? s?.token ?? null);
+      if (kennung !== (eintrag?.token ?? null) || wechsel || s !== app.sitzung) return;
       // Name und Datum kennt bei Online-Turnieren der Server (ohne Ereignis turnier.angelegt)
       if (eintrag && (a.turnier.name !== eintrag.name || a.turnier.datum !== eintrag.datum)) {
         turnierMerken({ ...eintrag, name: a.turnier.name, datum: a.turnier.datum });
@@ -189,6 +191,8 @@
           : ['tabellen', 'spiele', ...(mitTischen ? ['tische' as const] : [])],
   );
   /** Reiterleiste am Handy: aktiven Reiter in die Mitte rollen (Schatten an den Rändern zeigen „hier geht es weiter“) */
+  let mehrOffen = $state(false);
+  const hauptReiter = new Set(['meine', 'spiele', 'tische', 'tabellen']);
   let reiterNav = $state<HTMLElement | null>(null);
   $effect(() => {
     void aktiv;
@@ -248,8 +252,10 @@
     return z;
   }
   async function aktualisieren() {
-    if (!sitzung) return;
-    ereignisse = await sitzung.ereignisse();
+    if (!sitzung || wechsel) return;
+    const liste = await sitzung.ereignisse();
+    if (wechsel) return;
+    ereignisse = liste;
     zustand = mitKopf(berechnen(ereignisse));
     status = sitzung.status ? { ...sitzung.status } : null;
   }
@@ -265,15 +271,29 @@
   }
 
   function beiSichtbarkeit() {
+    if (identitaetGewechselt()) return;
     if (document.visibilityState === 'visible') void sitzung?.abgleich?.anstossen();
   }
+  function identitaetGewechselt() {
+    if (!lokal && !laedt && ((gemerktesTurnier(id)?.token ?? null) !== (eintrag?.token ?? null) ||
+        (kontoSitzung()?.token ?? null) !== (app.sitzung?.token ?? null))) {
+      wechsel = true;
+      sitzung?.stop();
+      offen = null;
+      zustand = null;
+      ereignisse = [];
+      fehler = 'Die Anmeldung wurde in einem anderen Fenster geändert. Bitte lade diese Ansicht neu.';
+    }
+    return wechsel;
+  }
   function beiOnline() {
+    if (identitaetGewechselt()) return;
     void sitzung?.abgleich?.anstossen();
   }
   const uhr = setInterval(() => (jetzt = Date.now()), 60_000);
 
   function autor() {
-    const g = gemerktesTurnier(id);
+    const g = eintrag;
     if (lokal) return { rolle: 'leitung' as Rolle, name: g?.wer || anzeigeName() || 'Leitung' };
     if (g?.token) {
       return {
@@ -323,10 +343,15 @@
 
   function codeAbmelden() {
     if (!confirm(T.zugang.abmeldenFrage)) return;
+    if (identitaetGewechselt()) return;
     const alt = eintrag?.token;
     if (alt) void api.logout(alt).catch(() => undefined); // Sitzung auch auf dem Server beenden
     turnierAbmelden(id);
     eintrag = gemerktesTurnier(id) ?? null;
+    ereignisse = [];
+    zustand = null;
+    void aktualisieren();
+    void sitzung?.abgleich?.anstossen();
     ersetze(`t/${id}/${standardReiter}`);
   }
 
@@ -354,7 +379,7 @@
         geraet: geraetId(),
         autor,
         api,
-        token: () => gemerktesTurnier(id)?.token ?? (kontoRechte && app.sitzung ? app.sitzung.token : null),
+        token: () => schreibToken,
         beiAenderung: () => void aktualisieren(),
         // Kennung gesperrt/neu ausgegeben oder Konto ohne Rechte: sofort Zuschauer, Bestand bleibt vollständig
         beiRechteVerlust: () => {
@@ -383,6 +408,7 @@
       void einstellungenLaden();
       document.addEventListener('visibilitychange', beiSichtbarkeit);
       addEventListener('online', beiOnline);
+      addEventListener('storage', identitaetGewechselt);
     } catch (x) {
       fehler = fehlerText(x, T.app.fehlerAllgemein);
     } finally {
@@ -397,6 +423,7 @@
     clearTimeout(aktionTimer);
     document.removeEventListener('visibilitychange', beiSichtbarkeit);
     removeEventListener('online', beiOnline);
+    removeEventListener('storage', identitaetGewechselt);
   });
 
   /**
@@ -406,8 +433,22 @@
    */
   let aktion = $state<{ ids: string[]; text: string; gruppe: string | null } | null>(null);
   let aktionTimer: ReturnType<typeof setTimeout> | undefined;
+  const fristAnzeige = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', dateStyle: 'short', timeStyle: 'short' });
+  function neueZeit(zeit: string | null): string {
+    const datum = zeit ? new Date(zeit) : null;
+    return datum && Number.isFinite(datum.getTime()) ? fristAnzeige.format(datum) : 'unbekannt';
+  }
+  function spaeteBallpunkte(wert: unknown): string {
+    if (!Array.isArray(wert)) return '';
+    return wert.map((zahl) => Number.isSafeInteger(zahl) ? String(zahl) : '?').join(':');
+  }
   async function eintragen(art: string, daten: Record<string, unknown>, opt: { still?: boolean; id?: string } = {}) {
+    if (identitaetGewechselt()) throw new Error(fehler);
     if (!sitzung) throw new Error(T.app.fehlerAllgemein);
+    if (fristgebundeneAktion(art) && nachTurnierende(zustand?.enddatum ?? null, new Date().toISOString())) {
+      hinweis = 'Das Turnier ist beendet. Für neue Spiele bitte das Enddatum verlängern.';
+      throw new Error(hinweis);
+    }
     const e = await sitzung.eintragen(art, daten, opt.id);
     if (leitung && !opt.still && rueckgaengigBar(e)) {
       const gruppe = aktuelleAktion();
@@ -600,8 +641,8 @@
 
   async function sicherungBauen() {
     // Nur aus dem vollständigen Bestand sichern (nie aus der gefilterten Zuschauer-Sicht)
-    const sicht = lokal ? null : await speicher.sicht(id);
-    if (sicht && sicht !== 'voll') throw new Error(T.einstellungen.sicherungUnvollstaendig);
+    const sicht = lokal ? null : await sitzung?.sicht();
+    if (!lokal && sicht?.split('|')[0] !== 'voll') throw new Error(T.einstellungen.sicherungUnvollstaendig);
     const liste = sitzung ? await sitzung.ereignisse() : ereignisse;
     return sicherungErstellen({ id, name, datum: zustand?.datum ?? eintrag?.datum ?? null, modus: lokal ? 'lokal' : 'online' }, liste);
   }
@@ -670,6 +711,7 @@
   <p class="leise">{T.app.laden}</p>
 {:else if fehler}
   <div class="meldung fehler" role="alert">{fehler}</div>
+  {#if wechsel}<button onclick={() => location.reload()}>Neu laden</button>{/if}
   <a class="knopf zweit" href={linkZu('')}>{T.app.zurueck}</a>
 {:else}
   {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
@@ -738,12 +780,16 @@
     </details>
   {/if}
 
-  <nav class="reiter" aria-label="Bereiche" bind:this={reiterNav}>
+  <nav class="reiter" class:mehrOffen aria-label="Bereiche" bind:this={reiterNav}>
     {#each reiterListe as r (r)}
-      <a href={linkZu(`t/${id}/${r}`)} class:aktiv={aktiv === r} aria-current={aktiv === r ? 'page' : undefined}
+      <a href={linkZu(`t/${id}/${r}`)} class:nebenbereich={!hauptReiter.has(r)} class:aktiv={aktiv === r} onclick={() => (mehrOffen = false)} aria-current={aktiv === r ? 'page' : undefined}
         >{T.reiter[r]}{#if r === 'teilnehmer' && anmeldungNeu > 0}<span class="zaehler" data-testid="reiter-neu" aria-label={T.anm.neuHinweis(anmeldungNeu)}>{anmeldungNeu}</span>{/if}</a
       >
     {/each}
+    {#if reiterListe.some((r) => !hauptReiter.has(r))}
+      <button class="mehr" aria-expanded={mehrOffen} onclick={() => (mehrOffen = !mehrOffen)}>Mehr</button>
+    {/if}
+    {#if rolle === 'zuschauer'}<a href={linkZu(`live/${id}`)}>Live</a>{/if}
   </nav>
 
   {#if zustand}
@@ -762,7 +808,30 @@
       {#if !leitung && rolle !== 'spieler' && zustand.spielerReihe.length}
         <MitteilungKarte z={zustand} turnierId={id} ich={null} bind:einstellung={mitteilung} zugeklappt />
       {/if}
-      <SpieleListe z={zustand} leitung={leitung || helferRecht} {ich} mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
+      {#if leitung && zustand.spaeteErgebnisse.length}
+        <section class="karte" aria-label="Verspätet synchronisierte Ergebnisse">
+          <h2>Verspätet synchronisierte Ergebnisse</h2>
+          {#each zustand.spaeteErgebnisse as meldung (meldung.id)}
+            {@const daten = meldung.daten as { konkurrenz?: string; spiel?: string; a?: string; b?: string; ergebnis?: { saetze?: number[][]; stand?: number[]; aufgabe?: string; laufend?: number[]; kampflos?: string } }}
+            {@const eingabe = daten.ergebnis}
+            <div class="meldung info">
+              <strong>{spName(zustand, daten.a ?? null, zustand.konkurrenzen[daten.konkurrenz ?? ''])} gegen {spName(zustand, daten.b ?? null, zustand.konkurrenzen[daten.konkurrenz ?? ''])}</strong>
+              <p>{zustand.konkurrenzen[daten.konkurrenz ?? '']?.einst.name} · {daten.spiel}</p>
+              <p>{(Array.isArray(eingabe?.saetze) ? eingabe.saetze.map(spaeteBallpunkte).join(', ') : spaeteBallpunkte(eingabe?.stand))}
+                {#if eingabe?.aufgabe} · Aufgabe, Seite {eingabe.aufgabe === 'a' ? 'A' : 'B'} {spaeteBallpunkte(eingabe.laufend)}{/if}
+                {#if eingabe?.kampflos} · Kampflos, Seite {eingabe.kampflos === 'a' ? 'A' : 'B'} verliert{/if}
+              </p>
+              <p>{meldung.autor?.name} · Erfasst {neueZeit(meldung.zeit)} · Eingegangen {neueZeit(meldung.empfangen)}</p>
+              {#each zustand.warnungen.filter((warnung) => warnung.ereignis === meldung.id).slice(-1) as warnung}
+                <p role="alert">{warnung.text}</p>
+              {/each}
+              <button onclick={() => eintragen(ART.spielSpaetGeprueft, { ereignis: meldung.id, uebernehmen: true })}>Übernehmen</button>
+              <button class="zweit" onclick={() => eintragen(ART.spielSpaetGeprueft, { ereignis: meldung.id, uebernehmen: false })}>Ablehnen</button>
+            </div>
+          {/each}
+        </section>
+      {/if}
+      <SpieleListe z={zustand} leitung={leitung || helferRecht} stufeEintragen={leitung ? eintragen : undefined} tischLink={mitTischen && (leitung || darfAufgabe('aufruf')) ? `t/${id}/tische` : null} {ich} mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
     {:else if aktiv === 'tabellen'}
       {#if leitung && verdeckt}
         <div class="meldung info reihe" role="status">
@@ -977,4 +1046,10 @@
   .aktion .zweit { background: transparent; color: var(--flaeche); border-color: color-mix(in srgb, var(--flaeche) 50%, transparent); }
   .live-link, .live-zeile { display: flex; gap: 6px; flex-wrap: wrap; }
   .live-link a, .live-zeile a { display: inline-flex; align-items: center; min-height: 44px; }
+  .reiter .mehr { display: none; }
+  @media (max-width: 600px) {
+    .reiter { flex-wrap: wrap; }
+    .reiter .mehr { display: inline-block; }
+    .reiter:not(.mehrOffen) .nebenbereich:not(.aktiv) { display: none; }
+  }
 </style>

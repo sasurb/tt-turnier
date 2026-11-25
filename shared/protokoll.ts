@@ -369,6 +369,7 @@ export interface LoginAntwort {
  * Link, gleiche E-Mail-Adresse) tritt es der Sparte, dem Turnier bzw. dem Ausschuss bei.
  */
 export interface RegistrierenAnfrage {
+  nachweis: string;
   name: string;
   email: string;
   passwort: string;
@@ -768,6 +769,8 @@ export const ART = {
   spielBestaetigt: 'spiel.bestaetigt',
   spielAngefochten: 'spiel.angefochten',
   /** Leitung entscheidet einen Konflikt / eine Anfechtung zugunsten eines Eintrags */
+  spielErgebnisSpaet: 'spiel.ergebnis_spaet',
+  spielSpaetGeprueft: 'spiel.spaet_geprueft',
   spielEntschieden: 'spiel.entschieden',
   spielZurueckgesetzt: 'spiel.zurueckgesetzt',
   /** Spielaufruf: Tisch und Schiedsrichter (Daten: { konkurrenz, spiel, tisch, schiri?: { name, spieler? } }) – Leitung und Helfer */

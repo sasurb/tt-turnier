@@ -11,7 +11,7 @@ export function gewinnSaetze(bestOf: BestOf): number {
   return (bestOf + 1) / 2;
 }
 
-function ganz(n: unknown, max = 99): n is number {
+function ganz(n: unknown, max = Number.MAX_SAFE_INTEGER): n is number {
   return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max;
 }
 
@@ -96,6 +96,7 @@ export function ergebnisWerten(e: ErgebnisEingabe, bestOf: BestOf, eingabe: Eing
     // angefangener Satz: Bälle des Aufgebenden zählen, Sieger mindestens X+2 (D 7.10)
     const [la, lb] = e.laufend ?? [0, 0];
     if (!ganz(la) || !ganz(lb)) return fehler('Bitte den Stand im angefangenen Satz als ganze Punkte eingeben.');
+    if (Math.max(la, lb) >= 11 && Math.abs(la - lb) >= 2) return fehler('Dieser Satz ist bereits beendet. Bitte als gespielten Satz eintragen.');
     const x = e.aufgabe === 'a' ? la : lb;
     const sieger = Math.max(11, x + 2);
     saetze.push(e.aufgabe === 'a' ? [x, sieger] : [sieger, x]);
@@ -167,6 +168,7 @@ function festeWerten(e: ErgebnisEingabe, n: number, eingabe: Eingabe): Wertungse
     const saetze = gespielt.map((s) => [...s] as [number, number]);
     const [la, lb] = e.laufend ?? [0, 0];
     if (!ganz(la) || !ganz(lb)) return fehler('Bitte den Stand im angefangenen Satz als ganze Punkte eingeben.');
+    if (Math.max(la, lb) >= 11 && Math.abs(la - lb) >= 2) return fehler('Dieser Satz ist bereits beendet. Bitte als gespielten Satz eintragen.');
     const x = e.aufgabe === 'a' ? la : lb;
     const s = Math.max(11, x + 2);
     saetze.push(e.aufgabe === 'a' ? [x, s] : [s, x]);
@@ -224,7 +226,7 @@ export function ergebnisText(e: Ergebnis, ausSichtVon: Seite = 'a'): string {
     return `${x}:${y} (${b ? `${e.satzB}:${e.satzA}` : `${e.satzA}:${e.satzB}`} Sätze)${e.art === 'kampflos' ? ' kampflos' : ''}`;
   }
   const stand = b ? `${e.satzB}:${e.satzA}` : `${e.satzA}:${e.satzB}`;
-  const zusatz = e.art === 'kampflos' ? ' kampflos' : e.art === 'aufgabe' ? ' Aufgabe' : '';
+  const zusatz = e.art === 'kampflos' ? ' kampflos' : e.art === 'aufgabe' && e.gewinner ? ` (Aufgabe, ${e.gewinner === ausSichtVon ? 'erste' : 'zweite'} Seite gewinnt)` : '';
   if (!e.saetze || e.art === 'kampflos') return stand + zusatz;
   const s = e.saetze.map(([x, y]) => (b ? `${y}:${x}` : `${x}:${y}`)).join(', ');
   return `${stand} (${s})${zusatz}`;

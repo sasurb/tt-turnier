@@ -40,10 +40,11 @@ export interface KontoSitzung {
 }
 
 const fluechtig = new Map<string, string>();
+const schreibfehler = new Set<string>();
 
 function lesen<T>(schluessel: string, standard: T): T {
   try {
-    const roh = localStorage.getItem(schluessel) ?? fluechtig.get(schluessel) ?? null;
+    const roh = schreibfehler.has(schluessel) ? fluechtig.get(schluessel) ?? null : localStorage.getItem(schluessel);
     return roh === null ? standard : (JSON.parse(roh) as T);
   } catch {
     const roh = fluechtig.get(schluessel);
@@ -57,8 +58,9 @@ function schreiben(schluessel: string, wert: unknown) {
   try {
     if (wert === null) localStorage.removeItem(schluessel);
     else localStorage.setItem(schluessel, roh);
+    schreibfehler.delete(schluessel);
   } catch {
-    /* nur im Arbeitsspeicher */
+    schreibfehler.add(schluessel);
   }
 }
 

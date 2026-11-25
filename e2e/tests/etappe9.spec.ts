@@ -42,7 +42,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await page.getByTestId('neues-turnier').click();
   await page.getByLabel('Name des Turniers').fill(`Frühjahrscup ${geraet}`);
-  await page.getByLabel('Datum').fill('2027-03-20');
+  await page.getByLabel('Startdatum', { exact: true }).fill('2027-03-20');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;

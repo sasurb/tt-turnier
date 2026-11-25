@@ -70,6 +70,8 @@
     <NeuesTurnier />
   {:else if route.seite === 'anmelden'}
     {#key route.param}<Anmelden zurueck={route.param ? [route.param, ...route.rest].join('/') : null} />{/key}
+  {:else if route.seite === 'aktivieren' && route.param}
+    {#key route.param}<Registrieren nachweis={route.param} einladung={route.rest[0] ?? null} />{/key}
   {:else if route.seite === 'registrieren'}
     {#key route.param}<Registrieren einladung={route.param} />{/key}
   {:else if route.seite === 'sparte'}

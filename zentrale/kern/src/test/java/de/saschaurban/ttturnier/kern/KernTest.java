@@ -96,6 +96,7 @@ public final class KernTest {
         Zentrale.ohneWarten = true;
         json();
         protokoll();
+        ergebnisfrist();
         etappe9();
         etappe10();
         etappe11();
@@ -120,6 +121,38 @@ public final class KernTest {
         }
         pruefe(geworfen, "fehlerhaftes JSON wird abgelehnt");
         pruefe(Json.schreiben(Json.obj("t", "a\"b\\c\u0001")).equals("{\"t\":\"a\\\"b\\\\c\\u0001\"}"), "Sonderzeichen werden maskiert");
+    }
+
+    static void ergebnisfrist() throws Exception {
+        long bisher = uhr;
+        try {
+            uhr = java.time.Instant.parse("2026-12-06T22:55:00Z").getEpochSecond();
+            Zentrale z = new Zentrale(new Speicher(neuerOrdner()), new PlattformJvm(null), new Online(2000), () -> uhr);
+            String konto = rufe(z, "POST", "zentrale.anmelden", Json.obj(), null, null, true).t("token");
+            A erstellt = rufe(z, "POST", "turnier.anlegen", Json.obj("name", "Fristtest", "datum", "2026-12-06"), konto);
+            String id = (String) Json.alsObjekt(erstellt.g("turnier")).get("id");
+            Map<String, String> query = q("turnier", id);
+            Map<String, Object> rechtzeitig = ev("frist-0002", "spiel.ergebnis", Json.obj());
+            rechtzeitig.put("zeit", "2026-12-06T22:55:00Z");
+            A a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("frist-0001", "turnier.daten", Json.obj("enddatum", "2026-12-06")), rechtzeitig)), konto, query, false);
+            pruefe(a.s == 200 && a.l("angenommen").size() == 2, "V-002: Zentrale nimmt am letzten Tag Ergebnis an");
+
+            uhr = java.time.Instant.parse("2026-12-06T23:10:00Z").getEpochSecond();
+            Map<String, Object> offline = new LinkedHashMap<>(rechtzeitig);
+            offline.put("id", "frist-0003");
+            Map<String, Object> zuSpaet = new LinkedHashMap<>(rechtzeitig);
+            zuSpaet.put("id", "frist-0004");
+            zuSpaet.put("zeit", "2026-12-06T23:05:00Z");
+            a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(rechtzeitig, offline, zuSpaet)), konto, query, false);
+            pruefe(a.l("angenommen").size() == 2 && a.l("abgelehnt").size() == 1, "V-002: Zentrale bewahrt Offline-Meldung und sperrt Neueingabe");
+            a = rufe(z, "GET", "events", null, konto, q("turnier", id, "ab", "0"), false);
+            pruefe(a.l("ereignisse").stream().map(Json::alsObjekt).anyMatch(e ->
+                "frist-0003".equals(e.get("id")) && "spiel.ergebnis_spaet".equals(e.get("art"))), "V-002: Zentrale kennzeichnet Nachversand zur Prüfung");
+            a = rufe(z, "POST", "events", Json.obj("ereignisse", liste(ev("frist-0005", "turnier.daten", Json.obj("enddatum", "2026-12-07")), zuSpaet)), konto, query, false);
+            pruefe(a.l("angenommen").size() == 2, "V-002: Zentrale nimmt nach Verlängerung neue Ergebnisse an");
+        } finally {
+            uhr = bisher;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -614,7 +647,25 @@ public final class KernTest {
                 "name", "Admin", "email", "admin-" + zuf + "@example.org", "passwort", "admin-passwort"), null);
         }
         String mail = "zentrale-" + zuf + "@example.org";
-        Map<String, Object> reg = o.rufe(basis, "registrieren", null, Json.obj("name", "TTC Zentral", "email", mail, "passwort", "zentral-pw1", "website", "", "volljaehrig", true, "bedingungen", true), null);
+        String aufgabe = (String) o.rufe(basis, "registrieraufgabe", null, null, null).get("aufgabe");
+        int nonce = 0;
+        java.security.MessageDigest sha = java.security.MessageDigest.getInstance("SHA-256");
+        while (true) {
+            byte[] h = sha.digest((aufgabe + ":" + nonce).getBytes(StandardCharsets.UTF_8));
+            if (h[0] == 0 && (h[1] & 255) < 16) break;
+            nonce++;
+        }
+        o.rufe(basis, "registrierlink", null, Json.obj("email", mail, "aufgabe", aufgabe, "nonce", nonce), null);
+        String nachweis = null;
+        try (DirectoryStream<Path> d = Files.newDirectoryStream(Paths.get(System.getenv("TT_MAILS")))) {
+            for (Path p : d) {
+                String roh = Files.readString(p);
+                if (!roh.contains(mail)) continue;
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("#/aktivieren/([a-f0-9]{64})").matcher(mimeText(roh));
+                if (m.find()) nachweis = m.group(1);
+            }
+        }
+        Map<String, Object> reg = o.rufe(basis, "registrieren", null, Json.obj("nachweis", nachweis, "name", "TTC Zentral", "email", mail, "passwort", "zentral-pw1", "website", "", "volljaehrig", true, "bedingungen", true), null);
         String vk = (String) reg.get("token");
         Map<String, Object> t = o.rufe(basis, "turnier.anlegen", null, Json.obj("name", "Online vorbereitet", "datum", "2026-12-12",
             "sicherungAn", liste(mail)), vk);

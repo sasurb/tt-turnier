@@ -12,10 +12,11 @@ import { anzeigeName, geraetId, turnierMerken } from './einstellungen';
 export async function alsOnlineTurnierHochladen(s: Sicherung): Promise<{ id: string; anzahl: number }> {
   if (!app.sitzung) throw new Error('Bitte zuerst anmelden.');
   const sp = spartenZumAnlegen().find((x) => x.id === aktiveSparteId()) ?? spartenZumAnlegen()[0];
-  const a = await api.turnierAnlegen(app.sitzung.token, { name: s.turnier.name, datum: s.turnier.datum, ...(sp ? { sparte: sp.id } : {}) });
+  const konto = app.sitzung;
+  const a = await api.turnierAnlegen(konto.token, { name: s.turnier.name, datum: s.turnier.datum, ...(sp ? { sparte: sp.id } : {}) });
   const id = a.turnier.id;
   turnierMerken({ id, name: a.turnier.name, datum: a.turnier.datum, modus: 'online', rolle: 'zuschauer', token: null, konto: true });
-  const sitzung = new TurnierSitzung({ speicher, turnier: id, modus: 'online', geraet: geraetId(), autor: { rolle: 'leitung', name: anzeigeName() || app.sitzung.konto.name }, api, token: () => a.token });
+  const sitzung = new TurnierSitzung({ speicher, turnier: id, modus: 'online', geraet: geraetId(), autor: { rolle: 'leitung', name: anzeigeName() || konto.konto.name }, api, token: () => konto.token });
   const anzahl = await sitzung.importieren(s.ereignisse);
   await sitzung.eintragen(ART.turnierWiederhergestellt, { quelle: s.turnier.id, erstellt: s.erstellt, anzahl });
   void api.logout(a.token).catch(() => undefined);

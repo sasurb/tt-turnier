@@ -1,8 +1,9 @@
+import { eigeneAktion, sitzungsbindung } from './sitzungsbindung';
 import type { Autor } from '@shared/protokoll';
 import { Abgleich, type AbgleichStatus } from './abgleich';
 import type { Api } from './api';
 import { naechsteReihe, neueId } from './ids';
-import type { EreignisSpeicher } from './speicher';
+import { SitzungsSpeicher, type EreignisSpeicher } from './speicher';
 import type { LokalesEreignis } from './typen';
 import { berechnen, type TurnierZustand } from './zustand';
 
@@ -37,6 +38,7 @@ export class TurnierSitzung {
       this.abgleich = new Abgleich({
         speicher: o.speicher,
         api: o.api,
+        speicherFuer: (token) => this.speicherFuer(sitzungsbindung(token)),
         turnier: o.turnier,
         token: o.token ?? (() => null),
         intervallMs: o.intervallMs,
@@ -47,6 +49,12 @@ export class TurnierSitzung {
       this.abgleich = null;
     }
   }
+
+  private speicherFuer(bindung: string | null) {
+    return this.o.modus === 'online' && this.o.speicher.sitzungsbereiche
+      ? new SitzungsSpeicher(this.o.speicher, bindung ?? 'zuschauer') : this.o.speicher;
+  }
+  sicht() { return this.speicherFuer(sitzungsbindung(this.o.token?.() ?? null)).sicht(this.turnier); }
 
   private autor(): Autor {
     return typeof this.o.autor === 'function' ? this.o.autor() : this.o.autor;
@@ -76,14 +84,16 @@ export class TurnierSitzung {
    */
   eintragen(art: string, daten: Record<string, unknown>, festeId?: string): Promise<LokalesEreignis> {
     // Nacheinander ausführen, damit lokale Laufnummern eindeutig bleiben
-    const schritt = this.warteschlange.then(() => this.eintragenIntern(art, daten, festeId));
+    const autor = this.autor();
+    const bindung = sitzungsbindung(this.o.token?.() ?? null);
+    const schritt = this.warteschlange.then(() => this.eintragenIntern(art, daten, autor, bindung, festeId));
     this.warteschlange = schritt.catch(() => undefined);
     return schritt;
   }
 
-  private async eintragenIntern(art: string, daten: Record<string, unknown>, festeId?: string): Promise<LokalesEreignis> {
-    const { speicher, turnier, modus, geraet } = this.o;
-    const autor = this.autor();
+  private async eintragenIntern(art: string, daten: Record<string, unknown>, autor: Autor, bindung: string | null, festeId?: string): Promise<LokalesEreignis> {
+    const { turnier, modus, geraet } = this.o;
+    const speicher = this.speicherFuer(bindung);
     const zeit = new Date().toISOString();
     let seq: number | null = null;
     if (festeId) {
@@ -105,6 +115,7 @@ export class TurnierSitzung {
       seq,
       empfangen: modus === 'lokal' ? zeit : null,
       autor,
+      ...(modus === 'online' ? { sitzung: bindung } : {}),
       reihe: naechsteReihe(),
     };
     await speicher.hinzufuegen(e);
@@ -113,14 +124,20 @@ export class TurnierSitzung {
     return e;
   }
 
-  ereignisse() {
-    return this.o.speicher.alle(this.o.turnier);
+  async ereignisse() {
+    const anfang = sitzungsbindung(this.o.token?.() ?? null);
+    const liste = await this.speicherFuer(anfang).alle(this.o.turnier);
+    if (this.o.modus === 'lokal') return liste;
+    const bindung = sitzungsbindung(this.o.token?.() ?? null);
+    if (anfang !== bindung) return [];
+    return liste.filter((e) => e.status === 'bestaetigt' || eigeneAktion(e, bindung));
   }
 
   /** Vom Server abgelehnte Einträge dieses Geräts verwerfen */
   async abgelehnteVerwerfen(): Promise<void> {
-    const ids = (await this.o.speicher.alle(this.o.turnier)).filter((e) => e.status === 'abgelehnt').map((e) => e.id);
-    await this.o.speicher.entfernen(this.o.turnier, ids);
+    const speicher = this.speicherFuer(sitzungsbindung(this.o.token?.() ?? null));
+    const ids = (await this.ereignisse()).filter((e) => e.status === 'abgelehnt').map((e) => e.id);
+    await speicher.entfernen(this.o.turnier, ids);
     this.o.beiAenderung?.();
   }
 
@@ -130,8 +147,11 @@ export class TurnierSitzung {
    * als Autor setzt der Server dann die Person, die wiederherstellt.
    */
   importieren(liste: Pick<LokalesEreignis, 'id' | 'art' | 'daten' | 'zeit' | 'geraet' | 'autor'>[]): Promise<number> {
+    const autor = this.autor();
+    const bindung = sitzungsbindung(this.o.token?.() ?? null);
     const schritt = this.warteschlange.then(async () => {
-      const { speicher, turnier, modus } = this.o;
+      const { turnier, modus } = this.o;
+      const speicher = this.speicherFuer(bindung);
       const vorhanden = new Set((await speicher.alle(turnier)).map((e) => e.id));
       let seq = (await speicher.alle(turnier)).reduce((m, e) => Math.max(m, e.seq ?? 0), 0);
       const neu: LokalesEreignis[] = [];
@@ -148,7 +168,8 @@ export class TurnierSitzung {
           status: modus === 'lokal' ? 'lokal' : 'ausstehend',
           seq: modus === 'lokal' ? ++seq : null,
           empfangen: modus === 'lokal' ? e.zeit : null,
-          autor: modus === 'lokal' ? e.autor : this.autor(),
+          autor: modus === 'lokal' ? e.autor : autor,
+          ...(modus === 'online' ? { sitzung: bindung } : {}),
           reihe: naechsteReihe(),
         });
       }

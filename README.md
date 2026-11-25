@@ -3,7 +3,7 @@
 Kostenlose Open-Source-Web-App für Tischtennisturniere auf **Handy und Tablet**: Turniere anlegen,
 Spieler auslosen, Ergebnisse eintragen, auf mehreren Geräten gleichzeitig.
 
-**Stand: Etappe 3 – erstes spielbares Turnier.** Spielerpool (im Konto oder auf dem Gerät, CSV-Import),
+**Grundfunktionen seit Etappe 3.** Spielerpool (im Konto oder auf dem Gerät, CSV-Import),
 Konkurrenzen mit Leistungsklassen, Setzung nach TTR oder eigener Liste, Auslosung mit Vereinstrennung,
 Spielsysteme *Jeder gegen jeden*, *Gruppen + K.-o.* und *K.-o.* (Freilose und Setzplätze nach DTTB-WO),
 Tabellen nach DTTB-Wettspielordnung D 7.5 oder ITTF-Regel 3.7.5, Rückzug nach WO D 7.9.

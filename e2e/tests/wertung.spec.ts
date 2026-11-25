@@ -42,7 +42,7 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await page.getByTestId('neues-turnier').click();
   await page.getByLabel('Name des Turniers').fill(`Hobbycup ${geraet}`);
-  await page.getByLabel('Datum').fill('2027-12-11');
+  await page.getByLabel('Startdatum', { exact: true }).fill('2027-12-11');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;

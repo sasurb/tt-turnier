@@ -1,6 +1,6 @@
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { letzteMail } from './mails';
+import { registrierlinkOeffnen, letzteMail } from './mails';
 
 /**
  * Paket 0.17: Verein/Sparte bei der Registrierung, Einladung einer Turnierleitung (Konto über den Link),
@@ -42,6 +42,7 @@ async function neuerKontext(browser: Browser, info: TestInfo) {
 }
 
 async function registrieren(page: Page, name: string, email: string, verein: string | null) {
+  await registrierlinkOeffnen(page, email);
   await page.getByLabel('Dein Name').fill(name);
   await page.getByLabel('E-Mail', { exact: true }).fill(email);
   await page.getByLabel('Passwort (mindestens 8 Zeichen)').fill('sicher-genug-17');

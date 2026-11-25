@@ -46,7 +46,7 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Einem Turnier beitreten',
         text: [
-          'Auf der Startseite „Turnier beitreten“ wählen, die 8-stellige Turnierkennung eingeben und danach die eigene Kennung (Spieler-, Helfer- oder Leitungskennung). Ohne eigene Kennung bist du Zuschauer.',
+          'Auf der Startseite „Turnier beitreten“ wählen, die Turnierkennung eingeben und danach die eigene Kennung (Spieler-, Helfer- oder Leitungskennung). Ohne eigene Kennung bist du Zuschauer.',
           'Schneller geht es mit dem persönlichen Link oder QR-Code, den die Turnierleitung verteilt: einmal öffnen, fertig. Das Gerät merkt sich den Zugang.',
         ],
       },

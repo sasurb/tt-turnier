@@ -512,6 +512,8 @@ export interface KonkurrenzZustand {
   /** Spiel-IDs in Spielfolge */
   reihenfolge: string[];
   rueckzuege: Rueckzugseintrag[];
+  /** Rückzüge nach vollständigem Abschluss der Vorrunde. */
+  vorHauptrunde?: string[];
   /** Ab 0.18: Check-in dieser Konkurrenz abgeschlossen (Voraussetzung der Auslosung bei checkinPflicht) */
   checkinFertig: boolean;
 }
@@ -592,3 +594,12 @@ export function centAus(text: string): number | null | undefined {
 
 /** Spiel-ID-Präfix je Baum */
 export const BAUM_PRAEFIX: Record<Baum, string> = { haupt: 'ko', trost: 'tr', verlierer: 'vl', finale: 'fi' };
+
+export function strittigerStand(stand: ErgebnisStand | null): boolean {
+  return stand === 'angefochten' || stand === 'konflikt';
+}
+
+export function wertungVorlaeufig(k: KonkurrenzZustand): boolean {
+  return Object.values(k.spiele).some((s) => !s.gestrichen && strittigerStand(s.stand)) ||
+    Object.values(k.begegnungen).some((b) => Object.values(b.teile).some((t) => strittigerStand(t.stand)));
+}

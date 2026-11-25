@@ -1,6 +1,7 @@
 import { MAX_EREIGNISSE_JE_AUFRUF } from '@shared/protokoll';
 import { Api, ApiFehler } from './api';
 import type { EreignisSpeicher, GespeicherteSicht } from './speicher';
+import { eigeneAktion, sitzungsbindung } from './sitzungsbindung';
 import { ausServer } from './typen';
 
 export type Verbindung = 'unbekannt' | 'verbunden' | 'offline' | 'nicht_angemeldet' | 'fehler';
@@ -14,6 +15,7 @@ export interface AbgleichStatus {
 
 export interface AbgleichOptionen {
   speicher: EreignisSpeicher;
+  speicherFuer?: (token: string | null) => EreignisSpeicher;
   api: Api;
   turnier: string;
   /** Liefert das aktuelle Schreib-Token oder null (dann nur Abholen, z. B. Zuschauer). */
@@ -42,6 +44,8 @@ export class Abgleich {
   private erneut = false;
   private aktiv = false;
   private abstand: number;
+  private sendePauseBis = 0;
+  private blockGroesse = MAX_EREIGNISSE_JE_AUFRUF;
   status: AbgleichStatus = { verbindung: 'unbekannt', ausstehend: 0, letzterAbgleich: null, meldung: null };
 
   constructor(private readonly o: AbgleichOptionen) {
@@ -88,27 +92,31 @@ export class Abgleich {
 
   /** Ein vollständiger Durchlauf: Senden, dann Abholen. Öffentlich für Tests. */
   async durchlauf(): Promise<void> {
-    const { speicher, api, turnier } = this.o;
+    const { api, turnier } = this.o;
+    const token = this.o.token();
+    const speicher = this.o.speicherFuer?.(token) ?? this.o.speicher;
     let neueDaten = false;
     const basis = this.o.intervallMs ?? 2000;
     try {
-      const token = this.o.token();
       let verbindung: Verbindung = 'verbunden';
       let meldung: string | null = null;
 
       // 1. Senden – ein Block je Durchlauf; die vollständige Bestätigung (mit Autor)
       //    kommt beim Abholen zurück, bis dahin bleibt der Eintrag als „ausstehend“ sichtbar.
-      const offen = await speicher.ausstehende(turnier, MAX_EREIGNISSE_JE_AUFRUF);
-      if (offen.length > 0 && !token) {
+      const bindung = sitzungsbindung(token);
+      const wartend = await speicher.ausstehende(turnier);
+      const offen = wartend.filter((e) => eigeneAktion(e, bindung)).slice(0, this.blockGroesse);
+      if (!token && wartend.some((e) => e.sitzung === null)) {
         verbindung = 'nicht_angemeldet';
         meldung = 'Für das Senden ist eine Anmeldung nötig.';
-      } else if (offen.length > 0 && token) {
+      } else if (offen.length > 0 && token && Date.now() >= this.sendePauseBis) {
         try {
           const antwort = await api.senden(
             turnier,
             token,
             offen.map(({ id, art, daten, zeit, geraet }) => ({ id, art, daten, zeit, geraet })),
           );
+          this.sendePauseBis = 0;
           // Einzelne Einträge abgelehnt (ab Server 0.11): markieren statt die ganze Warteschlange zu blockieren
           if (antwort.abgelehnt?.length) {
             await speicher.ablehnen(turnier, antwort.abgelehnt.map((x) => ({ id: x.id, meldung: x.meldung })));
@@ -119,8 +127,17 @@ export class Abgleich {
           if (f instanceof ApiFehler && (f.code === 'nicht_angemeldet' || f.code === 'keine_berechtigung' || f.code === 'gesperrt')) {
             verbindung = 'nicht_angemeldet';
             meldung = f.message;
-          } else if (f instanceof ApiFehler && (f.code === 'zu_viele_versuche' || f.code === 'zu_gross')) {
-            // später erneut senden, Abholen läuft weiter
+          } else if (f instanceof ApiFehler && f.code === 'zu_gross') {
+            if (offen.length === 1) {
+              await speicher.ablehnen(turnier, [{ id: offen[0]!.id, meldung: f.message }]);
+              neueDaten = true;
+            } else {
+              this.blockGroesse = Math.ceil(offen.length / 2);
+            }
+            meldung = f.message;
+          } else if (f instanceof ApiFehler && f.code === 'zu_viele_versuche') {
+            this.abstand = Math.min(this.abstand * 2, this.o.maxIntervallMs ?? 15_000);
+            this.sendePauseBis = Date.now() + Math.max(this.abstand, f.pauseMs);
             meldung = f.message;
           } else {
             throw f;
@@ -178,16 +195,18 @@ export class Abgleich {
       if (rechteWeg) {
         verbindung = 'nicht_angemeldet';
         meldung = 'Die Anmeldung gilt für dieses Turnier nicht mehr.';
-        this.o.beiRechteVerlust?.();
+        if (token === this.o.token()) this.o.beiRechteVerlust?.();
       }
-      const rest = (await speicher.ausstehende(turnier)).length;
-      if (rest > 0 && verbindung === 'verbunden') this.erneut = true; // weitere Blöcke senden
-      this.abstand = basis;
+      const aktuelleBindung = sitzungsbindung(this.o.token());
+      const rest = (await speicher.ausstehende(turnier)).filter((e) => eigeneAktion(e, aktuelleBindung)).length;
+      if (rest > 0 && verbindung === 'verbunden' && Date.now() >= this.sendePauseBis) this.erneut = true; // weitere Blöcke senden
+      if (this.sendePauseBis === 0) this.abstand = basis;
       this.setzeStatus({ verbindung, ausstehend: rest, letzterAbgleich: new Date(), meldung }, neueDaten);
     } catch (f) {
       const offline = f instanceof ApiFehler && f.istNetzwerk;
       this.abstand = Math.min(this.abstand * 2, this.o.maxIntervallMs ?? 15_000);
-      const rest = (await speicher.ausstehende(turnier)).length;
+      const aktuelleBindung = sitzungsbindung(this.o.token());
+      const rest = (await speicher.ausstehende(turnier)).filter((e) => eigeneAktion(e, aktuelleBindung)).length;
       this.setzeStatus(
         {
           verbindung: offline ? 'offline' : 'fehler',

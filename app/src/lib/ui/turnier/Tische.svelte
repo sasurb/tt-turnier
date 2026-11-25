@@ -7,6 +7,8 @@
   import { gelernteSatzMinuten, zeitplanGedrosselt, zeitplanSofort } from '../../engine/zeitplan';
   import { spielerVon, type TurnierZustand } from '../../engine/zustand';
   import { Ansager, ansageText, aufrufeVon, aufrufGeraet, neueAufrufe, setzeAufrufGeraet, type AufrufGeraet } from '../../ansage';
+  import { teileVon, zwischenstand } from '../../engine/mannschaft';
+  import { ergebnisText } from '../../engine/ergebnis';
   import Hilfe from '../Hilfe.svelte';
 
   /**
@@ -90,6 +92,13 @@
     } catch (x) {
       fehler = x instanceof Error ? x.message : String(x);
     }
+  }
+  async function wechseln(s: Spiel, bisher: number, ziel: number) {
+    if (!darfAufrufen || !freieTische.includes(ziel)) return;
+    await eintragen(ART.spielAufgerufen, {
+      konkurrenz: s.konkurrenz, spiel: s.id, tisch: s.tisch === bisher ? ziel : s.tisch,
+      tisch2: s.tisch2 === bisher ? ziel : s.tisch2, schiri: s.schiri,
+    });
   }
   async function zurueck(s: Spiel) {
     await eintragen(ART.spielAufrufZurueck, { konkurrenz: s.konkurrenz, spiel: s.id });
@@ -304,19 +313,45 @@
         </div>
         {#if t.spiel}
           {@const s = t.spiel}
-          <div class="paarung">{name(z, s.a)} – {name(z, s.b)}</div>
+          <button class="spielfeld" onclick={() => oeffnen(s)} aria-label={`Spielinformationen Tisch ${t.nr}: ${name(z,s.a)} gegen ${name(z,s.b)}`}>
+            <span>{name(z, s.a)}</span><span>{name(z, s.b)}</span>
+          </button>
+          {#if z.konkurrenzen[s.konkurrenz]?.einst.art === 'mannschaft'}
+            {@const teile = teileVon(z.konkurrenzen[s.konkurrenz]!, s)}
+            {@const stand = zwischenstand(teile)}
+            <strong>Begegnungsstand {stand.siegeA}:{stand.siegeB}</strong>
+            {#each teile.filter((x) => x.ergebnis) as teil (teil.nr)}
+              <div class="klein">Teilspiel {teil.nr} · {ergebnisText(teil.ergebnis!)}
+                {teil.ergebnis?.saetze?.map(([a,b]) => a + ':' + b).join(' · ') ?? ''}</div>
+            {/each}
+            {@const offen = teile.find((x) => x.status === 'offen')}
+            {#if offen}<div class="klein">Nächstes offenes Teilspiel {offen.nr}</div>{/if}
+          {:else if s.ergebnis}
+            <strong>{ergebnisText(s.ergebnis)}</strong>
+            <div class="klein">{s.ergebnis.saetze?.map(([a,b]) => a + ':' + b).join(' · ') ?? ''}</div>
+          {:else}<span class="klein">Belegt · Ergebnis offen</span>{/if}
           {#if s.tisch2}<div class="leise klein">{T.tische.mitTisch(s.tisch === t.nr ? s.tisch2 : s.tisch!)}</div>{/if}
           <div class="leise klein">{ort(s)}{mitSchiri && s.schiri ? ` · ${T.spiele.schiri(s.schiri.name)}` : ''}</div>
           {#if darfAufrufen}
             <div class="reihe knoepfe">
               <button class="klein" onclick={() => oeffnen(s)}>{T.tische.ergebnis}</button>
+              {#if freieTische.length}
+                <select aria-label={`Tisch ${t.nr} wechseln`} onchange={(e) => { const nr = Number(e.currentTarget.value); e.currentTarget.value = ''; void wechseln(s, t.nr, nr); }}>
+                  <option value="">Tisch wechseln</option>
+                  {#each freieTische as nr (nr)}<option value={nr}>{T.tische.tisch(nr)}</option>{/each}
+                </select>
+              {/if}
               <button class="zweit klein" onclick={() => zurueck(s)}>{T.tische.zurueck}</button>
               {#if tonBereit && geraet.ansage}<button class="zweit klein" onclick={() => wiederholen(s)} aria-label={T.tische.wiederholen}>🔊</button>{/if}
             </div>
           {/if}
           {@const g = geplantFuer(t.nr)}
           {#if g}<div class="leise klein geplant">{T.tische.alsNaechstes(t.nr)}: {name(z, g.a)} – {name(z, g.b)}</div>{/if}
-        {:else if darfAufrufen}
+        {:else}
+          {#if !t.gesperrt && darfAufrufen && naechste.length}
+            <button class="spielfeld" onclick={() => vorbereiten(naechste[0]!.spiel, t.nr)}><span>Spiel aufrufen</span></button>
+          {:else}<div class="spielfeld leer" aria-hidden="true"></div>{/if}
+          {#if darfAufrufen}
           {#if ziehen && !t.gesperrt}<div class="ablage">{T.tische.hierAblegen}</div>{/if}
           <div class="reihe knoepfe">
             {#if !t.gesperrt && naechste.length}
@@ -326,6 +361,7 @@
               <button class="zweit klein" onclick={() => sperren(t.nr, !t.gesperrt)} title={T.tische.sperrenHilfe}>{t.gesperrt ? T.tische.freigeben : T.tische.sperren}</button>
             {/if}
           </div>
+          {/if}
         {/if}
       </li>
     {/each}
@@ -505,7 +541,11 @@
   .kopf { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .kopf strong { font-size: 1.15rem; }
   .marke.frei { color: var(--blau); border-color: var(--blau); }
-  .paarung { font-weight: 600; margin-top: 4px; overflow-wrap: anywhere; }
+  .spielfeld { width: 100%; position: relative; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 12px; padding: 8px; min-height: 60px; margin: 6px 0; border: 3px double white; outline: 1px solid #165778; border-radius: 3px; background: linear-gradient(to bottom, transparent 49%, #ffffff80 49%, #ffffff80 51%, transparent 51%), #14577b; color: white; overflow-wrap: anywhere; }
+  .spielfeld::before { content: ''; position: absolute; inset: 0 auto 0 50%; border-left: 2px dashed white; }
+  .spielfeld span { position: relative; background: #14577b; padding: 2px; }
+  .spielfeld span:only-child { grid-column: span 2; justify-self: center; }
+  .spielfeld.leer { opacity: .65; }
   .klein { font-size: 0.9rem; }
   .knoepfe { margin-top: 8px; }
   .knoepfe button { min-height: 44px; }

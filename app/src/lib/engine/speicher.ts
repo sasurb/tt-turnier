@@ -10,6 +10,7 @@ import { sortieren } from './typen';
  * IndexedDB im Browser (dauerhaft, offline) und Arbeitsspeicher (Tests).
  */
 export interface EreignisSpeicher {
+  sitzungsbereiche?: boolean;
   /** Alle Ereignisse eines Turniers in Anwendungsreihenfolge. */
   alle(turnier: string): Promise<LokalesEreignis[]>;
   /** Noch nicht vom Server bestätigte Ereignisse (älteste zuerst). */
@@ -78,9 +79,10 @@ export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
     for (const id of ids) if (this.ereignisse.get(id)?.turnier === turnier && this.ereignisse.get(id)?.status !== 'bestaetigt') this.ereignisse.delete(id);
   }
   async loeschen(turnier: string) {
-    for (const [id, e] of this.ereignisse) if (e.turnier === turnier) this.ereignisse.delete(id);
-    this.meta.delete(turnier);
-    this.sichten.delete(turnier);
+    for (const [id, e] of this.ereignisse) if (e.turnier === turnier || e.turnier.startsWith(turnier + '/')) this.ereignisse.delete(id);
+    for (const m of [this.meta, this.sichten]) for (const key of m.keys()) {
+      if (key === turnier || key.startsWith(turnier + '/')) m.delete(key);
+    }
   }
 }
 
@@ -231,9 +233,45 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     const db = await this.db;
     const tx = db.transaction(['ereignisse', 'meta'], 'readwrite');
     const store = tx.objectStore('ereignisse');
-    const schluessel = await anfrage(store.index('turnier').getAllKeys(turnier));
+    const bereiche = IDBKeyRange.bound(turnier + '/', turnier + '/\uffff');
+    const index = store.index('turnier');
+    const [einzeln, sitzungen] = await Promise.all([anfrage(index.getAllKeys(turnier)), anfrage(index.getAllKeys(bereiche))]);
+    const schluessel = [...einzeln, ...sitzungen];
+    tx.objectStore('meta').delete(bereiche);
     for (const k of schluessel) store.delete(k);
     tx.objectStore('meta').delete(turnier);
     await fertig(tx);
   }
+}
+
+/** Separater Bestand samt Lesestand je Online-Sitzung. Die fachlichen Ereignis-IDs bleiben beim Versand unverändert. */
+export class SitzungsSpeicher implements EreignisSpeicher {
+  constructor(private basis: EreignisSpeicher, private bindung: string) {}
+
+  private bereich(turnier: string) { return turnier + '/' + this.bindung; }
+  private packen(e: LokalesEreignis): LokalesEreignis {
+    const turnier = this.bereich(e.turnier);
+    return { ...e, turnier, id: turnier + '/' + e.id };
+  }
+  private entpacken(turnier: string, e: LokalesEreignis): LokalesEreignis {
+    return { ...e, turnier, id: e.id.slice(this.bereich(turnier).length + 1) };
+  }
+  async alle(t: string) { return (await this.basis.alle(this.bereich(t))).map((e) => this.entpacken(t, e)); }
+  async ausstehende(t: string, max?: number) { return (await this.basis.ausstehende(this.bereich(t), max)).map((e) => this.entpacken(t, e)); }
+  hinzufuegen(e: LokalesEreignis) { return this.basis.hinzufuegen(this.packen(e)); }
+  uebernehmen(liste: LokalesEreignis[]) { return this.basis.uebernehmen(liste.map((e) => this.packen(e))); }
+  abgeholtBis(t: string) { return this.basis.abgeholtBis(this.bereich(t)); }
+  setzeAbgeholtBis(t: string, seq: number) { return this.basis.setzeAbgeholtBis(this.bereich(t), seq); }
+  sicht(t: string) { return this.basis.sicht(this.bereich(t)); }
+  setzeSicht(t: string, sicht: GespeicherteSicht) { return this.basis.setzeSicht(this.bereich(t), sicht); }
+  bestaetigteVerwerfen(t: string) { return this.basis.bestaetigteVerwerfen(this.bereich(t)); }
+  ablehnen(t: string, liste: { id: string; meldung: string }[]) {
+    const bereich = this.bereich(t);
+    return this.basis.ablehnen(bereich, liste.map((e) => ({ ...e, id: bereich + '/' + e.id })));
+  }
+  entfernen(t: string, ids: string[]) {
+    const bereich = this.bereich(t);
+    return this.basis.entfernen(bereich, ids.map((id) => bereich + '/' + id));
+  }
+  loeschen(t: string) { return this.basis.loeschen(this.bereich(t)); }
 }

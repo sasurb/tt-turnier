@@ -34,7 +34,7 @@ test('Konkurrenz bleibt zugeklappt, Zusammenlegen mit Hilfe', async ({ page }, i
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await page.getByTestId('neues-turnier').click();
   await page.getByLabel('Name des Turniers').fill(`Aufklappen ${geraet}`);
-  await page.getByLabel('Datum').fill('2027-12-11');
+  await page.getByLabel('Startdatum', { exact: true }).fill('2027-12-11');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
 

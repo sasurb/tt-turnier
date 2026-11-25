@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { angabenSetzen } from './hilfen';
 import { mkdirSync } from 'node:fs';
-import { letzteMail } from './mails';
+import { registrierlinkOeffnen, letzteMail } from './mails';
 import { ADMIN } from './einrichten';
 
 /**
@@ -36,6 +36,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   // Konto anlegen
   await page.getByRole('link', { name: 'Konto anlegen' }).first().click();
   await expect(page.getByRole('heading', { name: 'Konto anlegen' })).toBeVisible();
+  await registrierlinkOeffnen(page, email);
   await page.getByLabel('Dein Name').fill(`TTC ${geraet}`);
   await page.getByLabel('E-Mail', { exact: true }).fill(email);
   await page.getByLabel('Passwort (mindestens 8 Zeichen)').fill(passwort);

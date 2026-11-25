@@ -137,7 +137,7 @@ test('Rückgängig, Nachmelden, Zeitplan, Vorplanen und Ziehen auf Tische', asyn
     await page.mouse.up();
   }
   await expect(page.getByText('Spiel an Tisch 1 aufgerufen.')).toBeVisible();
-  await expect(ziel).toContainText('–');
+  await expect(ziel.getByRole('button', { name: /Spielinformationen Tisch 1: .+ gegen .+/ })).toBeVisible();
   await expect(ziel.getByRole('button', { name: 'Aufruf zurücknehmen' })).toBeVisible();
   await layoutPruefen(page, page.getByTestId('tische'));
   await bild(page, '53-tische-zeitplan');

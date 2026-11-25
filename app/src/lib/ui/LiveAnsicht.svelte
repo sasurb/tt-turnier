@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { strittigerStand, wertungVorlaeufig } from '../engine/modell';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { T } from '../texte';
   import { linkZu } from '../router.svelte';
@@ -188,12 +189,12 @@
   }
 
   /* ---------- Ablauf ---------- */
-  const laufend = $derived(z ? tische(z) : []);
-  const naechste = $derived(z ? anstehendeSpiele(z, jetzt).slice(0, 8) : []);
+  const laufend = $derived(z ? tische(z).filter((t) => !e.nurKonkurrenz || !t.spiel || t.spiel.konkurrenz === e.nurKonkurrenz) : []);
+  const naechste = $derived(z ? anstehendeSpiele(z, jetzt).filter((a) => !e.nurKonkurrenz || a.spiel.konkurrenz === e.nurKonkurrenz).slice(0, 8) : []);
   const ergebnisse = $derived(
     z
       ? alleSpiele(z)
-          .filter((s) => s.eintrag && s.ergebnis && s.status === 'gespielt' && !s.gestrichen)
+          .filter((s) => (!e.nurKonkurrenz || s.konkurrenz === e.nurKonkurrenz) && s.eintrag && s.ergebnis && s.status === 'gespielt' && !s.gestrichen)
           .sort((a, b) => (a.eintrag!.zeit < b.eintrag!.zeit ? 1 : -1))
           .slice(0, 8)
       : [],
@@ -354,7 +355,7 @@
                 {#each ergebnisse as s (s.konkurrenz + s.id)}
                   <li>
                     <span class="paar-klein"><span class:sieger={s.gewinner === 'a'}>{name(z, s.a)}</span> – <span class:sieger={s.gewinner === 'b'}>{name(z, s.b)}</span></span>
-                    <span class="erg">{ergebnisText(s.ergebnis!)}</span>
+                    <span class="erg">{ergebnisText(s.ergebnis!)}{#if strittigerStand(s.stand)} · {T.spiele[s.stand!]} (vorläufig){/if}</span>
                     <span class="ort">{ort(s)}</span>
                   </li>
                 {/each}
@@ -366,7 +367,7 @@
         </div>
       {:else if aktuell.art === 'gruppen'}
         {@const k = aktuell.k}
-        <h2 class="seitentitel">{k.einst.name}{aktuell.von > 1 ? ` (${aktuell.teil}/${aktuell.von})` : ''}</h2>
+        <h2 class="seitentitel">{k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if}{aktuell.von > 1 ? ` (${aktuell.teil}/${aktuell.von})` : ''}</h2>
         <div class="gruppen-raster" class:eine={aktuell.nrs.length === 1}>
           {#each aktuell.nrs as nr (nr)}
             {@const t = tabelle(k, nr)}
@@ -391,7 +392,7 @@
       {:else if aktuell.art === 'rangliste'}
         {@const k = aktuell.k}
         {@const zur = zurueckgezogen(k)}
-        <h2 class="seitentitel">{k.einst.name} · {T.tab.rundeStand(letzteRunde(k), rundenZahl(k))}</h2>
+        <h2 class="seitentitel">{k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if} · {T.tab.rundeStand(letzteRunde(k), rundenZahl(k))}</h2>
         <section class="block">
           <table>
             {#if istSchweizerArt(k.einst.modus)}
@@ -413,7 +414,7 @@
         </section>
       {:else if aktuell.art === 'baum'}
         {@const k = aktuell.k}
-        <h2 class="seitentitel">{k.einst.name} · {aktuell.baum === 'haupt' ? (k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko) : T.konk.baeume[aktuell.baum]}</h2>
+        <h2 class="seitentitel">{k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if} · {aktuell.baum === 'haupt' ? (k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko) : T.konk.baeume[aktuell.baum]}</h2>
         <div class="baum">
           {#each baumSpalten(k, aktuell.baum) as sp, i (i)}
             <div class="runde">
@@ -434,7 +435,7 @@
         </div>
       {:else if aktuell.art === 'plaetze'}
         {@const k = aktuell.k}
-        <h2 class="seitentitel">{k.einst.name} · {T.tab.platzierungen}</h2>
+        <h2 class="seitentitel">{k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if} · {T.tab.platzierungen}</h2>
         <section class="block">
           <ol class="plaetze">
             {#each platzierungen(k).slice(0, 8) as x (x.id)}

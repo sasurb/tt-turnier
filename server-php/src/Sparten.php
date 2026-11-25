@@ -82,12 +82,12 @@ final class Sparten
     }
 
     /** Leitet dieses Konto das Turnier? (Spartenleitung der Sparte, Konto-Zugang zum Turnier oder Administrator) */
-    public function kontoLeitet(array $s, array $t): bool
+    public function kontoLeitet(array $s, array $t, bool $mitAdminrecht = true): bool
     {
         if ($s['konto_id'] === null) {
             return false;
         }
-        if ($this->istAdmin($s)) {
+        if ($mitAdminrecht && $this->istAdmin($s)) {
             return true;
         }
         // Ohne Zustimmung zu den Nutzungsbedingungen (mit AVV) keine Leitung per Konto
@@ -98,7 +98,7 @@ final class Sparten
         if ($this->cache[$kb] === null) {
             return false;
         }
-        if ($t['sparte_id'] !== null && $this->istSpartenleitung($s, (int)$t['sparte_id'])) {
+        if ($t['sparte_id'] !== null && ($this->mitglied((int)$s['konto_id'], (int)$t['sparte_id'])['rolle'] ?? null) === 'spartenleitung') {
             return true;
         }
         $k = 'z|' . $s['konto_id'] . '|' . $t['id'];
