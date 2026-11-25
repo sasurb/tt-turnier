@@ -1724,7 +1724,7 @@ export const T = {
       waehlen: 'bitte wählen',
       entfernen: 'Entfernen',
       volljaehrig: 'Ich bin mindestens 18 Jahre alt.',
-      eltern: 'Die Erziehungsberechtigten der gemeldeten Minderjährigen sind mit der Anmeldung und der Veröffentlichung von Namen und Ergebnissen einverstanden.',
+      eltern: 'Die gemeldeten Personen – bei Minderjährigen ihre Erziehungsberechtigten – sind mit der Anmeldung und der Veröffentlichung von Namen und Ergebnissen einverstanden. Ich gebe ihnen den Datenschutzhinweis weiter.',
       senden: 'Gruppe anmelden',
       fehlt: 'Bitte die markierten Angaben ergänzen: Namen aller Personen, mindestens eine Meldung, Mannschaften mit Namen und passender Spielerzahl.',
       zusammenfassung: (p: number, m: number) => `${p} ${p === 1 ? 'Person' : 'Personen'}, ${m} ${m === 1 ? 'Meldung' : 'Meldungen'}`,

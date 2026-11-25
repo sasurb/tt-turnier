@@ -47,6 +47,9 @@ final class Api
     private const SICHERUNGEN_JE_TAG = 150;
     /** Online-Anmeldung steht neuen Konten nach so vielen Tagen offen (der Admin kann früher freischalten oder sperren) */
     public const ANMELDUNG_NACH_TAGEN = 7;
+    /** Platzhalter für Begleitpersonen in der Sicht der Zuschauer (shared/protokoll.ts BEGLEITUNG_NAME) */
+    public const BEGLEITUNG_NAME = 'Begleitperson';
+
     /** Platzhalter für Namen entfernter Spieler in der Sicht von Spielern und Zuschauern (shared/protokoll.ts ENTFERNT_NAME) */
     public const ENTFERNT_NAME = 'Entfernt';
     private const KONTO_LOESCHEN_NACH = 365 * self::TAG;   // shared/protokoll.ts KONTO_LOESCHEN_NACH_TAGEN
@@ -128,9 +131,10 @@ final class Api
         $antwort = $antwortAn ?? ($this->adminMail() ?: null);
         $ok = $this->mailer->senden(new Mail($an, $betreff, $text . $this->mailFuss($antwortAn !== null), $antwort, $anhangName, $anhang));
         if (!$ok) {
-            error_log("tt-turnier: Mail an {$an} konnte nicht gesendet werden ({$betreff})");
+            error_log('tt-turnier: Mail ' . $this->logKennung($an) . ' konnte nicht sofort gesendet werden');
             // Ab 0.18: ohne Anhang später erneut versuchen (Warteschlange, bis zu sechs Versuche)
-            if ($anhang === null && $this->mailer->bereit()) {
+            // Mails mit geheimen Links (Passwort, Bestätigung) nicht speichern – die DB kennt sonst nur deren Hashes
+            if ($anhang === null && $this->mailer->bereit() && !preg_match('/[a-f0-9]{48,}/', $text)) {
                 try {
                     $this->nachrichten->vormerken($an, $betreff, $text . $this->mailFuss($antwortAn !== null), $antwort, 'system', null, null, [], 1);
                     return true;
@@ -140,6 +144,12 @@ final class Api
             }
         }
         return $ok;
+    }
+
+    /** Pseudonym einer Adresse fürs Server-Protokoll (HMAC mit dem Server-Geheimnis, nicht zurückrechenbar) */
+    public function logKennung(string $adresse): string
+    {
+        return substr(hash_hmac('sha256', strtolower($adresse), $this->geheimnis()), 0, 12);
     }
 
     /** Fußzeile aller Mails; $leitung: Antworten erreichen die Turnierleitung statt den Betreiber */
@@ -1075,6 +1085,11 @@ final class Api
         // Mannschaften: noch nicht aufgedeckte Aufstellungen (ab 0.13). In die Filter-Kennung gehen nur aufgedeckte
         // Begegnungen ein: Neu laden müssen die Geräte erst, wenn etwas sichtbar wird.
         $filter = $weg;
+        // Begleitpersonen (ab 0.18): für Zuschauer ohne Namen, maßgeblich ist der letzte Stand je Person
+        $begl = in_array($sicht, ['zuschauer', 'kurz'], true) ? $this->begleitpersonen((string)$t['id']) : [];
+        foreach ($begl as $id => $_) {
+            $filter['begleitung:' . $id] = true;
+        }
         // Kasse-Helfer haben die volle Sicht (Zahlungen), sehen Aufstellungen aber erst nach dem Aufdecken (ab 0.16)
         $kasseSicht = $sicht === 'voll' && !$this->leitungsSicht($a, $t);
         if ($sicht !== 'voll' || $kasseSicht) {
@@ -1090,7 +1105,7 @@ final class Api
             $liste = $kasseSicht
                 ? array_values(array_filter($liste, static fn(array $e): bool => !isset($verdeckt[$e['id']])))
                 : array_values(array_map(
-                    static fn(array $e): array => self::gefiltert($e, $sicht, $weg),
+                    static fn(array $e): array => self::gefiltert($e, $sicht, $weg, $begl),
                     array_filter($liste, static fn(array $e): bool => !in_array($e['art'], self::NUR_VOLLE_SICHT, true) && !isset($verdeckt[$e['id']]))
                 ));
             foreach ($offen as $schluessel => $_) {
@@ -1141,35 +1156,44 @@ final class Api
      */
     private function mannschaftsEinst(string $turnierId, string $konkurrenz): array
     {
-        $aus = ['ersatz' => 0, 'wechsel' => false];
+        $aus = ['ersatz' => 0, 'wechsel' => false, 'e_ersatz' => 0, 'e_wechsel' => false];
         $zeilen = $this->db->alle(
             "SELECT art, daten FROM ereignisse WHERE turnier_id = ? AND art IN ('konkurrenz.angelegt', 'konkurrenz.geaendert', 'phase.gestartet') AND autor_rolle IN ('leitung', 'admin', 'veranstalter') ORDER BY seq",
             [$turnierId]
         );
         $gestartet = false;
+        $koGestartet = false;
         foreach ($zeilen as $z) {
             $x = json_decode((string)$z['daten'], true);
             if (is_array($x) && $z['art'] === 'phase.gestartet' && ($x['konkurrenz'] ?? null) === $konkurrenz) {
-                $gestartet = true; // danach ist das Spielsystem fest (FEST_NACH_START)
+                $gestartet = true; // danach ist das Spielsystem fest (FEST_NACH_START), die Endrunde bis zum K.-o.-Start nicht
+                $koGestartet = $koGestartet || ($x['phase'] ?? null) === 'ko';
                 continue;
             }
-            if (!is_array($x) || ($x['id'] ?? null) !== $konkurrenz || ($gestartet && $z['art'] === 'konkurrenz.geaendert')) {
+            if (!is_array($x) || ($x['id'] ?? null) !== $konkurrenz || ($koGestartet && $z['art'] === 'konkurrenz.geaendert')) {
                 continue;
             }
-            $m = $x['einst']['mannschaft'] ?? null;
+            if (!is_array($x['einst'] ?? null)) {
+                continue;
+            }
             if ($z['art'] === 'konkurrenz.angelegt') {
-                $aus = ['ersatz' => 0, 'wechsel' => false];
+                $aus = ['ersatz' => 0, 'wechsel' => false, 'e_ersatz' => 0, 'e_wechsel' => false];
             }
-            if (is_array($m)) {
+            // Vorrunde und (falls eingestellt) Endrunde; der Server nimmt das Großzügigere, die Engine entscheidet je Stufe
+            $vorrunde = $gestartet && $z['art'] === 'konkurrenz.geaendert' ? null : ($x['einst']['mannschaft'] ?? null);
+            foreach (['' => $vorrunde, 'e_' => $x['einst']['endrunde']['mannschaft'] ?? null] as $p => $m) {
+                if (!is_array($m)) {
+                    continue;
+                }
                 if (is_int($m['ersatz'] ?? null) && $m['ersatz'] >= 0 && $m['ersatz'] <= 4) {
-                    $aus['ersatz'] = $m['ersatz'];
+                    $aus[$p . 'ersatz'] = $m['ersatz'];
                 }
                 if (is_bool($m['wechsel'] ?? null)) {
-                    $aus['wechsel'] = $m['wechsel'];
+                    $aus[$p . 'wechsel'] = $m['wechsel'];
                 }
             }
         }
-        return $aus;
+        return ['ersatz' => max($aus['ersatz'], $aus['e_ersatz']), 'wechsel' => $aus['wechsel'] || $aus['e_wechsel']];
     }
 
     /**
@@ -1203,7 +1227,9 @@ final class Api
         }
         // Spielerkennung: nur die Führung der eigenen Mannschaft; mit Helferrecht amtlich nur für Begegnungen,
         // in denen die eigene Mannschaft nicht spielt (wie die Engine)
-        $mitglied = in_array($bezug, $team['spieler'], true) || in_array($bezug, $teams["$k|$g"]['spieler'], true);
+        // ab 0.18 zählt auch die Führung (z. B. Begleitperson) als Mitglied
+        $mitglied = in_array($bezug, $team['spieler'], true) || in_array($bezug, $teams["$k|$g"]['spieler'], true)
+            || $team['fuehrer'] === $bezug || $teams["$k|$g"]['fuehrer'] === $bezug;
         if ($spieler && (!$helfer || $mitglied) && $team['fuehrer'] !== $bezug) {
             return 'Die Aufstellung gibt die Mannschaftsführung ab.';
         }
@@ -1243,7 +1269,7 @@ final class Api
         // Ab 0.18: Wechsel in der Begegnung (Teilspiel-Nummer → Spieler der Mannschaft), nur wenn eingestellt
         if (array_key_exists('wechsel', $d)) {
             $w = $d['wechsel'];
-            if (!is_array($w) || !$me['wechsel'] || count($w) > 30) {
+            if (!is_array($w) || ($w !== [] && !$me['wechsel']) || count($w) > 30) {
                 return 'Wechsel ungültig.';
             }
             foreach ($w as $nr => $x) {
@@ -1338,6 +1364,24 @@ final class Api
         $ids = array_keys($weg);
         sort($ids, SORT_STRING);
         return substr(hash('sha256', implode(',', $ids)), 0, 16);
+    }
+
+    /** IDs der Spieler, die die Leitung je als Begleitperson eingetragen hat (Kern: Zentrale.begleitpersonen) */
+    private function begleitpersonen(string $turnierId): array
+    {
+        $zeilen = $this->db->alle(
+            "SELECT daten FROM ereignisse WHERE turnier_id = ? AND art IN ('spieler.angelegt', 'spieler.geaendert') AND autor_rolle IN ('leitung', 'admin', 'veranstalter') ORDER BY seq",
+            [$turnierId]
+        );
+        // Vorsichtig: wer je als Begleitperson eingetragen war, bleibt für Zuschauer ohne Namen (auch bei Rücknahmen)
+        $aus = [];
+        foreach ($zeilen as $z) {
+            $d = json_decode((string)$z['daten'], true);
+            if (is_array($d) && is_string($d['id'] ?? null) && ($d['begleitung'] ?? null) === true) {
+                $aus[$d['id']] = true;
+            }
+        }
+        return $aus;
     }
 
     /**
@@ -1491,8 +1535,9 @@ final class Api
     /**
      * @param array<string,mixed> $e
      * @param array<string,true> $weg entfernte Spieler (nur Sichten spieler/zuschauer/kurz)
+     * @param array<string,true> $begl Begleitpersonen (nur Sichten zuschauer/kurz)
      */
-    private static function gefiltert(array $e, string $sicht, array $weg = []): array
+    private static function gefiltert(array $e, string $sicht, array $weg = [], array $begl = []): array
     {
         if ($sicht === 'helfer') {
             if ($e['art'] === 'turnier.daten' && $e['daten'] instanceof \stdClass && property_exists($e['daten'], 'kasse')) {
@@ -1534,6 +1579,9 @@ final class Api
             if (isset($d->id) && is_string($d->id) && isset($weg[$d->id])) {
                 // Entfernter Spieler: keine Angaben zur Person mehr (bleibt nur als Platzhalter im Protokoll)
                 $d = (object)(['id' => $d->id] + ($e['art'] === 'spieler.angelegt' ? ['vorname' => self::ENTFERNT_NAME, 'nachname' => '', 'verein' => ''] : []));
+            } elseif ($zuschauer && isset($d->id) && is_string($d->id) && isset($begl[$d->id])) {
+                // Begleitperson (z. B. Elternteil als Mannschaftsleitung): für Zuschauer ohne Namen (ab 0.18)
+                $d = (object)['id' => $d->id, 'vorname' => self::BEGLEITUNG_NAME, 'nachname' => '', 'verein' => '', 'begleitung' => true];
             } elseif ($kurz && isset($d->nachname) && is_string($d->nachname)) {
                 $d->nachname = self::kurzname($d->nachname);
             }

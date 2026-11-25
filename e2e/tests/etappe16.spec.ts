@@ -21,7 +21,7 @@ async function layoutPruefen(page: Page, bereich?: Locator) {
   expect(breit, 'waagerechter Scrollbalken').toBeLessThanOrEqual(1);
   if (!bereich) return;
   const zuKlein = await bereich.locator('button:visible:not(.knopf-hilfe), select:visible, a.knopf:visible, input:visible:not([type=checkbox]):not([type=radio])').evaluateAll((els) =>
-    els.filter((e) => e.getBoundingClientRect().height < 44).map((e) => `${e.tagName} ${(e.textContent ?? '').trim().slice(0, 30)} ${Math.round(e.getBoundingClientRect().height)}px`),
+    els.filter((e) => { const h = e.getBoundingClientRect().height; return h > 0 && h < 44; }).map((e) => `${e.tagName} ${(e.textContent ?? '').trim().slice(0, 30)} ${Math.round(e.getBoundingClientRect().height)}px`),
   );
   expect(zuKlein, 'Touch-Ziele unter 44 px').toEqual([]);
 }

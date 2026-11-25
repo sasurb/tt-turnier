@@ -110,12 +110,25 @@ final class Antwort
     {
     }
 
-    public function senden(): void
+    public function senden(bool $abschliessen = false): void
     {
         http_response_code($this->status);
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
         header('X-Content-Type-Options: nosniff');
-        echo json_encode($this->daten, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $rumpf = (string)json_encode($this->daten, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($abschliessen) {
+            // Ohne FastCGI (ab 0.18): Länge mitgeben und Verbindung schließen, damit der Browser nicht auf die
+            // Mail-Warteschlange wartet, die danach noch läuft
+            header('Content-Length: ' . strlen($rumpf));
+            header('Connection: close');
+        }
+        echo $rumpf;
+        if ($abschliessen) {
+            while (ob_get_level() > 0) {
+                @ob_end_flush();
+            }
+            @flush();
+        }
     }
 }

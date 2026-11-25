@@ -78,7 +78,7 @@ final class SmtpMailer implements Mailer
         private readonly string $absender,
         private readonly string $sicherheit = 'ssl',
         private readonly string $absenderName = 'Tischtennis-Turnier',
-        private readonly float $zeitlimit = 15.0,
+        private readonly float $zeitlimit = 8.0,
     ) {
     }
 
@@ -140,7 +140,7 @@ final class SmtpMailer implements Mailer
             @fwrite($verbindung, "QUIT\r\n");
             return true;
         } catch (\Throwable $t) {
-            $this->letzterFehler = mb_substr($t->getMessage(), 0, 240);
+            $this->letzterFehler = mb_substr((string)preg_replace('/[^\s<>"]+@[^\s<>"]+/', '…@…', $t->getMessage()), 0, 240); // ohne Adressen im Protokoll
             error_log('tt-turnier smtp: ' . $this->letzterFehler);
             return false;
         } finally {

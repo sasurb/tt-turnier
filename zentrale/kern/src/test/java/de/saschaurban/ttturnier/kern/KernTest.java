@@ -793,6 +793,33 @@ public final class KernTest {
         pruefe(abgelehnt(a, "ungueltig"), "ohne Ersatzregel abgewiesen");
         a = rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000014", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste("a1", "a2"), "doppel", liste(), "wechsel", Json.obj("4", "a2"))))), bl, q("turnier", et), false);
         pruefe(abgelehnt(a, "ungueltig"), "ohne Einstellung kein Wechsel");
+        // Prüfung 0.18 (M1): Begleitperson mit Helferrecht stellt nicht für den Gegner auf
+        rufe(z3, "POST", "code.helfer", Json.obj("turnier", et, "bezug", "bl", "helfer", true), el);
+        bl = rufe(z3, "POST", "turnier.zugang", Json.obj("turnier", et, "code", ec.get("bl")), null).t("token");
+        rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000015", "konkurrenz.geaendert", Json.obj("id", "m", "einst", Json.obj("mannschaft", Json.obj("system", "corbillon2", "ersatz", 1L, "wechsel", true)))))), el, q("turnier", et), false);
+        a = rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000016", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-bbbb", "gegner", "m-aaaa", "einzel", liste("b1", "b1"), "doppel", liste())))), bl, q("turnier", et), false);
+        pruefe(a.s == 200 && a.l("angenommen").isEmpty(), "Begleitperson mit Helferrecht: keine Aufstellung für den Gegner");
+        // N2: Ersatzregel der Endrunde, leere Wechsel-Angabe
+        rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000017", "konkurrenz.geaendert", Json.obj("id", "m", "einst", Json.obj("mannschaft", Json.obj("system", "corbillon2", "ersatz", 0L, "wechsel", false),
+            "endrunde", Json.obj("mannschaft", Json.obj("system", "corbillon2", "ersatz", 1L, "wechsel", false))))))), el, q("turnier", et), false);
+        a = rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000018", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste("a1", "a1"), "doppel", liste(), "wechsel", liste())))), bl, q("turnier", et), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Ersatzregel der Endrunde zählt, leere Wechsel-Angabe erlaubt");
+        // N4: Zuschauer sehen die Begleitperson ohne Namen
+        a = rufe(z3, "GET", "events", null, null, q("turnier", et, "ab", "0"), false);
+        Map<String, Object> blz = null;
+        for (Object o : a.l("ereignisse")) if ("e-0000005".equals(Json.alsObjekt(o).get("id"))) blz = Json.alsObjekt(Json.alsObjekt(o).get("daten"));
+        pruefe(blz != null && "Begleitperson".equals(blz.get("vorname")) && "".equals(blz.get("nachname")), "Zuschauer: Begleitperson ohne Namen");
+        rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000019", "spieler.geaendert", Json.obj("id", "bl", "vorname", "Bea", "nachname", "Neu")))), el, q("turnier", et), false);
+        a = rufe(z3, "GET", "events", null, null, q("turnier", et, "ab", "0"), false);
+        pruefe(!Json.schreiben(a.l("ereignisse")).contains("Bea") && a.g("filter") != null, "Zuschauer: auch Namensänderung der Begleitperson ohne Namen");
+        a = rufe(z3, "GET", "events", null, b1, q("turnier", et, "ab", "0"), false);
+        pruefe(Json.schreiben(a.l("ereignisse")).contains("Bea"), "Spieler sehen den Namen der Begleitperson");
+        // N2: Endrunden-Regel nach dem Start der Vorrunde
+        rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000020", "phase.gestartet", Json.obj("konkurrenz", "m", "phase", "gruppen")),
+            ev("e-0000021", "konkurrenz.geaendert", Json.obj("id", "m", "einst", Json.obj("mannschaft", Json.obj("system", "corbillon2", "ersatz", 0L, "wechsel", false),
+                "endrunde", Json.obj("mannschaft", Json.obj("system", "corbillon2", "ersatz", 0L, "wechsel", true))))))), el, q("turnier", et), false);
+        a = rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000022", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste("a1", "a2"), "doppel", liste(), "wechsel", Json.obj("4", "a2"))))), bl, q("turnier", et), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Wechsel der Endrunde nach Start der Vorrunde: Server lässt ihn zu");
     }
 
 }

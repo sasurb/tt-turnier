@@ -419,3 +419,28 @@ Turniere werden `loeschen_nach` Monate nach dem Turniertag (ohne Datum: nach der
 einzige Spartenleitung, wird die Sparte mitgelöscht und alle Mitglieder bekommen 30 Tage vorher eine Mail.
 Abgelaufene Einladungen, alte Ausschuss-Nachrichten, abgelaufene Kennungssperren und unbestätigte
 Sicherungsempfänger (30 Tage) werden entfernt.
+
+
+## Paket 0.18 (Schema 10): Nachrichten, Anmeldung, Mannschaft, Kasse
+
+| Route | Wer | Inhalt |
+|---|---|---|
+| `GET nachrichten&turnier=` | Kennung (eigener Posteingang) bzw. Leitung mit Konto („Gesendet“) | `{ nachrichten, ungelesen, gesendet, wartend }` |
+| `POST nachrichten.gelesen` | wie oben | `{ turnier, bis }` |
+| `POST rundmail` | Leitung | `{ turnier, betreff, text, gruppe, spieler[], helfer, leitung, warteliste[], mail }` → Posteingang + Mails (Warteschlange); 10/Tag je Turnier, 30/Tag je Sparte |
+| `POST turnier.ergebnis` | Leitung, nur abgeschlossen | `{ turnier, liste, plaetze: [{spieler, text}] }`, höchstens dreimal |
+| `POST verteiler.eintragen` | öffentlich | `{ turnier, name, email, volljaehrig \| erziehungsberechtigte, datenschutz }` → Mail mit `#/verteiler/b/<schlüssel>` |
+| `POST verteiler.bestaetigen` / `verteiler.abmelden` | öffentlich, gebremst | `{ schluessel }` bzw. `{ kennung }` (ID + HMAC) |
+| `GET verteiler`, `POST verteiler.entfernen`, `POST verteiler.senden` | Spartenleitung | Liste, Austragen, Ankündigung (3/Tag, nur freigegebene Sparte) |
+| `GET/POST sparte.favoriten` | Mitglieder (Speichern: Recht „anlegen“) | Konkurrenz-Vorgaben, höchstens 50 × 8 KB |
+| `POST anmeldung.senden` mit `typ: "gruppe"` | öffentlich | Gruppenanmeldung (Personen, Meldungen mit Paaren/Mannschaften); Spieler-IDs im Turnier `<Anmelde-ID>p<n>`, Leitung als Begleitperson `<Anmelde-ID>l` |
+
+Neue Ereignisse: `konkurrenz.checkin { konkurrenz, fertig }` (Kasse/Leitung), `praemie.ausgezahlt { id, konkurrenz, teilnehmer, platz, betrag }` bzw. `{ storno }` (Kasse/Leitung, nur volle Sicht). `mannschaft.aufgestellt` nimmt `wechsel { Teilspiel-Nr: Spieler }`; doppelt besetzte Einzelpositionen nur bis zur Ersatzregel der Konkurrenz (Server lesen sie aus `konkurrenz.angelegt/geaendert`). `mannschaft.gemeldet` nimmt `wechsler[]`; Führung auch eine Begleitperson (`spieler.angelegt` mit `begleitung: true`). Die Zentrale stellt Rundmails nur in den Posteingang zu.
+
+Sicherheitsprüfung 0.18: Die Führung einer Mannschaft (auch eine Begleitperson) zählt bei Aufstellungen als Mitglied
+(kein „amtliches“ Aufstellen in der eigenen Begegnung, nicht für den Gegner). Die Server lesen Ersatzregel und Wechsel
+auch aus `einst.endrunde.mannschaft` (das Großzügigere gilt, die Engine entscheidet je Stufe); `wechsel: {}`/`[]` ist
+immer erlaubt. Zuschauer bekommen Begleitpersonen als `{ vorname: "Begleitperson", nachname: "", verein: "" }`.
+Mails mit geheimen Links landen nie in der Warteschlange; das Server-Protokoll enthält keine Adressen.
+Rundmail- und Ergebnis-Mails gehen nur bei freigegebener Sparte raus (sonst nur Posteingang); Antwortadresse ist nur
+das sendende Konto. Verteiler-Bestätigungslinks gelten einmal.

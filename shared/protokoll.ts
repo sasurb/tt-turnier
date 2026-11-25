@@ -1021,6 +1021,8 @@ export interface PartnerAntwort {
 }
 /** Platzhalter, den die Server Spielern und Zuschauern statt des Namens entfernter Spieler liefern (ab 0.12) */
 export const ENTFERNT_NAME = 'Entfernt';
+/** Platzhalter für Begleitpersonen in der Sicht der Zuschauer (ab 0.18) */
+export const BEGLEITUNG_NAME = 'Begleitperson';
 /** POST anmeldung.einstellungen { turnier, ...AnmeldungEinstellungen } – nur Leitung */
 /** POST anmeldung.aendern { turnier, id, konkurrenz, status } – Leitung setzt Platz/Warteliste/abgemeldet (Mail an die Person) */
 export interface AnmeldungAendernAnfrage {

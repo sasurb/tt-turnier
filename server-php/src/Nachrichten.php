@@ -84,7 +84,9 @@ final class Nachrichten
      */
     public function abarbeiten(int $max = 25, float $sekunden = 20.0): int
     {
-        if (!$this->mailer->bereit()) {
+        // Nach drei Fehlschlägen in 10 Minuten 5 Minuten Pause: ein hängender Mailserver soll nicht jede Anfrage
+        // aufhalten; eine einzelne abgelehnte Adresse aber nicht den ganzen Versand
+        if (!$this->mailer->bereit() || $this->api->anzahlVersuche('mail-pause', 300) > 0) {
             return 0;
         }
         $start = microtime(true);
@@ -113,11 +115,16 @@ final class Nachrichten
             $versuche = (int)$z['versuche'] + 1;
             $fehler = $this->mailer instanceof SmtpMailer ? $this->mailer->fehler() : 'Versand fehlgeschlagen';
             if ($versuche >= self::MAX_VERSUCHE) {
-                error_log("tt-turnier: Mail an {$z['an']} nach {$versuche} Versuchen verworfen ({$fehler})");
+                error_log('tt-turnier: Mail ' . $this->api->logKennung((string)$z['an']) . " nach {$versuche} Versuchen verworfen ({$fehler})");
                 $this->db->ausfuehren('DELETE FROM mail_warteschlange WHERE id = ?', [(int)$z['id']]);
             } else {
                 $this->db->ausfuehren('UPDATE mail_warteschlange SET versuche = ?, naechster = ?, fehler = ? WHERE id = ?', [$versuche, $jetzt + $this->warteZeit($versuche), mb_substr($fehler, 0, 250), (int)$z['id']]);
             }
+            $this->api->fehlversuch('mail-fehler');
+            if ($this->api->anzahlVersuche('mail-fehler', 600) >= 3) {
+                $this->api->fehlversuch('mail-pause');
+            }
+            break; // in dieser Anfrage nicht weiter versuchen
         }
         return $gesendet;
     }
@@ -188,13 +195,24 @@ final class Nachrichten
 
     /* ---------------- Rundmail und Ergebnis ---------------- */
 
-    /** Antwortadresse der Turnierleitung: das sendende Konto, sonst das Eigentümer-Konto */
+    /**
+     * Antwortadresse: nur das sendende Konto (ab 0.18-Prüfung: eine Leitungskennung gibt nicht die Adresse des
+     * Eigentümers preis – ihre Mails haben keine Antwortadresse).
+     */
     private function antwortAdresse(Anfrage $a, array $t): ?string
     {
         $s = $this->api->sitzung($a);
-        $id = $s !== null && $s['konto_id'] !== null ? (int)$s['konto_id'] : (int)($t['konto_id'] ?? 0);
-        $k = $this->db->eine('SELECT email FROM konten WHERE id = ?', [$id]);
+        if ($s === null || $s['konto_id'] === null) {
+            return null;
+        }
+        $k = $this->db->eine('SELECT email FROM konten WHERE id = ?', [(int)$s['konto_id']]);
         return $k === null ? null : (string)$k['email'];
+    }
+
+    /** Mails an Teilnehmende nur, wenn die Sparte freigegeben ist (wie Online-Anmeldung und Verteiler) */
+    private function mailsErlaubt(array $t): bool
+    {
+        return $this->api->mailBereit() && $this->api->anmeldungFreigabe($t)['erlaubt'];
     }
 
     /** Liste von Spieler-IDs aus dem Rumpf (geprüft) */
@@ -320,13 +338,13 @@ final class Nachrichten
                 $postfach++;
             }
             $mails = 0;
-            if ($mail && $this->api->mailBereit()) {
+            if ($mail && $this->mailsErlaubt($t)) {
                 $antwort = $this->antwortAdresse($a, $t);
                 $adressen = array_keys($this->adressenZu((string)$t['id'], $spieler));
                 $adressen = array_values(array_unique(array_merge($adressen, $this->wartelisteAdressen((string)$t['id'], $warte))));
                 foreach (array_slice($adressen, 0, self::MAX_EMPFAENGER) as $an) {
                     $this->vormerken($an, "{$betreff} – {$t['name']}", "Nachricht der Turnierleitung zu „{$t['name']}“:\n\n{$text}"
-                        . $this->api->mailFuss(true), $antwort, 'rundmail', (string)$t['id'], (int)$t['sparte_id']);
+                        . $this->api->mailFuss($antwort !== null), $antwort, 'rundmail', (string)$t['id'], (int)$t['sparte_id']);
                     $mails++;
                 }
             }
@@ -396,7 +414,7 @@ final class Nachrichten
                     $postfach++;
                 }
             }
-            if ($this->api->mailBereit()) {
+            if ($this->mailsErlaubt($t)) {
                 $antwort = $this->antwortAdresse($a, $t);
                 $verteiler = $this->api->appUrl() . '#/verteiler/' . $t['id'];
                 foreach ($this->adressenZu((string)$t['id'], array_keys($plaetze)) as $an => $ids) {
@@ -404,7 +422,7 @@ final class Nachrichten
                     $this->vormerken($an, $titel, "Hallo,\n\n„{$t['name']}“ ist abgeschlossen. Danke fürs Mitmachen!\n\n"
                         . ($eigene !== '' ? $eigene . "\n\n" : '') . $liste
                         . "\n\nÜber künftige Turniere informiert werden? Hier eintragen (jederzeit abbestellbar): {$verteiler}"
-                        . $this->api->mailFuss(true), $antwort, 'ergebnis', (string)$t['id'], (int)$t['sparte_id']);
+                        . $this->api->mailFuss($antwort !== null), $antwort, 'ergebnis', (string)$t['id'], (int)$t['sparte_id']);
                     $mails++;
                 }
             }
@@ -512,9 +530,10 @@ final class Nachrichten
             throw new ApiFehler('ungueltig', 'Unter 18 geht es nur mit Einverständnis der Erziehungsberechtigten – bitte bestätigen.');
         }
         $mk = 'verteiler-mail|' . hash('sha256', $email);
-        if ($this->api->anzahlVersuche($mk, 3600) >= 3) {
-            return ['ok' => true];
+        if ($this->api->anzahlVersuche($mk, 86400) >= 3) {
+            return ['ok' => true]; // höchstens drei Bestätigungsmails je Adresse und Tag
         }
+        $this->api->begrenzen('verteiler-sparte|' . (int)$sp['id'], 50, 3600, 'Gerade kamen sehr viele Einträge. Bitte später erneut versuchen.');
         $this->api->fehlversuch($mk);
         $alt = $this->db->eine('SELECT id, bestaetigt FROM verteiler WHERE sparte_id = ? AND email = ?', [(int)$sp['id'], $email]);
         if ($alt !== null && $alt['bestaetigt'] !== null) {
@@ -522,10 +541,14 @@ final class Nachrichten
         }
         $schluessel = bin2hex(random_bytes(32));
         if ($alt === null) {
-            $this->db->ausfuehren(
-                'INSERT INTO verteiler (id, sparte_id, email, name, schluessel_hash, angelegt, bestaetigt, jugend, quelle) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)',
-                [$this->neueId(), (int)$sp['id'], $email, $name, hash('sha256', $schluessel), $this->api->jetzt(), $voll ? 0 : 1, (string)$t['id']]
-            );
+            try {
+                $this->db->ausfuehren(
+                    'INSERT INTO verteiler (id, sparte_id, email, name, schluessel_hash, angelegt, bestaetigt, jugend, quelle) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)',
+                    [$this->neueId(), (int)$sp['id'], $email, $name, hash('sha256', $schluessel), $this->api->jetzt(), $voll ? 0 : 1, (string)$t['id']]
+                );
+            } catch (\PDOException) {
+                return ['ok' => true]; // gleichzeitig eingetragen
+            }
         } else {
             $this->db->ausfuehren('UPDATE verteiler SET schluessel_hash = ?, name = ?, jugend = ?, angelegt = ? WHERE id = ?', [hash('sha256', $schluessel), $name, $voll ? 0 : 1, $this->api->jetzt(), $alt['id']]);
         }
@@ -548,11 +571,10 @@ final class Nachrichten
         $z = is_string($s) && preg_match('/^[a-f0-9]{64}$/D', $s) ? $this->db->eine('SELECT * FROM verteiler WHERE schluessel_hash = ?', [hash('sha256', $s)]) : null;
         if ($z === null || ($z['bestaetigt'] === null && (int)$z['angelegt'] < $this->api->jetzt() - self::BESTAETIGEN_DAUER)) {
             $this->api->fehlversuch($bremse);
-            throw new ApiFehler('abgelaufen', 'Der Link ist ungültig oder abgelaufen. Bitte trage dich erneut ein.');
+            throw new ApiFehler('abgelaufen', 'Der Link ist ungültig, abgelaufen oder schon benutzt. Hast du schon bestätigt, ist nichts weiter zu tun.');
         }
-        if ($z['bestaetigt'] === null) {
-            $this->db->ausfuehren('UPDATE verteiler SET bestaetigt = ? WHERE id = ?', [$this->api->jetzt(), $z['id']]);
-        }
+        // Bestätigen und den Link entwerten (danach gilt nur noch der Abmeldelink aus den Mails)
+        $this->db->ausfuehren('UPDATE verteiler SET bestaetigt = COALESCE(bestaetigt, ?), schluessel_hash = ? WHERE id = ?', [$this->api->jetzt(), hash('sha256', bin2hex(random_bytes(32))), $z['id']]);
         $sp = $this->db->eine('SELECT s.name, v.name AS verein FROM sparten s JOIN vereine v ON v.id = s.verein_id WHERE s.id = ?', [(int)$z['sparte_id']]);
         return ['verein' => (string)($sp['verein'] ?? ''), 'sparte' => (string)($sp['name'] ?? ''), 'abmelden' => $this->abmeldeKennung((string)$z['id'])];
     }
@@ -652,7 +674,7 @@ final class Nachrichten
         $this->db->ausfuehren('DELETE FROM mail_warteschlange WHERE sparte_id = ?', [$id]);
     }
 
-    /** Gesperrte bzw. entfernte Kennung: ihr Posteingang wird gelöscht */
+    /** Entfernte Kennung: ihr Posteingang wird gelöscht (gesperrte behalten ihn, falls sie wieder freigegeben werden) */
     public function kennungEntfernt(string $turnier, string $rolle, string $bezug): void
     {
         $this->db->ausfuehren('DELETE FROM nachrichten WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$turnier, $rolle, $bezug]);

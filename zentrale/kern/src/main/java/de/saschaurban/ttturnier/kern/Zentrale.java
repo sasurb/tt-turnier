@@ -32,6 +32,8 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     public static final String VERSION = "0.18.0";
     /** Platzhalter für Namen entfernter Spieler (wie PHP Api::ENTFERNT_NAME) */
     static final String ENTFERNT_NAME = "Entfernt";
+    /** Platzhalter für Begleitpersonen in der Sicht der Zuschauer (wie PHP Api::BEGLEITUNG_NAME) */
+    static final String BEGLEITUNG_NAME = "Begleitperson";
     public static final int PROTOKOLL = 1;
     public static final String ONLINE_STANDARD = "https://saschaurban.de/tt-turnier/api/index.php";
 
@@ -865,6 +867,8 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             long bis = ab;
             // Spieler und Zuschauer: Namen entfernter Spieler ersetzen (wie PHP, Etappe 10)
             Set<String> weg = ("spieler".equals(sicht) || "zuschauer".equals(sicht) || "kurz".equals(sicht)) ? entfernteSpieler(t.ereignisse) : Collections.emptySet();
+            // Begleitpersonen für Zuschauer ohne Namen (wie PHP, ab 0.18)
+            Set<String> begl = ("zuschauer".equals(sicht) || "kurz".equals(sicht)) ? begleitpersonen(t.ereignisse) : Collections.emptySet();
             // Mannschaften: noch nicht aufgedeckte Aufstellungen (wie PHP, ab 0.13)
             Set<String> verdeckt = Collections.emptySet();
             Set<String> offen = Collections.emptySet();
@@ -894,10 +898,11 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                 if (!"voll".equals(sicht) && NUR_VOLLE_SICHT.contains(e.get("art"))) continue;
                 if (verdeckt.contains(String.valueOf(e.get("id")))) continue;
                 Map<String, Object> m = ausgabe(e, true);
-                aus.add("voll".equals(sicht) ? m : gefiltert(m, sicht, weg));
+                aus.add("voll".equals(sicht) ? m : gefiltert(m, sicht, weg, begl));
             }
             Map<String, Object> antwort = Json.obj("ereignisse", aus, "hoechsteSeq", t.hoechsteSeq(), "mehr", mehr, "sicht", sicht, "bis", bis);
             Set<String> filter = new TreeSet<>(weg);
+            for (String b : begl) filter.add("begleitung:" + b);
             for (String b : offen) filter.add("aufgedeckt:" + b);
             // Eigene Kennung für die Kasse-Sicht (wie PHP): Wechsel Kasse ↔ Leitung lädt alles neu
             if (kasseSicht) filter.add("sicht:kasse");
@@ -983,31 +988,43 @@ public final class Zentrale implements HttpServer.Bearbeiter {
 
     /** Ersatzregel und Wechsel laut Einträgen der Leitung (wie PHP Api::mannschaftsEinst): {ersatz, wechsel} */
     static Object[] mannschaftsEinst(List<Map<String, Object>> liste, String konkurrenz) {
-        long ersatz = 0;
-        boolean wechsel = false;
-        boolean gestartet = false;
+        long ersatz = 0, eErsatz = 0;
+        boolean wechsel = false, eWechsel = false;
+        boolean gestartet = false, koGestartet = false;
         for (Map<String, Object> e : liste) {
             Object art = e.get("art");
             if (!leitungAutor(e)) continue;
             Map<String, Object> x = Json.alsObjekt(e.get("daten"));
             if (x == null) continue;
             if ("phase.gestartet".equals(art) && konkurrenz.equals(x.get("konkurrenz"))) {
-                gestartet = true;
+                gestartet = true; // Spielsystem fest, Endrunde bis zum K.-o.-Start änderbar (wie PHP)
+                koGestartet = koGestartet || "ko".equals(x.get("phase"));
                 continue;
             }
             boolean angelegt = "konkurrenz.angelegt".equals(art);
-            if ((!angelegt && !"konkurrenz.geaendert".equals(art)) || !konkurrenz.equals(x.get("id")) || (gestartet && !angelegt)) continue;
+            if ((!angelegt && !"konkurrenz.geaendert".equals(art)) || !konkurrenz.equals(x.get("id")) || (koGestartet && !angelegt)) continue;
             if (angelegt) {
                 ersatz = 0;
                 wechsel = false;
+                eErsatz = 0;
+                eWechsel = false;
             }
             Map<String, Object> einst = Json.alsObjekt(x.get("einst"));
-            Map<String, Object> m = einst == null ? null : Json.alsObjekt(einst.get("mannschaft"));
-            if (m == null) continue;
-            if (m.get("ersatz") instanceof Long && (Long) m.get("ersatz") >= 0 && (Long) m.get("ersatz") <= 4) ersatz = (Long) m.get("ersatz");
-            if (m.get("wechsel") instanceof Boolean) wechsel = (Boolean) m.get("wechsel");
+            if (einst == null) continue;
+            Map<String, Object> m = gestartet && !angelegt ? null : Json.alsObjekt(einst.get("mannschaft"));
+            if (m != null) {
+                if (m.get("ersatz") instanceof Long && (Long) m.get("ersatz") >= 0 && (Long) m.get("ersatz") <= 4) ersatz = (Long) m.get("ersatz");
+                if (m.get("wechsel") instanceof Boolean) wechsel = (Boolean) m.get("wechsel");
+            }
+            // Endrunde mit eigenen Mannschaftsregeln: der Server nimmt das Großzügigere, die Engine entscheidet je Stufe
+            Map<String, Object> er = Json.alsObjekt(einst.get("endrunde"));
+            Map<String, Object> em = er == null ? null : Json.alsObjekt(er.get("mannschaft"));
+            if (em != null) {
+                if (em.get("ersatz") instanceof Long && (Long) em.get("ersatz") >= 0 && (Long) em.get("ersatz") <= 4) eErsatz = (Long) em.get("ersatz");
+                if (em.get("wechsel") instanceof Boolean) eWechsel = (Boolean) em.get("wechsel");
+            }
         }
-        return new Object[] {ersatz, wechsel};
+        return new Object[] {Math.max(ersatz, eErsatz), wechsel || eWechsel};
     }
     static final String SPIEL_ID_MANNSCHAFT = "^(g\\d{1,3}-m-[A-Za-z0-9-]{4,38}-m-[A-Za-z0-9-]{4,38}|(ko|tr|vl|fi)-\\d{1,2}-\\d{1,3}|ko-p3)$";
 
@@ -1025,7 +1042,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         Map<String, Map<String, Object>> teams = mannschaftenLaut(liste);
         Map<String, Object> team = teams.get(k + "|" + m);
         if (team == null || !teams.containsKey(k + "|" + g)) return "Mannschaft nicht gemeldet.";
-        boolean mitglied = istMitglied(team, bezug) || istMitglied(teams.get(k + "|" + g), bezug);
+        Map<String, Object> gegner = teams.get(k + "|" + g);
+        // ab 0.18 zählt auch die Führung (z. B. Begleitperson) als Mitglied
+        boolean mitglied = istMitglied(team, bezug) || istMitglied(gegner, bezug)
+            || (bezug != null && (bezug.equals(team.get("fuehrer")) || (gegner != null && bezug.equals(gegner.get("fuehrer")))));
         if (spieler && (!helfer || mitglied) && (bezug == null || !bezug.equals(team.get("fuehrer")))) return "Die Aufstellung gibt die Mannschaftsführung ab.";
         Object einzelRoh = d.get("einzel") == null ? new ArrayList<>() : d.get("einzel");
         Object doppelRoh = d.get("doppel") == null ? new ArrayList<>() : d.get("doppel");
@@ -1046,8 +1066,9 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         for (Object x : alle) haeufig = Math.max(haeufig, Collections.frequency(alle, x));
         if (alle.size() - new HashSet<>(alle).size() > (Long) me[0] || haeufig > 2 || new HashSet<>(imDoppel).size() != imDoppel.size() || zusammen.isEmpty()) return "Aufstellung ungültig (leer oder doppelt besetzt).";
         if (d.containsKey("wechsel")) {
-            Map<String, Object> w = Json.alsObjekt(d.get("wechsel"));
-            if (w == null || !(Boolean) me[1] || w.size() > 30) return "Wechsel ungültig.";
+            Object roh = d.get("wechsel");
+            Map<String, Object> w = roh instanceof List && ((List<?>) roh).isEmpty() ? new HashMap<>() : Json.alsObjekt(roh);
+            if (w == null || (!w.isEmpty() && !(Boolean) me[1]) || w.size() > 30) return "Wechsel ungültig.";
             for (Map.Entry<String, Object> x : w.entrySet()) {
                 if (!x.getKey().matches("^[0-9]{1,2}$") || Integer.parseInt(x.getKey()) < 1 || !(x.getValue() instanceof String) || !istMitglied(team, (String) x.getValue())) return "Wechsel ungültig.";
             }
@@ -1113,6 +1134,19 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         return "leitung".equals(r) || "admin".equals(r) || "veranstalter".equals(r);
     }
 
+    /** Spieler, die die Leitung je als Begleitperson eingetragen hat (wie PHP Api::begleitpersonen) */
+    static Set<String> begleitpersonen(List<Map<String, Object>> liste) {
+        // Vorsichtig (wie PHP): wer je als Begleitperson eingetragen war, bleibt für Zuschauer ohne Namen
+        Set<String> aus = new TreeSet<>();
+        for (Map<String, Object> e : liste) {
+            Object art = e.get("art");
+            if ((!"spieler.angelegt".equals(art) && !"spieler.geaendert".equals(art)) || !leitungAutor(e)) continue;
+            Map<String, Object> d = Json.alsObjekt(e.get("daten"));
+            if (d != null && d.get("id") instanceof String && Boolean.TRUE.equals(d.get("begleitung"))) aus.add((String) d.get("id"));
+        }
+        return aus;
+    }
+
     /** Entfernte Spieler (spieler.entfernt nicht zurückgenommen, oder jedes Anlegen zurückgenommen) – wie PHP Api::entfernteAus */
     static Set<String> entfernteSpieler(List<Map<String, Object>> liste) {
         Map<String, String[]> ziel = new LinkedHashMap<>();
@@ -1149,7 +1183,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         return weg;
     }
 
-    private static Map<String, Object> gefiltert(Map<String, Object> e, String sicht, Set<String> weg) {
+    private static Map<String, Object> gefiltert(Map<String, Object> e, String sicht, Set<String> weg, Set<String> begl) {
         if ("helfer".equals(sicht)) {
             Map<String, Object> d0 = Json.alsObjekt(e.get("daten"));
             String art0 = String.valueOf(e.get("art"));
@@ -1210,6 +1244,15 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                     r.put("nachname", "");
                     r.put("verein", "");
                 }
+                d = r;
+            } else if (zuschauer && d.get("id") instanceof String && begl.contains(d.get("id"))) {
+                // Begleitperson: für Zuschauer ohne Namen (wie PHP)
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("id", d.get("id"));
+                r.put("vorname", BEGLEITUNG_NAME);
+                r.put("nachname", "");
+                r.put("verein", "");
+                r.put("begleitung", true);
                 d = r;
             } else if (kurz && d.get("nachname") instanceof String) d.put("nachname", kurzname((String) d.get("nachname")));
         } else if ("spiel.aufgerufen".equals(art) && d.containsKey("schiri")) {
@@ -2419,7 +2462,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
      * Posteingang je Kennung (ab 0.18; Mails verschickt nur der Online-Server)
      * ==================================================================== */
 
-    private static final int MAX_NACHRICHTEN = 5000;
+    private static final int MAX_NACHRICHTEN = 2000;
     private static final int MAX_POSTFACH = 200;
     private static final Pattern P_ID = Pattern.compile("^[a-z0-9]{1,16}$");
 

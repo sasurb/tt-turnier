@@ -63,11 +63,15 @@ function ausfuehren(): void
         error_log('tt-turnier: ' . $t);
         $antwort = new Antwort(500, ['fehler' => 'serverfehler', 'meldung' => 'Keine Verbindung zur Datenbank.']);
     }
-    $antwort->senden();
+    $fpm = function_exists('fastcgi_finish_request');
+    if ($api !== null && !$fpm) {
+        ignore_user_abort(true); // Warteschlange auch dann fertig abarbeiten, wenn der Browser schon weg ist
+    }
+    $antwort->senden($api !== null && !$fpm);
     // Ab 0.18: gedrosselte Mail-Warteschlange nach der Antwort abarbeiten (ohne Cronjob). Mit FastCGI wartet der
     // Browser nicht darauf; sonst nur wenige Mails, damit die Anfrage nicht spürbar länger dauert.
     if ($api !== null) {
-        $frei = function_exists('fastcgi_finish_request') && @fastcgi_finish_request();
+        $frei = $fpm && @fastcgi_finish_request();
         try {
             $api->nachrichten->abarbeiten($frei ? 25 : 3, $frei ? 20.0 : 4.0);
         } catch (\Throwable $t) {

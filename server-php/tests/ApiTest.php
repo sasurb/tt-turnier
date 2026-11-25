@@ -1830,6 +1830,26 @@ for ($i = 0; $i < 8; $i++) {
     $apiW->nachrichten->abarbeiten(5, 2.0);
 }
 pruefe($wackel->n === 6 && $apiW->nachrichten->wartend($nt) === 0, 'nach sechs Versuchen verworfen');
+// Prüfung 0.18: Mails mit geheimen Links (Passwort, Bestätigung) kommen nicht in die Warteschlange
+$apiW->mail('geheim@example.org', 'Passwort', 'Link: #/passwort/' . str_repeat('ab', 32));
+$apiW->mail('offen@example.org', 'Info', 'Ohne Link');
+pruefe($apiW->nachrichten->wartend(null) === 1, 'Mail mit geheimem Link wird nicht gespeichert, andere schon');
+$zeit += 3600;
+foreach (['zwei', 'drei', 'vier'] as $x) {
+    $apiW->nachrichten->vormerken("$x@example.org", 'x', 'y', null, 'test', $nt);
+}
+$n0 = $wackel->n;
+$apiW->nachrichten->abarbeiten(5, 2.0);
+pruefe($wackel->n === $n0 + 1, 'nach einem Fehlschlag in dieser Anfrage kein weiterer Versuch');
+for ($i = 0; $i < 3; $i++) {
+    $apiW->nachrichten->abarbeiten(5, 2.0);
+}
+pruefe($wackel->n === $n0 + 3, 'nach drei Fehlschlägen in 10 Minuten fünf Minuten Pause für den ganzen Versand');
+$zeit += 7 * 3600;
+$apiW->nachrichten->abarbeiten(5, 2.0);
+pruefe($wackel->n === $n0 + 4, 'nach der Pause geht es weiter');
+$zeit += 301; // Pause für die folgenden Prüfungen ablaufen lassen
+(fn() => $this->db->ausfuehren('DELETE FROM mail_warteschlange'))->call($api);
 // Ergebnis-Mail
 [$s] = rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $nt, 'liste' => 'Herren: 1. Ole', 'plaetze' => []], $adm);
 pruefe($s === 409, 'Ergebnis-Mail erst nach dem Abschluss');
@@ -1865,6 +1885,8 @@ pruefe($s === 200 && count($d['eintraege']) === 2 && $kai['bestaetigt'] === null
 pruefe($s === 401, 'Verteiler-Liste nur mit Konto der Spartenleitung');
 [$s, $d] = rufe($api, 'POST', 'verteiler.bestaetigen', ['schluessel' => $vx[1]]);
 pruefe($s === 200 && preg_match('/^[a-z2-9]{12}-[a-f0-9]{24}$/', $d['abmelden']), 'Verteiler bestätigt');
+[$s] = rufe($api, 'POST', 'verteiler.bestaetigen', ['schluessel' => $vx[1]], null, [], '10.18.1.9');
+pruefe($s === 410, 'Bestätigungslink gilt nur einmal');
 [$s, $d] = rufe($api, 'POST', 'verteiler.senden', ['sparte' => $sid, 'betreff' => 'Neues Turnier', 'text' => 'Am 1. März'], $adm);
 $api->nachrichten->abarbeiten(25, 5.0);
 $km = mailAn($mailer18, 'kai@example.org');
@@ -2000,6 +2022,33 @@ pruefe(abgelehnt($s, $d, 'ungueltig'), 'Ohne Ersatzregel: doppelt besetzte Posit
 pruefe(abgelehnt($s, $d, 'ungueltig'), 'Ohne Einstellung „Wechsel“ kein Wechsel');
 [, $d] = rufe($api, 'GET', 'events', null, $blTok, ['turnier' => $et, 'ab' => '0']);
 pruefe(in_array('es-000010', array_column($d['ereignisse'], 'id'), true), 'Begleitperson sieht die eigene (noch verdeckte) Aufstellung');
+// Prüfung 0.18 (M1): Begleitperson mit Helferrecht darf nicht für den Gegner aufstellen
+rufe($api, 'POST', 'code.helfer', ['turnier' => $et, 'bezug' => 'bl', 'helfer' => true], $adm);
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $et, 'code' => $kc['bl']]);
+$blTok = $d['token'];
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('es-000016', 'konkurrenz.geaendert', ['id' => 'm', 'einst' => ['mannschaft' => ['system' => 'corbillon2', 'ersatz' => 1, 'wechsel' => true]]])]], $adm, ['turnier' => $et]);
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [$auf('es-000017', 'm-bbbb', 'm-aaaa', ['b1', 'b1'])]], $blTok, ['turnier' => $et]);
+pruefe($s === 200 && $d['angenommen'] === [], 'Begleitperson mit Helferrecht: keine Aufstellung für die gegnerische Mannschaft');
+// N2: Endrunde mit eigener Ersatzregel; leere Wechsel-Angabe ist immer erlaubt
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('es-000018', 'konkurrenz.geaendert', ['id' => 'm', 'einst' => ['mannschaft' => ['system' => 'corbillon2', 'ersatz' => 0, 'wechsel' => false],
+    'endrunde' => ['mannschaft' => ['system' => 'corbillon2', 'ersatz' => 1, 'wechsel' => false]]]])]], $adm, ['turnier' => $et]);
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [$auf('es-000019', 'm-aaaa', 'm-bbbb', ['a1', 'a1'], ['wechsel' => []])]], $blTok, ['turnier' => $et]);
+pruefe($s === 200 && count($d['angenommen']) === 1, 'Ersatzregel der Endrunde zählt, leere Wechsel-Angabe erlaubt');
+// N4: Zuschauer sehen die Begleitperson ohne Namen
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $et, 'ab' => '0']);
+$blz = array_values(array_filter($d['ereignisse'], fn($x) => $x['id'] === 'es-000006'))[0]['daten'];
+pruefe($blz['vorname'] === 'Begleitperson' && $blz['nachname'] === '' && $blz['begleitung'] === true, 'Zuschauer: Begleitperson ohne Namen');
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('es-000020', 'spieler.geaendert', ['id' => 'bl', 'vorname' => 'Bea', 'nachname' => 'Neu'])]], $adm, ['turnier' => $et]);
+[, $d] = rufe($api, 'GET', 'events', null, null, ['turnier' => $et, 'ab' => '0']);
+$blg = array_values(array_filter($d['ereignisse'], fn($x) => $x['id'] === 'es-000020'))[0]['daten'];
+pruefe($blg['vorname'] === 'Begleitperson' && !str_contains(json_encode($d['ereignisse']), 'Bea') && isset($d['filter']), 'Zuschauer: auch Namensänderung der Begleitperson ohne Namen');
+[, $d] = rufe($api, 'GET', 'events', null, $b1Tok, ['turnier' => $et, 'ab' => '0']);
+pruefe(str_contains(json_encode($d['ereignisse']), 'Bea'), 'Spieler sehen den Namen der Begleitperson');
+// N2: Endrunden-Regel nach dem Start der Vorrunde (bis zum K.-o.-Start) zählt auf dem Server
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('es-000021', 'phase.gestartet', ['konkurrenz' => 'm', 'phase' => 'gruppen']),
+    ereignis('es-000022', 'konkurrenz.geaendert', ['id' => 'm', 'einst' => ['mannschaft' => ['system' => 'corbillon2', 'ersatz' => 0, 'wechsel' => false], 'endrunde' => ['mannschaft' => ['system' => 'corbillon2', 'ersatz' => 0, 'wechsel' => true]]]])]], $adm, ['turnier' => $et]);
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [$auf('es-000023', 'm-aaaa', 'm-bbbb', ['a1', 'a2'], ['wechsel' => ['4' => 'a3']])]], $blTok, ['turnier' => $et]);
+pruefe($s === 200 && count($d['angenommen']) === 1, 'Wechsel der Endrunde nach Start der Vorrunde eingestellt: Server lässt ihn zu');
 
 echo "Paket 0.18c: Favoriten der Sparte\n";
 [, $d] = rufe($api, 'GET', 'sparten', null, $adm);

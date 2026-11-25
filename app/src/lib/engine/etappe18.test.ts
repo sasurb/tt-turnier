@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ART, type AnmeldungEintrag, type Autor } from '@shared/protokoll';
-import { Baukasten, HELFER, LEITUNG } from './test/baukasten';
-import { staerkeVon, teileVon } from './mannschaft';
+import { Baukasten, HELFER, LEITUNG, saetze } from './test/baukasten';
+import { staerkeVon, teileVon, teilId } from './mannschaft';
 import { teilnehmerDaten } from './abfragen';
 import { auslosungWartetAufCheckin, checkinStand, mannschaftAnwesend } from './kasse';
 import { uebernahmePlanen } from './anmeldung';
@@ -82,6 +82,53 @@ describe('Paket 0.18: Sollstärke, Ersatzregel, Wechsel, Begleitperson', () => {
     aufstellen(t3, s3, 'm-aaaa', ['a1', 'a2'], LEITUNG, { wechsel: { '4': 'a3' } });
     expect(warnungen(t3).some((w) => w.includes('nicht vorgesehen'))).toBe(true);
   });
+
+  it('Prüfung 0.18: Begleitperson mit Helferrecht stellt nicht für den Gegner auf', () => {
+    const t = turnier({ ersatz: 1 });
+    const s = begegnung(t);
+    aufstellen(t, s, 'm-bbbb', ['b1', 'b1'], { ...sp('bl'), helfer: true });
+    expect(warnungen(t).some((w) => w.includes('Mannschaftsführung'))).toBe(true);
+    expect(t.z.konkurrenzen.m!.begegnungen[s]?.aufstellung['m-bbbb']).toBeUndefined();
+  });
+
+  it('Prüfung 0.18: Begleitperson trägt Teilspiele für ihre Seite ein – auch mit Helferrecht nicht amtlich', () => {
+    for (const helfer of [false, true]) {
+      const t = turnier({});
+      const s = begegnung(t);
+      aufstellen(t, s, 'm-aaaa', ['a1', 'a2'], sp('bl'));
+      aufstellen(t, s, 'm-bbbb', ['b1', null], sp('b1'));
+      const sp1 = t.z.konkurrenzen.m!.spiele[s]!;
+      t.e(ART.spielErgebnis, { konkurrenz: 'm', spiel: teilId(s, 1), a: sp1.a, b: sp1.b, ergebnis: saetze(5, 5) }, { ...sp('bl'), ...(helfer ? { helfer: true } : {}) });
+      expect(t.z.warnungen).toEqual([]);
+      const teil = teileVon(t.z.konkurrenzen.m!, t.z.konkurrenzen.m!.spiele[s]!)[0]!;
+      expect(teil.stand).toBe('eingetragen'); // wartet auf Bestätigung durch den Gegner
+    }
+  });
+
+  it('Prüfung 0.18: Führung beider Mannschaften hat keine eigene Seite; eigene Begegnung nicht aufrufen', () => {
+    const t = turnier({});
+    t.e(ART.mannschaftGemeldet, { konkurrenz: 'm', id: 'm-bbbb', name: 'B', verein: '', spieler: ['b1'], fuehrer: 'bl' });
+    const s = begegnung(t);
+    aufstellen(t, s, 'm-aaaa', ['a1', 'a2'], sp('bl'));
+    aufstellen(t, s, 'm-bbbb', ['b1', null], sp('bl'));
+    const sp1 = t.z.konkurrenzen.m!.spiele[s]!;
+    t.e(ART.spielErgebnis, { konkurrenz: 'm', spiel: teilId(s, 1), a: sp1.a, b: sp1.b, ergebnis: saetze(5, 5) }, { ...sp('bl'), helfer: true });
+    expect(warnungen(t).some((w) => w.includes('Turnierleitung oder Helfer'))).toBe(true);
+    t.e(ART.spielAufgerufen, { konkurrenz: 'm', spiel: s, tisch: 1 }, { ...sp('bl'), helfer: true });
+    expect(warnungen(t).some((w) => w.includes('Eigene Spiele'))).toBe(true);
+  });
+
+  it('Prüfung 0.18: Wechsel umgehen die Ersatzregel nicht', () => {
+    // Corbillon: a1 spielt 1 und 4; per Wechsel zusätzlich 5 → drei Einzel, ohne Ersatzregel unzulässig
+    const t = turnier({ wechsel: true });
+    const s = begegnung(t);
+    aufstellen(t, s, 'm-aaaa', ['a1', 'a2'], sp('bl'), { wechsel: { '5': 'a1' } });
+    expect(warnungen(t).some((w) => w.includes('mehr Einzel'))).toBe(true);
+    const mit = turnier({ wechsel: true, ersatz: 1 });
+    const s2 = begegnung(mit);
+    aufstellen(mit, s2, 'm-aaaa', ['a1', 'a2'], sp('bl'), { wechsel: { '5': 'a1' } });
+    expect(mit.z.warnungen).toEqual([]);
+  });
 });
 
 describe('Paket 0.18: Check-in je Konkurrenz', () => {
@@ -149,7 +196,6 @@ describe('Paket 0.18: Übernahme einer Gruppenanmeldung', () => {
 });
 
 import { praemienRechnen } from './praemie';
-import { saetze } from './test/baukasten';
 import { alsVorgabe } from './vorgabe';
 
 describe('Paket 0.18: Siegprämie', () => {

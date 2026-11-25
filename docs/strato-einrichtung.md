@@ -181,6 +181,26 @@ Vertrag zur Auftragsverarbeitung (AVV) mit Strato. Er lässt sich im Kundenlogin
 
 ---
 
+## Schritt 10 – Mailversand über SMTP (ab Version 0.18, empfohlen)
+
+Rundmails, Ergebnis-Mails und Ankündigungen gehen über eine gedrosselte Warteschlange raus. Zuverlässiger als die
+PHP-Funktion `mail()` ist der Versand über das Postfach, das schon als Absender eingetragen ist (`BETREIBER_MAIL`).
+
+1. Im Strato-Kundenlogin → **E-Mail** → **Verwaltung** prüfen, dass das Postfach von `BETREIBER_MAIL` existiert, und
+   sein Passwort bereithalten (bei Bedarf dort neu setzen).
+2. GitHub → Repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+   - `SMTP_HOST` = `smtp.strato.de`
+   - `SMTP_PORT` = `465`
+   - `SMTP_USER` = die vollständige Adresse des Postfachs (z. B. `tt-turnier@saschaurban.de`)
+   - `SMTP_PASSWORT` = das Passwort des Postfachs
+3. Optional unter **Variables**: `MAIL_JE_MINUTE` (Standard 20) – so viele Mails gehen höchstens je Minute raus.
+4. **Actions** → **Veröffentlichen** → **Run workflow** (nicht „Re-run“ eines alten Laufs).
+5. Testen: In einem Turnier unter „Teilnehmer“ → „Nachricht an Teilnehmer“ eine Nachricht mit Häkchen „per E-Mail“
+   schicken (vorher eine eigene Online-Anmeldung anlegen) und prüfen, ob sie ankommt.
+
+Ohne `SMTP_HOST` bleibt alles wie bisher (`mail()`). Die Warteschlange läuft ohne Cronjob: Nach jeder Antwort des
+Servers gehen einige Mails raus. Nicht zustellbare Mails werden bis zu sechsmal wiederholt und nach drei Tagen gelöscht.
+
 ## Probleme lösen
 
 | Anzeichen | Ursache und Abhilfe |

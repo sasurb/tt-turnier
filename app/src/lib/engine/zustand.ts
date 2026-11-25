@@ -409,6 +409,15 @@ export function seiteVon(k: KonkurrenzZustand, s: Spiel, spieler: string | null 
   return null;
 }
 
+/** Seiten einer Mannschaftsbegegnung, deren Führung dieser Spieler ist (z. B. Begleitperson; ab 0.18) */
+export function fuehrungVon(k: KonkurrenzZustand, s: Spiel, spieler: string | null | undefined): Seite[] {
+  if (!spieler) return [];
+  const aus: Seite[] = [];
+  if (s.a && k.mannschaften[s.a]?.fuehrer === spieler) aus.push('a');
+  if (s.b && k.mannschaften[s.b]?.fuehrer === spieler) aus.push('b');
+  return aus;
+}
+
 /** Teilnehmer-ID, mit der ein Spieler in dieser Konkurrenz gemeldet ist (null = nicht gemeldet) */
 export function teilnehmerVon(k: KonkurrenzZustand, spieler: string): string | null {
   if (k.meldungen.includes(spieler)) return spieler;
@@ -1410,7 +1419,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         warnen('Spiele aufrufen dürfen die Turnierleitung und Helfer mit der Aufgabe „Spielaufruf“.');
         break;
       }
-      if (rolle === 'spieler' && seiteVon(k, s, e.autor?.spieler)) {
+      if (rolle === 'spieler' && (seiteVon(k, s, e.autor?.spieler) || fuehrungVon(k, s, e.autor?.spieler).length > 0)) {
         warnen('Eigene Spiele ruft die Turnierleitung oder ein Helfer auf.');
         break;
       }
@@ -1640,7 +1649,8 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
   if (d.gegner !== gegner) return 'Die Aufstellung nennt den falschen Gegner.';
   // Spieler mit Helferrecht tragen nur amtlich ein, wenn die eigene Mannschaft nicht in der Begegnung spielt
   const ichSpieler = e.autor?.spieler ?? '';
-  const inBegegnung = [s.a, s.b].some((x) => !!x && !!k.mannschaften[x]?.spieler.includes(ichSpieler));
+  // ab 0.18 gehört auch die Führung (z. B. Begleitperson) zur Begegnung
+  const inBegegnung = [s.a, s.b].some((x) => !!x && (!!k.mannschaften[x]?.spieler.includes(ichSpieler) || (!!ichSpieler && k.mannschaften[x]?.fuehrer === ichSpieler)));
   const amtlich = leitung || (e.autor?.rolle === 'helfer' && (aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri'))) || (e.autor?.rolle === 'spieler' && e.autor.helfer === true && !inBegegnung);
   const fuehrung = e.autor?.rolle === 'spieler' && !!e.autor.spieler && e.autor.spieler === m.fuehrer;
   if (!amtlich && !fuehrung) return 'Die Aufstellung geben die Mannschaftsführung, Helfer oder die Turnierleitung ab.';
@@ -1683,6 +1693,24 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
     }
     if (!Object.keys(wechsel).length) wechsel = undefined;
   }
+  if (wechsel) {
+    // Tatsächliche Besetzung je Einzel (Wechsel vor Position) zählen: niemand spielt mehr Einzel, als die Ersatzregel erlaubt
+    const seite = s.a === mid ? 'a' : 'b';
+    const folge = folgeFuer(sys, seite === 'a' ? { einzel } : undefined, seite === 'b' ? { einzel } : undefined);
+    const jePos = new Map<number, number>();
+    const jeSpieler = new Map<string, number>();
+    folge.forEach((f, i) => {
+      if (f.art !== 'einzel') return;
+      const pos = seite === 'a' ? f.a : f.b;
+      jePos.set(pos, (jePos.get(pos) ?? 0) + 1);
+      const wer = wechsel![String(i + 1)] ?? einzel[pos - 1];
+      if (wer) jeSpieler.set(wer, (jeSpieler.get(wer) ?? 0) + 1);
+    });
+    const proPos = Math.max(1, ...jePos.values());
+    const extra = [...jeSpieler.values()].reduce((sum, n) => sum + Math.max(0, n - proPos), 0);
+    if (extra > ersatz * proPos || [...jeSpieler.values()].some((n) => n > proPos * (ersatz ? 2 : 1)))
+      return 'Mit den Wechseln spielt jemand mehr Einzel, als die Ersatzregel erlaubt.';
+  }
   const imDoppel = doppel.flat().filter(Boolean) as string[];
   if (new Set(imDoppel).size !== imDoppel.length) return 'Jeder Spieler spielt nur in einem Doppel.';
   if (!imEinzel.length && !imDoppel.length) return 'Die Aufstellung ist leer.';
@@ -1703,10 +1731,10 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
       if ((vorher ?? null) !== (jetzt ?? null)) return `Spiel ${t.nr} ist schon gespielt – die Aufstellung dafür lässt sich nicht mehr ändern.`;
     }
   }
-  if (alt && wechsel) {
-    // Wechsel für schon gespielte Teilspiele bleiben, wie sie waren
+  if (alt) {
+    // Wechsel für schon gespielte Teilspiele bleiben, wie sie waren (auch wenn die neue Aufstellung keine nennt)
     for (const t of teileVon(k, s)) {
-      if (t.eintrag && (alt.wechsel?.[String(t.nr)] ?? null) !== (wechsel[String(t.nr)] ?? null)) return `Spiel ${t.nr} ist schon gespielt – der Wechsel dafür lässt sich nicht mehr ändern.`;
+      if (t.eintrag && (alt.wechsel?.[String(t.nr)] ?? null) !== (wechsel?.[String(t.nr)] ?? null)) return `Spiel ${t.nr} ist schon gespielt – der Wechsel dafür lässt sich nicht mehr ändern.`;
     }
   }
   const auf: Aufstellung = { einzel, doppel, ...(wechsel ? { wechsel } : {}), ereignis: e.id, von: e.autor?.name ?? '', zeit: e.zeit };
@@ -1822,7 +1850,13 @@ function spielEreignis(
   void z;
   const rolle = e.autor?.rolle ?? (leitung ? 'leitung' : 'zuschauer');
   const ich = e.autor?.spieler;
-  const meineSeite: Seite | null = rolle === 'spieler' ? seiteVon(k, s, ich) : null;
+  // Mannschaft: auch die Führung (z. B. Begleitperson) gehört zu ihrer Seite (Prüfung 0.18). Ist die Seite nicht
+  // eindeutig (führt beide oder spielt für die andere Mannschaft), trägt nur die Leitung bzw. ein Helfer ein.
+  const alsSpieler = rolle === 'spieler' ? seiteVon(k, s, ich) : null;
+  const alsFuehrung = rolle === 'spieler' ? fuehrungVon(k, s, ich) : [];
+  if (alsFuehrung.length > 1 || (alsSpieler && alsFuehrung.length === 1 && alsFuehrung[0] !== alsSpieler))
+    return 'Bei dieser Begegnung tragen die Turnierleitung oder Helfer ein.';
+  const meineSeite: Seite | null = alsSpieler ?? alsFuehrung[0] ?? null;
   // Spieler mit Helfer-Recht: fremde Spiele amtlich wie ein Helfer, eigene wie jeder Spieler (Gegner bestätigt).
   // Helfer brauchen die Aufgabe „Ergebnisse“ oder „Oberschiedsrichter“.
   const traegtEin = aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri');
