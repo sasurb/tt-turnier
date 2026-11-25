@@ -2,13 +2,13 @@
   import Textbaustein from './Textbaustein.svelte';
   import { onMount, untrack } from 'svelte';
   import { alleGesehen, appHinweisAn, neueAnmeldungen, setzeAppHinweis } from '../../anmeldeHinweis';
-  import type { AnmeldeStatus, AnmeldungEinstellungen, AnmeldungEintrag, AnmeldungKonkurrenz } from '@shared/protokoll';
+  import type { AnmeldeForm, AnmeldeStatus, AnmeldungEinstellungen, AnmeldungEintrag, AnmeldungKonkurrenz } from '@shared/protokoll';
   import { T } from '../../texte';
   import { api } from '../../dienste';
   import { fehlerText } from '../../app.svelte';
   import { appBasis } from '../../zentrale.svelte';
   import { alsEineAktion } from '../../aktion';
-  import { anmeldeKonkurrenzen, uebernahmePlanen } from '../../engine/anmeldung';
+  import { anmeldeKonkurrenzen, standardForm, uebernahmePlanen } from '../../engine/anmeldung';
   import { euro } from '../../engine/modell';
   import type { TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
@@ -53,6 +53,9 @@
   let hinweisText = $state('');
   let mitBank = $state(true);
   let hinweisMail = $state(true);
+  /** ab 0.18: Anmeldeform je Konkurrenz (Doppel/Mixed/Mannschaft) und Gruppenanmeldung */
+  let formen = $state<Record<string, AnmeldeForm>>({});
+  let gruppen = $state(true);
   // svelte-ignore state_referenced_locally
   let appHinweis = $state(appHinweisAn(turnierId));
   /** Aufgeklappt: bei neuen Anmeldungen gleich offen */
@@ -74,11 +77,14 @@
 
   const link = $derived(`${appBasis()}#/meldung/${turnierId}`);
   const ids = $derived(new Set(liste.map((a) => a.id)));
+  const gruppenIds = $derived(new Set(liste.filter((a) => a.typ === 'gruppe').map((a) => a.id)));
+  /** Spieler aus einer Gruppenanmeldung (Anmelde-ID + „p…“) */
+  const istGruppenSpieler = (m: string) => /^[a-z0-9]{10}p\d+$/.test(m) && gruppenIds.has(m.slice(0, 10));
   /** Konkurrenzen mit Belegung durch von Hand eingetragene Meldungen („vorab“) */
   function konkurrenzenFuer(wahl: string[]): (AnmeldungKonkurrenz & { vorab: number })[] {
-    return anmeldeKonkurrenzen(z, wahl).map((k) => {
+    return anmeldeKonkurrenzen(z, wahl, formen).map((k) => {
       const kz = z.konkurrenzen[k.id]!;
-      const vorab = kz.einst.art === 'einzel' ? kz.meldungen.filter((m) => !ids.has(m)).length : kz.meldungen.length;
+      const vorab = kz.einst.art === 'einzel' ? kz.meldungen.filter((m) => !ids.has(m) && !istGruppenSpieler(m)).length : kz.meldungen.filter((m) => !/^[mp]-[a-z0-9]{10}\d+$/.test(m)).length;
       return { ...k, vorab };
     });
   }
@@ -103,7 +109,9 @@
   function formularAus(e: AnmeldungEinstellungen) {
     offen = e.offen;
     schluss = e.schluss ? lokaleZeit(e.schluss) : '';
-    auswahl = e.konkurrenzen.length ? e.konkurrenzen.map((k) => k.id) : z.konkurrenzReihe.filter((x) => z.konkurrenzen[x]!.einst.art !== 'mannschaft');
+    auswahl = e.konkurrenzen.length ? e.konkurrenzen.map((k) => k.id) : [...z.konkurrenzReihe];
+    formen = Object.fromEntries(e.konkurrenzen.filter((k) => k.form).map((k) => [k.id, k.form!]));
+    gruppen = e.gruppen !== false;
     angaben = [...e.angaben];
     hinweisText = e.hinweis;
     mitBank = e.bank !== null || !e.konkurrenzen.length;
@@ -124,6 +132,7 @@
       bank: mitBank ? bank : null,
       ort: z.ort,
       hinweisMail,
+      gruppen,
     };
   }
 
@@ -175,10 +184,10 @@
     }
   }
 
-  async function status(a: AnmeldungEintrag, konkurrenz: string, s: AnmeldeStatus) {
+  async function status(a: AnmeldungEintrag, konkurrenz: string, s: AnmeldeStatus, eintrag?: number) {
     if (s === 'abgemeldet' && !confirm(T.anm.streichenFrage)) return;
     try {
-      const r = await api.anmeldungAendern(token, turnierId, a.id, konkurrenz, s);
+      const r = await api.anmeldungAendern(token, turnierId, a.id, konkurrenz, s, a.typ === 'gruppe' ? eintrag : undefined);
       liste = r.anmeldungen;
     } catch (x) {
       fehler = fehlerText(x, T.app.fehlerAllgemein);
@@ -264,26 +273,31 @@
           <li class:unbestaetigt={!a.bestaetigt}>
             <div class="kopfzeile">
               <strong class="wachsen">{a.vorname} {a.nachname}</strong>
+              {#if a.typ === 'gruppe'}<span class="marke" data-testid="gruppe-marke">{T.anm.gruppeMarke(a.personen?.length ?? 0)}</span>{/if}
               {#if !a.bestaetigt}<span class="marke">{T.anm.unbestaetigt}</span>{/if}
-              {#if z.spieler[a.id]}<span class="marke online">{T.anm.imTurnier}</span>{/if}
+              {#if z.spieler[a.id] || (a.typ === 'gruppe' && a.spieler)}<span class="marke online">{T.anm.imTurnier}</span>{/if}
             </div>
             <div class="leise">
               {[a.verein, a.ttr !== null ? `TTR ${a.ttr}` : '', a.klasse ?? '', a.jahrgang ? String(a.jahrgang) : ''].filter(Boolean).join(' · ')}
               {#if a.verein || a.ttr !== null} · {/if}<a href="mailto:{a.email}">{a.email}</a>
             </div>
+            {#if a.typ === 'gruppe' && a.personen}
+              <p class="leise personen">{a.personen.map((p) => [`${p.vorname} ${p.nachname}`, p.ttr !== null ? `TTR ${p.ttr}` : '', p.klasse ?? '', p.jahrgang ? String(p.jahrgang) : ''].filter(Boolean).join(' · ')).join('; ')}</p>
+            {/if}
             {#if a.bestaetigt}
               <ul class="meldungen">
-                {#each a.konkurrenzen as k (k.id)}
+                {#each a.konkurrenzen as k, i (k.eintrag ?? `${k.id}-${i}`)}
+                  {@const pers = new Map((a.personen ?? []).map((p) => [p.pid, `${p.vorname} ${p.nachname}`]))}
                   <li>
                     <span class="wachsen">
-                      {z.konkurrenzen[k.id]?.einst.name ?? k.id}:
+                      {z.konkurrenzen[k.id]?.einst.name ?? k.id}{#if k.mannschaft} – {k.mannschaft.name}{/if}{#if k.wer}<span class="leise"> ({k.wer.map((x) => (k.mannschaft?.wechsler.includes(x) ? `${pers.get(x)} (${T.mannschaft.wechslerKurz})` : pers.get(x))).join(', ')}{#if k.mannschaft} · MF: {k.mannschaft.fuehrer === 'leitung' ? `${a.vorname} ${a.nachname} (${T.mannschaft.begleitung})` : pers.get(k.mannschaft.fuehrer)}{/if})</span>{/if}:
                       <strong class="st-{k.status}">{k.status === 'warteliste' ? T.anm.position(k.position) : T.anm.status[k.status]}</strong>
                       {#if k.partner}<span class="leise"> · {T.anm.partner(k.partner)}</span>{/if}
                       {#if k.partnerStatus}<span class="marke" class:offen={k.partnerStatus !== 'bestaetigt'} data-testid="partner-status">{T.meldung.partnerStatus[k.partnerStatus]}</span>{/if}
                     </span>
-                    {#if k.status !== 'platz'}<button class="zweit klein" onclick={() => status(a, k.id, 'platz')}>{T.anm.platzGeben}</button>{/if}
-                    {#if k.status === 'platz'}<button class="zweit klein" onclick={() => status(a, k.id, 'warteliste')}>{T.anm.aufWarteliste}</button>{/if}
-                    {#if k.status !== 'abgemeldet'}<button class="gefahr klein" onclick={() => status(a, k.id, 'abgemeldet')}>{T.anm.streichen}</button>{/if}
+                    {#if k.status !== 'platz'}<button class="zweit klein" onclick={() => status(a, k.id, 'platz', k.eintrag)}>{T.anm.platzGeben}</button>{/if}
+                    {#if k.status === 'platz'}<button class="zweit klein" onclick={() => status(a, k.id, 'warteliste', k.eintrag)}>{T.anm.aufWarteliste}</button>{/if}
+                    {#if k.status !== 'abgemeldet'}<button class="gefahr klein" onclick={() => status(a, k.id, 'abgemeldet', k.eintrag)}>{T.anm.streichen}</button>{/if}
                   </li>
                 {/each}
               </ul>
@@ -300,7 +314,7 @@
     <fieldset>
       <legend>{T.anm.konkurrenzen}<Hilfe text={T.anm.konkurrenzenHilfe} /></legend>
       {#if !z.konkurrenzReihe.length}<p class="leise">{T.anm.keineKonkurrenzen}</p>{/if}
-      {#each z.konkurrenzReihe.filter((x) => z.konkurrenzen[x]!.einst.art !== 'mannschaft') as kid (kid)}
+      {#each z.konkurrenzReihe as kid (kid)}
         {@const k = z.konkurrenzen[kid]!}
         <label class="haken">
           <input type="checkbox" value={kid} bind:group={auswahl} />
@@ -318,8 +332,17 @@
             </span>
           </span>
         </label>
+        {#if k.einst.art !== 'einzel' && auswahl.includes(kid)}
+          <div class="form-wahl">
+            <select bind:value={() => formen[kid] ?? standardForm(k.einst.art), (v) => (formen = { ...formen, [kid]: v })} aria-label="{T.anm.form}: {k.einst.name}" data-testid="anmeldeform">
+              {#each ['gruppe', 'einzel', 'beides'] as f (f)}<option value={f}>{T.anm.formen(k.einst.art === 'mannschaft')[f]}</option>{/each}
+            </select>
+            <Hilfe text={T.anm.formHilfe} />
+          </div>
+        {/if}
       {/each}
     </fieldset>
+    <div class="label-zeile"><label class="haken"><input type="checkbox" bind:checked={gruppen} data-testid="gruppen-an" /> {T.anm.gruppen}</label><Hilfe text={T.anm.gruppenHilfe} /></div>
     {#if z.angaben.length}
       <fieldset>
         <legend>{T.anm.angaben}</legend>
@@ -355,6 +378,9 @@
 </details>
 
 <style>
+  .form-wahl { display: flex; align-items: center; gap: 6px; margin: 0 0 8px 32px; }
+  .form-wahl select { flex: 1; }
+  .personen { margin: 4px 0; }
   h3 { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 16px; }
   .abschnitt > summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 44px; cursor: pointer; }
   .abschnitt > summary .titel { font-size: 1.2rem; margin: 0; }

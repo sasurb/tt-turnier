@@ -765,6 +765,34 @@ public final class KernTest {
         for (Object o : a.l("codes")) if ("h1".equals(Json.alsObjekt(o).get("bezug"))) neu = (String) Json.alsObjekt(o).get("code");
         String hilde3 = rufe(z3, "POST", "turnier.zugang", Json.obj("turnier", tid, "code", neu), null).t("token");
         pruefe(zahlAus(rufe(z3, "GET", "nachrichten", null, hilde3, q("turnier", tid), false).g("ungelesen")) == 0, "Kennung entfernt: Posteingang gelöscht");
+
+        System.out.println("Paket 0.18: Ersatzregel, Wechsel, Begleitperson auf der Zentrale");
+        a = rufe(z3, "POST", "turnier.anlegen", Json.obj("name", "Ersatz-Cup"), k3);
+        String et = (String) Json.alsObjekt(a.g("turnier")).get("id");
+        String el = a.t("token");
+        rufe(z3, "POST", "events", Json.obj("ereignisse", liste(
+            ev("e-0000001", "konkurrenz.angelegt", Json.obj("id", "m", "einst", Json.obj("name", "M", "art", "mannschaft", "modus", "jgj", "mannschaft", Json.obj("system", "corbillon2", "ersatz", 1L, "wechsel", true)))),
+            ev("e-0000002", "spieler.angelegt", Json.obj("id", "a1", "vorname", "A", "nachname", "1", "verein", "")),
+            ev("e-0000003", "spieler.angelegt", Json.obj("id", "a2", "vorname", "A", "nachname", "2", "verein", "")),
+            ev("e-0000004", "spieler.angelegt", Json.obj("id", "b1", "vorname", "B", "nachname", "1", "verein", "")),
+            ev("e-0000005", "spieler.angelegt", Json.obj("id", "bl", "vorname", "Be", "nachname", "G", "verein", "", "begleitung", true)),
+            ev("e-0000006", "mannschaft.gemeldet", Json.obj("konkurrenz", "m", "id", "m-aaaa", "name", "A", "spieler", liste("a1", "a2"), "fuehrer", "bl")),
+            ev("e-0000007", "mannschaft.gemeldet", Json.obj("konkurrenz", "m", "id", "m-bbbb", "name", "B", "spieler", liste("b1"), "fuehrer", "b1")))), el, q("turnier", et), false);
+        a = rufe(z3, "POST", "codes.anlegen", Json.obj("turnier", et, "eintraege", liste(Json.obj("rolle", "spieler", "bezug", "bl", "name", "Be G"), Json.obj("rolle", "spieler", "bezug", "b1", "name", "B 1"))), el);
+        Map<String, String> ec = new LinkedHashMap<>();
+        for (Object o : a.l("codes")) ec.put((String) Json.alsObjekt(o).get("bezug"), (String) Json.alsObjekt(o).get("code"));
+        String bl = rufe(z3, "POST", "turnier.zugang", Json.obj("turnier", et, "code", ec.get("bl")), null).t("token");
+        String b1 = rufe(z3, "POST", "turnier.zugang", Json.obj("turnier", et, "code", ec.get("b1")), null).t("token");
+        String spiel = "g1-m-aaaa-m-bbbb";
+        a = rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000010", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste("a1", "a2"), "doppel", liste(), "wechsel", Json.obj("4", "a2"))))), bl, q("turnier", et), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Begleitperson gibt die Aufstellung mit Wechsel ab");
+        a = rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000011", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-bbbb", "gegner", "m-aaaa", "einzel", liste("b1", "b1"), "doppel", liste())))), b1, q("turnier", et), false);
+        pruefe(a.s == 200 && a.l("angenommen").size() == 1, "Ersatzregel: doppelt besetzte Position erlaubt");
+        rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000012", "konkurrenz.geaendert", Json.obj("id", "m", "einst", Json.obj("mannschaft", Json.obj("system", "corbillon2", "ersatz", 0L, "wechsel", false)))))), el, q("turnier", et), false);
+        a = rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000013", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-bbbb", "gegner", "m-aaaa", "einzel", liste("b1", "b1"), "doppel", liste())))), b1, q("turnier", et), false);
+        pruefe(abgelehnt(a, "ungueltig"), "ohne Ersatzregel abgewiesen");
+        a = rufe(z3, "POST", "events", Json.obj("ereignisse", liste(ev("e-0000014", "mannschaft.aufgestellt", Json.obj("konkurrenz", "m", "spiel", spiel, "mannschaft", "m-aaaa", "gegner", "m-bbbb", "einzel", liste("a1", "a2"), "doppel", liste(), "wechsel", Json.obj("4", "a2"))))), bl, q("turnier", et), false);
+        pruefe(abgelehnt(a, "ungueltig"), "ohne Einstellung kein Wechsel");
     }
 
 }

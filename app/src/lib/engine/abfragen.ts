@@ -22,6 +22,7 @@ import {
 import { type Tabelle } from './wertung';
 import { istRundenModus, rundenPlatzierungen } from './runden';
 import { mischen, zufallAus } from './zufall';
+import { systemVon } from './mannschaft';
 import { alleOffenenAufgerufenen, begonnen, erstePhase, gruppenTabelleVon, spielerVon, teilnehmerVon, vorrundenGruppen, zurueckgezogen, type TurnierZustand } from './zustand';
 
 /** Abfragen für die Oberfläche (rechnen nur, ändern nichts). */
@@ -68,8 +69,15 @@ export function teilnehmerDaten(z: TurnierZustand, k: KonkurrenzZustand): Record
   const aus: Record<string, TurnierSpieler> = {};
   if (k.einst.art === 'mannschaft') {
     // Mannschaft: TTR = Durchschnitt der Spieler mit TTR (für die Setzung), Verein wie gemeldet
+    // Ab 0.18: Wechselspieler zählen nicht; von den Stammspielern die besten je Einzelposition
+    const n = Math.max(1, systemVon(k.einst).einzel);
     for (const m of Object.values(k.mannschaften)) {
-      const ttr = m.spieler.map((x) => z.spieler[x]?.ttr).filter((t): t is number => typeof t === 'number');
+      const stamm = m.spieler.filter((x) => !(m.wechsler ?? []).includes(x));
+      const ttr = stamm
+        .map((x) => z.spieler[x]?.ttr)
+        .filter((t): t is number => typeof t === 'number')
+        .sort((a, b) => b - a)
+        .slice(0, n);
       aus[m.id] = { id: m.id, vorname: '', nachname: m.name, verein: m.verein, ttr: ttr.length ? Math.round(ttr.reduce((a, b) => a + b, 0) / ttr.length) : null, klasse: null, geschlecht: null, jahrgang: null };
     }
     return aus;

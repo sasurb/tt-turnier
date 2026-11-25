@@ -297,6 +297,14 @@ export const HANDBUCH: HandbuchKapitel[] = [
     einleitung: 'Mannschaften aus den Spielern des Turniers, Begegnungen mit Einzeln und Doppeln nach einem Spielsystem der Wettspielordnung.',
     abschnitte: [
       {
+        titel: 'Sollstärke, Ersatzregel, Wechsel',
+        text: [
+          'Sollstärke: wie viele Spieler eine Mannschaft melden muss bzw. darf (leer = aus dem Spielsystem). Gilt für Meldung, Online-Anmeldung und Check-in.',
+          'Ersatzregel bei Unterbesetzung: Statt fehlende Positionen kampflos abzugeben (Wettspielordnung), dürfen Anwesende bis zu der eingestellten Zahl von Positionen zusätzlich übernehmen – in der Aufstellung steht ein Spieler dann auf zwei Positionen.',
+          'Wechsel in der Begegnung: In der Aufstellung kann die Mannschaftsführung für einzelne Einzel einen anderen Spieler der Mannschaft einsetzen. Wechselspieler zählen nicht für die Setzung (TTR-Durchschnitt der Stammspieler).',
+        ],
+      },
+      {
         titel: 'Anlegen',
         text: [
           '1. Unter „Konkurrenzen“ eine neue Konkurrenz mit „Mannschaft“ anlegen und das Spielsystem wählen: Bundessystem, Werner-Scheffler-System, Sechser-Paarkreuz-System, Braunschweiger System, Corbillon-Cup, Zweier-System (2 Einzel + Doppel), Olympisches System, Swaythling-Cup oder eine eigene Spielfolge. Möglich sind Gruppen + K.-o., Gruppen + Platzierungsgruppen, Jeder gegen jeden und K.-o.',
@@ -326,6 +334,15 @@ export const HANDBUCH: HandbuchKapitel[] = [
     fuer: ['leitung', 'spieler'],
     einleitung: 'Spieler melden sich über einen Link selbst an. Ist eine Konkurrenz voll, kommen sie auf die Warteliste und rücken automatisch nach.',
     abschnitte: [
+      {
+        titel: 'Gruppen- und Mannschaftsanmeldung',
+        text: [
+          'Neben der Einzelanmeldung kann eine volljährige Mannschaftsleitung (z. B. Jugendwart) mehrere Personen gesammelt melden – auch Minderjährige, ohne deren E-Mail-Adressen. Sie bestätigt, dass die Erziehungsberechtigten einverstanden sind; alle Mails (Bestätigung, Nachrichten, Ergebnisse) gehen an sie. Bei Jugendturnieren ist das der einzige Weg online.',
+          'Je Doppel- bzw. Mannschafts-Konkurrenz legst du die Anmeldeform fest: nur Paare bzw. ganze Mannschaften, nur Einzelne (du bildest Paare und Mannschaften selbst) oder beides.',
+          'Eine Mannschaft braucht Namen und Verein, Spieler innerhalb der Sollstärke und eine Mannschaftsführung – eine Spielerin bzw. ein Spieler oder die Mannschaftsleitung selbst als Begleitperson. Wechselspieler werden gekennzeichnet.',
+          '„Übernehmen“ legt die Personen als Spieler an (die Begleitperson ohne Meldung und Startgeld), meldet Einzel und bildet Paare und Mannschaften.',
+        ],
+      },
       {
         titel: 'Für die Turnierleitung',
         text: [
@@ -397,6 +414,13 @@ export const HANDBUCH: HandbuchKapitel[] = [
     fuer: ['leitung', 'helfer'],
     einleitung: 'Im Reiter „Kasse & Check-in“ checkst du Spieler am Turniertag ein und buchst das Startgeld.',
     abschnitte: [
+      {
+        titel: 'Check-in vor der Auslosung, Mannschaften',
+        text: [
+          'Mit „Auslosung erst nach abgeschlossenem Check-in“ (Kasse & Check-in) lässt sich jede Konkurrenz erst auslosen, wenn ihr Check-in abgeschlossen ist. „Alle anwesend“ checkt den Rest ein; bei „Check-in abschließen“ kann die Turnierleitung Fehlende streichen.',
+          'Mannschaften checkt die Mannschaftsführung auf einmal ein: „Mannschaft da“ vermerkt alle Spieler und kassiert ihr Startgeld bar. Wer fehlt, wird danach einzeln auf „Nicht da“ gesetzt; unter der Sollstärke erscheint ein Hinweis (Nachbesetzen unter „Teilnehmer“ bis zur Höchstzahl).',
+        ],
+      },
       {
         titel: 'Ablauf',
         text: [

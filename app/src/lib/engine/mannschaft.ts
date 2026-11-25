@@ -130,10 +130,36 @@ export interface MannschaftEinstellungen {
   durchspielen: boolean;
   /** Eigenes Spielsystem (nur bei system = 'eigen') */
   eigen: Omit<SpielSystem, 'id' | 'name'> | null;
+  /**
+   * Sollstärke (ab 0.18): Mindest- und Höchstzahl gemeldeter Spieler (inkl. Wechselspieler); null = aus dem
+   * Spielsystem (Mindestzahl = Einzelpositionen, Höchstzahl = Mindestzahl + 2). Gilt für Anmeldung und Check-in.
+   */
+  min: number | null;
+  max: number | null;
+  /**
+   * Ersatzregel bei Unterbesetzung (ab 0.18): So viele Einzelpositionen dürfen anwesende Spieler zusätzlich
+   * übernehmen (ein Spieler höchstens zwei Positionen). 0 = aus – unbesetzte Positionen gehen kampflos verloren (WO E 3.1).
+   */
+  ersatz: number;
+  /** Wechsel in der Begegnung (ab 0.18): je Einzel darf die Aufstellung einen anderen Spieler der Mannschaft einsetzen */
+  wechsel: boolean;
 }
 
 export function standardMannschaft(): MannschaftEinstellungen {
-  return { system: 'bundes4', durchspielen: false, eigen: null };
+  return { system: 'bundes4', durchspielen: false, eigen: null, min: null, max: null, ersatz: 0, wechsel: false };
+}
+
+/** Größte Mannschaft (gemeldete Spieler) */
+export const MAX_MANNSCHAFT = 20;
+export const MAX_ERSATZ = 4;
+
+/** Sollstärke einer Mannschafts-Konkurrenz (Mindest- und Höchstzahl der Spieler) */
+export function staerkeVon(einst: Pick<KonkurrenzEinstellungen, 'mannschaft'>): { min: number; max: number } {
+  const m = einst.mannschaft ?? standardMannschaft();
+  const sys = systemVon(einst);
+  const min = m.min ?? Math.max(1, sys.einzel);
+  const max = Math.max(min, m.max ?? Math.min(MAX_MANNSCHAFT, min + 2));
+  return { min, max };
 }
 
 const MAX_POS = 8;
@@ -193,6 +219,18 @@ export function mannschaftEinstLesen(v: unknown, alt: MannschaftEinstellungen | 
     }
   }
   if (e.system === 'eigen' && !e.eigen) e.system = 'bundes4';
+  const zahl = (w: unknown, lo: number, hi: number) => (typeof w === 'number' && Number.isInteger(w) && w >= lo && w <= hi ? w : undefined);
+  if (x.min === null) e.min = null;
+  else if (zahl(x.min, 1, MAX_MANNSCHAFT) !== undefined) e.min = x.min as number;
+  if (x.max === null) e.max = null;
+  else if (zahl(x.max, 1, MAX_MANNSCHAFT) !== undefined) e.max = x.max as number;
+  if (e.min !== null && e.max !== null && e.max < e.min) e.max = e.min;
+  if (zahl(x.ersatz, 0, MAX_ERSATZ) !== undefined) e.ersatz = x.ersatz as number;
+  if (typeof x.wechsel === 'boolean') e.wechsel = x.wechsel;
+  e.min ??= null;
+  e.max ??= null;
+  e.ersatz ??= 0;
+  e.wechsel ??= false;
   return e;
 }
 
@@ -223,8 +261,13 @@ export interface Mannschaft {
   verein: string;
   /** Gemeldete Spieler (Reihenfolge = Meldung) */
   spieler: string[];
-  /** Mannschaftsführung: darf die Aufstellung abgeben und Teilspiele der eigenen Begegnungen eintragen */
+  /**
+   * Mannschaftsführung: darf die Aufstellung abgeben und Teilspiele der eigenen Begegnungen eintragen. Ab 0.18 auch
+   * eine Begleitperson (Spieler mit „begleitung“, ohne eigene Meldung und ohne Startgeld).
+   */
   fuehrer: string | null;
+  /** Wechselspieler (ab 0.18, Teil von spieler): zählen nicht für die Setzung (TTR-Mittel der Stammspieler) */
+  wechsler: string[];
 }
 
 export interface Aufstellung {
@@ -232,6 +275,8 @@ export interface Aufstellung {
   einzel: (string | null)[];
   /** Doppel 1…d (null = nicht besetzt) */
   doppel: ([string, string] | null)[];
+  /** Wechsel in der Begegnung (ab 0.18, nur mit Einstellung „wechsel“): Teilspiel-Nummer → eingesetzter Spieler */
+  wechsel?: Record<string, string>;
   ereignis: string;
   von: string;
   zeit: string;
@@ -304,10 +349,10 @@ export function begegnungDaten(k: KonkurrenzZustand, spiel: string): BegegnungDa
 }
 
 /** Spieler der Aufstellung an einer Position */
-function besetzung(auf: Aufstellung | undefined, art: 'einzel' | 'doppel', pos: number): string[] {
+function besetzung(auf: Aufstellung | undefined, art: 'einzel' | 'doppel', pos: number, nr = 0): string[] {
   if (!auf) return [];
   if (art === 'einzel') {
-    const s = auf.einzel[pos - 1];
+    const s = auf.wechsel?.[String(nr)] ?? auf.einzel[pos - 1];
     return s ? [s] : [];
   }
   const d = auf.doppel[pos - 1];
@@ -347,8 +392,8 @@ export function teileVon(k: KonkurrenzZustand, s: Spiel): TeilSpiel[] {
     const t = b?.teile[String(nr)];
     const gueltig = t && t.eintrag && t.aTeam !== undefined && (t.aTeam === s.a || t.aTeam === s.b) ? t : null;
     const um = !!gueltig && gueltig.aTeam !== s.a;
-    const a = besetzung(aufA, f.art, f.a);
-    const bb = besetzung(aufB, f.art, f.b);
+    const a = besetzung(aufA, f.art, f.a, nr);
+    const bb = besetzung(aufB, f.art, f.b, nr);
     const voll = (x: string[]) => x.length === (f.art === 'einzel' ? 1 : 2);
     let status: TeilStatus = 'wartet';
     let ergebnis: Ergebnis | null = null;

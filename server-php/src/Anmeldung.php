@@ -48,7 +48,30 @@ final class Anmeldung
 
     private static function leer(): array
     {
-        return ['offen' => false, 'schluss' => null, 'konkurrenzen' => [], 'hinweis' => '', 'angaben' => [], 'bank' => null, 'ort' => '', 'hinweisMail' => true];
+        return ['offen' => false, 'schluss' => null, 'konkurrenzen' => [], 'hinweis' => '', 'angaben' => [], 'bank' => null, 'ort' => '', 'hinweisMail' => true, 'gruppen' => true];
+    }
+
+    /** Anmeldeform je Konkurrenz: einzel | gruppe (Paar bzw. Mannschaft) | beides; Einzel-Konkurrenzen immer einzel */
+    private static function formLesen(string $art, mixed $form): string
+    {
+        if ($art === 'einzel') {
+            return 'einzel';
+        }
+        if (in_array($form, ['einzel', 'gruppe', 'beides'], true)) {
+            return $form;
+        }
+        return $art === 'mannschaft' ? 'gruppe' : 'beides';
+    }
+
+    private static function staerke(mixed $n, int $ersatz): int
+    {
+        return is_int($n) && $n >= 1 && $n <= 20 ? $n : max(1, min(20, $ersatz));
+    }
+
+    /** Form einer Konkurrenz (ältere Einstellungen ohne Feld: Doppel beides, sonst einzeln) */
+    private static function formVon(array $kk): string
+    {
+        return self::formLesen((string)$kk['art'], $kk['form'] ?? null);
     }
 
     /** Öffentliche Fassung: ohne „vorab“ (Zählhilfe) und ohne Bankverbindung (die sehen nur bestätigte Anmeldungen) */
@@ -58,7 +81,9 @@ final class Anmeldung
         unset($e['hinweisMail']);
         $e['konkurrenzen'] = array_map(static fn(array $k): array => [
             'id' => $k['id'], 'name' => $k['name'], 'art' => $k['art'], 'max' => $k['max'], 'startgeld' => $k['startgeld'],
+            'form' => self::formVon($k), 'min' => $k['min'] ?? null, 'maxSpieler' => $k['maxSpieler'] ?? null,
         ], $e['konkurrenzen']);
+        $e['gruppen'] = ($e['gruppen'] ?? true) !== false;
         return $e;
     }
 
@@ -173,6 +198,31 @@ final class Anmeldung
         return trim(($z['d']['vorname'] ?? '') . ' ' . ($z['d']['nachname'] ?? ''));
     }
 
+    private static function istGruppe(array $z): bool
+    {
+        return ($z['d']['typ'] ?? '') === 'gruppe';
+    }
+
+    /** Namen der Personen eines Eintrags einer Gruppenanmeldung (bzw. die Mannschaft) */
+    private static function werText(array $z, array $k): string
+    {
+        if (!self::istGruppe($z)) {
+            return '';
+        }
+        $namen = [];
+        foreach ($z['d']['personen'] ?? [] as $p) {
+            $namen[$p['pid']] = trim($p['vorname'] . ' ' . $p['nachname']);
+        }
+        $wer = implode(' / ', array_map(static fn(string $pid): string => $namen[$pid] ?? '?', $k['wer'] ?? []));
+        return isset($k['mannschaft']['name']) ? $k['mannschaft']['name'] . ' (' . implode(', ', array_map(static fn(string $pid): string => $namen[$pid] ?? '?', $k['wer'] ?? [])) . ')' : $wer;
+    }
+
+    /** Spieler, die für einen Eintrag Startgeld zahlen (Startgeld gilt je Spieler, auch im Doppel und in der Mannschaft) */
+    private static function zahler(array $z, array $k): int
+    {
+        return self::istGruppe($z) ? max(1, count($k['wer'] ?? [])) : 1;
+    }
+
     /** Sicht der Person auf ihre Anmeldung (AnmeldungStand) */
     private function stand(array $t, array $e, array $z, array $zeilen): array
     {
@@ -184,11 +234,12 @@ final class Anmeldung
                 $k['status'] = null; // noch keine Vergabe
             }
             if ($k['status'] === 'platz' && $kk !== null) {
-                $summe += (int)($kk['startgeld'] ?? 0);
+                $summe += (int)($kk['startgeld'] ?? 0) * self::zahler($z, $k);
             }
+            $wer = self::werText($z, $k);
             $liste[] = [
                 'id' => $k['id'],
-                'name' => $kk['name'] ?? $k['id'],
+                'name' => ($kk['name'] ?? $k['id']) . ($wer !== '' ? ': ' . $wer : ''),
                 'status' => $k['status'],
                 'position' => ($k['status'] ?? '') === 'warteliste' ? self::position($zeilen, $k['id'], (string)$z['id']) : null,
                 'partner' => $k['partner'] ?? null,
@@ -205,6 +256,7 @@ final class Anmeldung
             'zweck' => self::zweck($t, $z),
             'abmeldbar' => $this->abmeldbar($t),
             'bestaetigt' => $z['bestaetigt'] !== null,
+            'gruppe' => self::istGruppe($z),
         ];
     }
 
@@ -251,7 +303,7 @@ final class Anmeldung
         $teile = [];
         foreach ($z['d']['konkurrenzen'] as $k) {
             $kk = self::konkurrenzVon($e, (string)$k['id']);
-            $teile[] = '• ' . ($kk['name'] ?? $k['id']) . (($k['status'] ?? '') === 'warteliste' ? ' (Warteliste)' : '');
+            $teile[] = '• ' . ($kk['name'] ?? $k['id']) . (isset($k['mannschaft']) ? ' (Mannschaft)' : '') . (($k['status'] ?? '') === 'warteliste' ? ' (Warteliste)' : '');
         }
         $bestaetigt = count(array_filter($zeilen, static fn(array $x): bool => $x['bestaetigt'] !== null));
         $this->api->mail($an, "Neue Anmeldung: {$t['name']}", "Hallo,\n\n"
@@ -306,9 +358,11 @@ final class Anmeldung
         return [
             'turnier' => ['id' => (string)$t['id'], 'name' => (string)$t['name'], 'datum' => $t['datum'], 'veranstalter' => (string)($t['veranstalter'] ?? '')],
             'einstellungen' => self::ausgabe($e),
-            'moeglich' => $this->moeglich($t, $e) && $this->api->mailBereit() && !$this->api->jugendturnier((string)$t['id']),
-            // ab 0.17: Jugendturnier – keine Einzelanmeldung online (Frage 8C)
+            'moeglich' => $this->moeglich($t, $e) && $this->api->mailBereit() && (!$this->api->jugendturnier((string)$t['id']) || ($e['gruppen'] ?? true) !== false),
+            // ab 0.17: Jugendturnier – keine Einzelanmeldung online (Frage 8C), ab 0.18 aber Gruppenanmeldung
             'jugend' => $this->api->jugendturnier((string)$t['id']),
+            'einzel' => !$this->api->jugendturnier((string)$t['id']),
+            'gruppe' => ($e['gruppen'] ?? true) !== false,
             'belegung' => self::belegung($e, $this->zeilen((string)$t['id'])),
         ];
     }
@@ -324,6 +378,9 @@ final class Anmeldung
         $e = self::einst($t);
         if ($e === null || !$this->moeglich($t, $e)) {
             throw new ApiFehler('abgelaufen', 'Die Anmeldung für dieses Turnier ist geschlossen.');
+        }
+        if (($a->rumpf['typ'] ?? null) === 'gruppe') {
+            return $this->gruppeSenden($a, $t, $e);
         }
         if ($this->api->jugendturnier((string)$t['id'])) {
             throw new ApiFehler('abgelaufen', 'Bei Jugendturnieren gibt es keine Einzelanmeldung online. Bitte meldet euch über euren Verein bzw. die Mannschaftsleitung bei der Turnierleitung.');
@@ -399,7 +456,17 @@ final class Anmeldung
                 throw new ApiFehler('ungueltig', 'Unbekannte Konkurrenz gewählt.');
             }
             $gesehen[$kid] = true;
-            $partner = $kk['art'] !== 'einzel' && is_string($w['partner'] ?? null) ? mb_substr(trim((string)preg_replace('/[\x00-\x1F\x7F]/u', '', $w['partner'])), 0, 80) : '';
+            // ab 0.18: Anmeldeform der Konkurrenz
+            if (self::formVon($kk) === 'gruppe' && $kk['art'] === 'mannschaft') {
+                throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“: Hier melden sich nur ganze Mannschaften an (Gruppenanmeldung durch die Mannschaftsleitung).');
+            }
+            if (self::formVon($kk) === 'gruppe' && $kk['art'] !== 'einzel' && trim((string)($w['partner'] ?? '')) === '') {
+                throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“: Bitte die Partnerin bzw. den Partner angeben – hier melden sich nur Paare an.');
+            }
+            if (self::formVon($kk) === 'einzel') {
+                unset($w['partner'], $w['partnerEmail']); // Paare bildet die Leitung
+            }
+            $partner = in_array($kk['art'], ['doppel', 'mixed'], true) && is_string($w['partner'] ?? null) ? mb_substr(trim((string)preg_replace('/[\x00-\x1F\x7F]/u', '', $w['partner'])), 0, 80) : '';
             $eintrag = ['id' => $kid, 'status' => null, 'partner' => $partner === '' ? null : $partner, 'seit' => null];
             // Ab 0.17 (Frage 11B): Partner/in bestätigt selbst per Mail – Adresse nur dafür, nie in der Liste der Leitung
             if ($partner !== '') {
@@ -459,6 +526,186 @@ final class Anmeldung
             . (($d['verteiler'] ?? false) ? "Mit der Bestätigung trägst du dich außerdem für Ankündigungen künftiger Turniere des Vereins ein (jederzeit abbestellbar).\n" : '')
             . "Hast du dich nicht angemeldet? Dann ignoriere diese Mail – die Angaben werden nach 24 Stunden gelöscht.\n\n"
             . "Datenschutzhinweis: " . $this->api->appUrl() . "#/datenschutz");
+        return ['ok' => true, 'mail' => true];
+    }
+
+    private const MAX_PERSONEN = 40;
+    private const MAX_MELDUNGEN = 60;
+
+    /**
+     * Angaben einer Person (Name und die verlangten Angaben); Fehlermeldungen mit dem Präfix $wer.
+     * @return array{vorname:string,nachname:string,ttr:?int,klasse:?string,geschlecht:?string,jahrgang:?int}
+     */
+    private function personLesen(mixed $roh, array $pflicht, string $wer): array
+    {
+        $r = $roh instanceof \stdClass ? get_object_vars($roh) : $roh;
+        if (!is_array($r)) {
+            throw new ApiFehler('ungueltig', "{$wer}: Angaben fehlen.");
+        }
+        $txt = static fn(mixed $v, int $max): string => is_string($v) ? mb_substr(trim((string)preg_replace('/[\x00-\x1F\x7F]/u', '', $v)), 0, $max) : '';
+        $p = ['vorname' => $txt($r['vorname'] ?? null, 80), 'nachname' => $txt($r['nachname'] ?? null, 80), 'ttr' => null, 'klasse' => null, 'geschlecht' => null, 'jahrgang' => null];
+        if ($p['vorname'] === '' || $p['nachname'] === '') {
+            throw new ApiFehler('ungueltig', "{$wer}: Bitte Vor- und Nachnamen angeben.");
+        }
+        $ttr = $r['ttr'] ?? null;
+        if (in_array('ttr', $pflicht, true)) {
+            if (!is_int($ttr) || $ttr < 0 || $ttr > 4000) {
+                throw new ApiFehler('ungueltig', "{$wer}: Bitte den TTR-Wert angeben (0–4000).");
+            }
+            $p['ttr'] = $ttr;
+            if (($r['ttrGeschaetzt'] ?? null) === true) {
+                $p['ttrGeschaetzt'] = true;
+            }
+        }
+        if (in_array('klasse', $pflicht, true)) {
+            $p['klasse'] = $txt($r['klasse'] ?? null, 40);
+            if ($p['klasse'] === '') {
+                throw new ApiFehler('ungueltig', "{$wer}: Bitte die Leistungsklasse angeben.");
+            }
+        }
+        if (in_array('geschlecht', $pflicht, true)) {
+            if (!in_array($r['geschlecht'] ?? null, ['m', 'w', 'd'], true)) {
+                throw new ApiFehler('ungueltig', "{$wer}: Bitte das Geschlecht angeben.");
+            }
+            $p['geschlecht'] = $r['geschlecht'];
+        }
+        if (in_array('jahrgang', $pflicht, true)) {
+            $jg = $r['jahrgang'] ?? null;
+            if (!is_int($jg) || $jg < 1900 || $jg > (int)gmdate('Y', $this->api->jetzt())) {
+                throw new ApiFehler('ungueltig', "{$wer}: Bitte den Jahrgang angeben.");
+            }
+            $p['jahrgang'] = $jg;
+        }
+        return $p;
+    }
+
+    /**
+     * Gruppenanmeldung (ab 0.18, Frage 8C): Eine volljährige Mannschaftsleitung meldet gesammelt Spielerinnen und Spieler
+     * (auch Minderjährige, ohne deren Mail-Adressen) für Einzel, Doppel und Mannschaften. Sie bestätigt „mindestens 18“
+     * und „Erziehungsberechtigte einverstanden“; Mails (Bestätigung, Ergebnisse) gehen nur an sie.
+     *   { typ: "gruppe", turnier, vorname, nachname, verein, email, volljaehrig, erziehungsberechtigte, datenschutz, verteiler?,
+     *     personen: [{ vorname, nachname, ttr?, klasse?, geschlecht?, jahrgang? }],
+     *     meldungen: [{ konkurrenz, personen: [Index], name?, fuehrer?: Index | -1 (Mannschaftsleitung), wechsler?: [Index] }] }
+     */
+    private function gruppeSenden(Anfrage $a, array $t, array $e): array
+    {
+        if (($e['gruppen'] ?? true) === false) {
+            throw new ApiFehler('abgelaufen', 'Für dieses Turnier gibt es keine Gruppenanmeldung.');
+        }
+        $r = $a->rumpf ?? [];
+        $email = $this->api->email($a);
+        $d = [
+            'typ' => 'gruppe',
+            'vorname' => $this->api->text($a, 'vorname', 1, 80),
+            'nachname' => $this->api->text($a, 'nachname', 1, 80),
+            'verein' => $this->api->text($a, 'verein', 2, 120),
+        ];
+        if (($r['datenschutz'] ?? false) !== true) {
+            throw new ApiFehler('ungueltig', 'Bitte den Datenschutzhinweis bestätigen.');
+        }
+        if (($r['volljaehrig'] ?? false) !== true || ($r['erziehungsberechtigte'] ?? false) !== true) {
+            throw new ApiFehler('ungueltig', 'Bitte bestätigen, dass du mindestens 18 Jahre alt bist und die Erziehungsberechtigten der gemeldeten Minderjährigen einverstanden sind.');
+        }
+        $d['volljaehrig'] = true;
+        $d['eltern'] = true;
+        if (($r['verteiler'] ?? false) === true) {
+            $d['verteiler'] = true;
+        }
+        $pflicht = $e['angaben'] ?? [];
+        $roh = $r['personen'] ?? null;
+        if (!is_array($roh) || !array_is_list($roh) || $roh === [] || count($roh) > self::MAX_PERSONEN) {
+            throw new ApiFehler('ungueltig', 'Bitte 1 bis ' . self::MAX_PERSONEN . ' Personen angeben.');
+        }
+        $d['personen'] = [];
+        foreach ($roh as $i => $p) {
+            $d['personen'][] = ['pid' => 'p' . ($i + 1)] + $this->personLesen($p, $pflicht, 'Person ' . ($i + 1));
+        }
+        $n = count($d['personen']);
+        $meld = $r['meldungen'] ?? null;
+        if (!is_array($meld) || !array_is_list($meld) || $meld === [] || count($meld) > self::MAX_MELDUNGEN) {
+            throw new ApiFehler('ungueltig', 'Bitte mindestens eine Meldung angeben.');
+        }
+        $d['konkurrenzen'] = [];
+        $belegt = []; // Konkurrenz → Person → true
+        foreach ($meld as $m) {
+            $m = $m instanceof \stdClass ? get_object_vars($m) : $m;
+            $kk = is_array($m) && is_string($m['konkurrenz'] ?? null) ? self::konkurrenzVon($e, $m['konkurrenz']) : null;
+            $idx = is_array($m) ? ($m['personen'] ?? null) : null;
+            if ($kk === null || !is_array($idx) || !array_is_list($idx) || $idx === []) {
+                throw new ApiFehler('ungueltig', 'Unbekannte Konkurrenz oder Meldung ohne Personen.');
+            }
+            $wer = [];
+            foreach ($idx as $x) {
+                if (!is_int($x) || $x < 0 || $x >= $n || isset($wer[$x])) {
+                    throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“: ungültige Person in der Meldung.');
+                }
+                if (isset($belegt[$kk['id']][$x])) {
+                    throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“: ' . $d['personen'][$x]['vorname'] . ' ' . $d['personen'][$x]['nachname'] . ' ist dort schon gemeldet.');
+                }
+                $wer[$x] = true;
+            }
+            $form = self::formVon($kk);
+            $anzahl = count($wer);
+            $eintrag = ['id' => $kk['id'], 'status' => null, 'seit' => null, 'wer' => array_map(static fn(int $x): string => 'p' . ($x + 1), array_keys($wer))];
+            if ($kk['art'] === 'einzel' && $anzahl !== 1) {
+                throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“ ist ein Einzel – je Meldung eine Person.');
+            }
+            if (in_array($kk['art'], ['doppel', 'mixed'], true) && !(($anzahl === 2 && $form !== 'einzel') || ($anzahl === 1 && $form !== 'gruppe'))) {
+                throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“: ' . ($form === 'gruppe' ? 'nur Paare (zwei Personen).' : ($form === 'einzel' ? 'nur einzeln – die Paare bildet die Turnierleitung.' : 'ein Paar oder eine Person.')));
+            }
+            if ($kk['art'] === 'mannschaft') {
+                if ($anzahl === 1 && $form !== 'gruppe' && !isset($m['name'])) {
+                    // einzeln für eine Mannschaft – die Turnierleitung ordnet zu
+                } elseif ($form === 'einzel') {
+                    throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“: Hier melden sich nur Einzelne; die Mannschaften stellt die Turnierleitung zusammen.');
+                } else {
+                    $name = is_string($m['name'] ?? null) ? mb_substr(trim((string)preg_replace('/[\x00-\x1F\x7F]/u', '', $m['name'])), 0, 60) : '';
+                    $min = (int)($kk['min'] ?? 1);
+                    $max = (int)($kk['maxSpieler'] ?? 20);
+                    if ($name === '') {
+                        throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“: Bitte einen Namen für die Mannschaft angeben (z. B. „' . $d['verein'] . ' I“).');
+                    }
+                    if ($anzahl < $min || $anzahl > $max) {
+                        throw new ApiFehler('ungueltig', '„' . $kk['name'] . "“: Eine Mannschaft hat {$min} bis {$max} Spieler.");
+                    }
+                    $f = $m['fuehrer'] ?? -1;
+                    if (!is_int($f) || ($f !== -1 && !isset($wer[$f]))) {
+                        throw new ApiFehler('ungueltig', '„' . $kk['name'] . '“: Die Mannschaftsführung ist eine Spielerin bzw. ein Spieler der Mannschaft oder die Mannschaftsleitung.');
+                    }
+                    $wl = is_array($m['wechsler'] ?? null) ? array_values(array_unique(array_filter($m['wechsler'], static fn($x): bool => is_int($x) && isset($wer[$x])))) : [];
+                    $eintrag['mannschaft'] = ['name' => $name, 'fuehrer' => $f === -1 ? 'leitung' : 'p' . ($f + 1), 'wechsler' => array_map(static fn(int $x): string => 'p' . ($x + 1), $wl)];
+                }
+            }
+            foreach (array_keys($wer) as $x) {
+                $belegt[$kk['id']][$x] = true;
+            }
+            $d['konkurrenzen'][] = $eintrag;
+        }
+        $zeilen = $this->zeilen((string)$t['id']);
+        $mailSchluessel = 'anmeldung-mail|' . hash('sha256', $email);
+        if ($this->api->anzahlVersuche($mailSchluessel, 3600) >= 5) {
+            return ['ok' => true, 'mail' => true];
+        }
+        $this->api->fehlversuch($mailSchluessel);
+        $bestaetigt = count(array_filter($zeilen, static fn(array $z): bool => $z['bestaetigt'] !== null));
+        if ($bestaetigt >= self::MAX_JE_TURNIER || count($zeilen) - $bestaetigt >= self::MAX_UNBESTAETIGT) {
+            throw new ApiFehler('zu_viele_versuche', 'Für dieses Turnier sind gerade keine weiteren Anmeldungen möglich. Bitte später erneut versuchen.');
+        }
+        $this->api->begrenzen('anmeldung-turnier|' . $t['id'], self::MAX_JE_TURNIER_STUNDE, 3600, 'Für dieses Turnier kamen gerade sehr viele Anmeldungen. Bitte später erneut versuchen.');
+        $this->api->begrenzen('anmeldung-sparte|' . (int)$t['sparte_id'], self::MAX_JE_KONTO_TAG, 86400, 'Gerade sind keine weiteren Anmeldungen möglich. Bitte später erneut versuchen.');
+        $id = $this->neueId((string)$t['id']);
+        $schluessel = bin2hex(random_bytes(32));
+        $this->db->ausfuehren(
+            'INSERT INTO anmeldungen (turnier_id, id, email, daten, schluessel_hash, angelegt, bestaetigt, spieler) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)',
+            [$t['id'], $id, $email, json_encode($d, JSON_UNESCAPED_UNICODE), hash('sha256', $schluessel), $this->api->jetzt()]
+        );
+        $this->mailen($t, $email, "Bitte bestätigen: Gruppenanmeldung {$t['name']}", "Hallo,\n\n"
+            . "bitte bestätige die Gruppenanmeldung zu „{$t['name']}“ (" . self::datumText($t) . ") über diesen Link:\n\n"
+            . $this->link($t, $schluessel) . "\n\n"
+            . "Der Link gilt 24 Stunden. Erst mit der Bestätigung bekommen die Meldungen einen Platz bzw. einen Platz auf der Warteliste.\n"
+            . (($d['verteiler'] ?? false) ? "Mit der Bestätigung trägst du dich außerdem für Ankündigungen künftiger Turniere des Vereins ein (jederzeit abbestellbar).\n" : '')
+            . "Hast du nichts angemeldet? Dann ignoriere diese Mail – die Angaben werden nach 24 Stunden gelöscht.\n\n"
+            . 'Datenschutzhinweis: ' . $this->api->appUrl() . '#/datenschutz');
         return ['ok' => true, 'mail' => true];
     }
 
@@ -832,14 +1079,24 @@ final class Anmeldung
                 'jahrgang' => $d['jahrgang'] ?? null,
                 'angelegt' => Api::iso((int)$z['angelegt']),
                 'bestaetigt' => $z['bestaetigt'] === null ? null : Api::iso((int)$z['bestaetigt']),
-                'konkurrenzen' => array_map(fn(array $k): array => [
+                'konkurrenzen' => array_map(fn(array $k, int $i): array => [
                     'id' => $k['id'],
                     'status' => $k['status'] ?? 'warteliste',
                     'position' => ($k['status'] ?? '') === 'warteliste' ? self::position($zeilen, $k['id'], (string)$z['id']) : null,
                     'partner' => $k['partner'] ?? null,
                     'partnerStatus' => self::partnerStatus($k),
-                ], $d['konkurrenzen'] ?? []),
+                    // ab 0.18: Gruppenanmeldung – Nummer des Eintrags, Personen, Mannschaft
+                    'eintrag' => $i,
+                    'wer' => $k['wer'] ?? null,
+                    'mannschaft' => $k['mannschaft'] ?? null,
+                ], $d['konkurrenzen'] ?? [], array_keys($d['konkurrenzen'] ?? [])),
                 'spieler' => $z['spieler'] === null ? null : (string)$z['spieler'],
+                'typ' => self::istGruppe($z) ? 'gruppe' : 'einzel',
+                'personen' => self::istGruppe($z) ? array_map(static fn(array $p): array => [
+                    'pid' => (string)$p['pid'], 'vorname' => (string)$p['vorname'], 'nachname' => (string)$p['nachname'],
+                    'ttr' => $p['ttr'] ?? null, 'ttrGeschaetzt' => ($p['ttrGeschaetzt'] ?? false) === true, 'klasse' => $p['klasse'] ?? null,
+                    'geschlecht' => $p['geschlecht'] ?? null, 'jahrgang' => $p['jahrgang'] ?? null,
+                ], $d['personen'] ?? []) : null,
             ];
         }
         // Für die Leitung mit „vorab“ (von Hand Gemeldete), damit die App Änderungen erkennt
@@ -882,10 +1139,14 @@ final class Anmeldung
             $konk[] = [
                 'id' => $k['id'],
                 'name' => is_string($k['name'] ?? null) && trim($k['name']) !== '' ? mb_substr(trim($k['name']), 0, 80) : $k['id'],
-                'art' => in_array($k['art'] ?? null, ['einzel', 'doppel', 'mixed'], true) ? $k['art'] : 'einzel',
+                'art' => $art = in_array($k['art'] ?? null, ['einzel', 'doppel', 'mixed', 'mannschaft'], true) ? $k['art'] : 'einzel',
                 'max' => is_int($max) && $max >= 1 && $max <= 1000 ? $max : null,
                 'startgeld' => is_int($geld) && $geld > 0 && $geld <= 100000 ? $geld : null,
                 'vorab' => is_int($vorab) && $vorab >= 0 && $vorab <= 1000 ? $vorab : 0,
+                // ab 0.18: Anmeldeform (einzeln, als Paar/Mannschaft oder beides) und Sollstärke der Mannschaften
+                'form' => self::formLesen($art, $k['form'] ?? null),
+                'min' => $art === 'mannschaft' ? self::staerke($k['min'] ?? null, 1) : null,
+                'maxSpieler' => $art === 'mannschaft' ? max(self::staerke($k['min'] ?? null, 1), self::staerke($k['maxSpieler'] ?? null, self::staerke($k['min'] ?? null, 1) + 2)) : null,
             ];
         }
         $angaben = is_array($r['angaben'] ?? null) ? array_values(array_intersect(self::ANGABEN, $r['angaben'])) : [];
@@ -908,6 +1169,8 @@ final class Anmeldung
             'angaben' => $angaben,
             'bank' => $bank,
             'ort' => is_string($r['ort'] ?? null) ? mb_substr(trim($r['ort']), 0, 120) : '',
+            // ab 0.18: Gruppenanmeldung durch eine Mannschaftsleitung (Standard an; bei Jugendturnieren der einzige Weg)
+            'gruppen' => ($r['gruppen'] ?? true) !== false,
             // Fehlt das Feld (ältere App), bleibt die bisherige Einstellung
             'hinweisMail' => array_key_exists('hinweisMail', $r) ? $r['hinweisMail'] !== false : ((self::einst($t)['hinweisMail'] ?? true) !== false),
         ];
@@ -957,8 +1220,9 @@ final class Anmeldung
             throw new ApiFehler('ungueltig', 'Status ungültig.');
         }
         $alt = null;
+        $nur = $a->rumpf['eintrag'] ?? null;
         foreach ($z['d']['konkurrenzen'] as $i => $k) {
-            if ($k['id'] === $kid) {
+            if ($k['id'] === $kid && (!is_int($nur) || $nur === $i)) {
                 $alt = $k['status'];
                 $z['d']['konkurrenzen'][$i]['status'] = $status;
                 $z['d']['konkurrenzen'][$i]['seit'] = $this->api->jetzt();

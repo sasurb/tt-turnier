@@ -194,3 +194,113 @@ test('Posteingang, Nachricht an Teilnehmer, Ergebnisse verschicken, Verteiler', 
   await expect(v.getByTestId('verteiler-fertig')).toContainText('ausgetragen');
   await v.context().close();
 });
+
+test('Gruppenanmeldung mit Mannschaft, Übernahme, Mannschafts-Check-in, Auslosung erst nach Check-in', async ({ page, browser }, info) => {
+  const geraet = info.project.name;
+  const leiterin = `mona-${geraet}-${Date.now()}@example.org`;
+  await alsAdmin(page);
+  await page.getByTestId('neues-turnier').click();
+  await page.getByLabel('Name des Turniers').fill(`Gruppencup ${geraet}`);
+  await page.getByLabel('Datum').fill('2027-03-20');
+  await page.getByRole('button', { name: 'Turnier anlegen' }).click();
+  await expect(page.getByText('Verbunden')).toBeVisible();
+  const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
+
+  // Einzel und Mannschaft (Corbillon, Sollstärke 2–3, Ersatzregel 1)
+  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Einzel');
+  await page.getByLabel(/Jeder gegen jeden/).check();
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+  await expect(page.getByTestId('konkurrenz')).toHaveCount(1);
+  await page.getByRole('button', { name: '+ Neue Konkurrenz' }).click();
+  await page.getByLabel('Name', { exact: true }).fill('Teams');
+  await page.getByRole('radio', { name: 'Mannschaft', exact: true }).check();
+  await page.getByLabel('Spielsystem der Mannschaften').selectOption('corbillon2');
+  await page.getByLabel(/Jeder gegen jeden/).check();
+  await page.getByTestId('staerke-min').fill('2');
+  await page.getByTestId('staerke-max').fill('3');
+  await page.getByTestId('ersatz').selectOption('1');
+  await page.getByTestId('wechsel').check();
+  await layoutPruefen(page, page.getByTestId('mannschaft-system'));
+  await bild(page, '18-10-sollstaerke');
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+
+  // Online-Anmeldung mit Gruppenanmeldung öffnen
+  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await page.getByTestId('abschnitt-anmeldungen').locator('summary').first().click();
+  await expect(page.getByTestId('anmeldeform')).toHaveValue('gruppe');
+  await expect(page.getByTestId('gruppen-an')).toBeChecked();
+  await page.getByTestId('anmeldung-oeffnen').click();
+  await expect(page.getByTestId('anmeldung-status')).toHaveText('Anmeldung geöffnet');
+
+  // Mannschaftsleitung meldet zwei Personen für das Einzel und als Mannschaft (sie selbst führt, spielt nicht)
+  const p = await neuerKontext(browser, info);
+  await p.goto(`./#/meldung/${tid}`);
+  await p.getByTestId('meldung-art-gruppe').check();
+  const g = p.getByTestId('gruppen-meldung');
+  await g.getByLabel('Vorname').first().fill('Mona');
+  await g.getByLabel('Nachname').first().fill('Leiterin');
+  await g.getByLabel('Verein', { exact: true }).fill('TSV Jugend');
+  await g.locator('#g-email').fill(leiterin);
+  const vn = g.getByTestId('g-vorname');
+  const nn = g.getByTestId('g-nachname');
+  await vn.nth(0).fill('Tim');
+  await nn.nth(0).fill('Aufschlag');
+  await vn.nth(1).fill('Tom');
+  await nn.nth(1).fill('Block');
+  const einzel = g.locator('fieldset.konkurrenz', { hasText: 'Einzel' }).first();
+  await einzel.getByLabel('Tim Aufschlag').check();
+  await einzel.getByLabel('Tom Block').check();
+  const teams = g.locator('fieldset.konkurrenz', { hasText: 'Teams' });
+  await teams.getByTestId('g-team-neu').click();
+  await teams.getByTestId('g-team-name').fill('TSV Jugend I');
+  await teams.getByTestId('g-team').getByLabel('Tim Aufschlag').first().check();
+  await teams.getByTestId('g-team').getByLabel('Tom Block').first().check();
+  await expect(g.getByTestId('g-zusammenfassung')).toHaveText('2 Personen, 3 Meldungen');
+  await g.getByTestId('g-volljaehrig').check();
+  await g.getByTestId('g-eltern').check();
+  await g.getByTestId('g-datenschutz').check();
+  await layoutPruefen(p, g);
+  await bild(p, '18-11-gruppenanmeldung');
+  await g.getByTestId('g-senden').click();
+  await expect(p.getByTestId('meldung-gesendet')).toBeVisible();
+  const link = /#\/meldung\/[A-Z0-9-]+\/[a-f0-9]{64}/.exec(letzteMail(leiterin, /Gruppenanmeldung/)?.text ?? '')?.[0];
+  expect(link).toBeTruthy();
+  await p.goto(`./${link}`);
+  await p.getByTestId('meldung-jetzt-bestaetigen').click();
+  await expect(p.getByTestId('meldung-stand')).toContainText('Teams: TSV Jugend I');
+  await bild(p, '18-12-gruppe-stand');
+  await p.context().close();
+
+  // Leitung übernimmt: Spieler, Mannschaft mit Begleitperson als Führung
+  await page.reload();
+  const liste = page.getByTestId('anmeldung-liste');
+  await expect(liste.getByTestId('gruppe-marke')).toHaveText('Gruppe · 2 Personen');
+  await expect(liste).toContainText('TSV Jugend I');
+  await page.getByTestId('anmeldung-uebernehmen').click();
+  await expect(page.getByText(/Änderung\(en\) übernommen/)).toBeVisible();
+  await layoutPruefen(page, page.locator('main'));
+  await bild(page, '18-13-gruppe-leitung');
+  await expect(page.getByTestId('abschnitt-spieler')).toContainText('Begleitperson');
+
+  // Kasse: Auslosung erst nach Check-in; Mannschaft auf einmal einchecken
+  await nav(page).getByRole('link', { name: /Kasse/ }).click();
+  await page.getByTestId('checkin-pflicht').check();
+  const ck = page.getByTestId('checkin-konkurrenzen');
+  await expect(ck.getByTestId('checkin-konkurrenz')).toHaveCount(2);
+  await page.getByTestId('kasse-mannschaften').getByTestId('mannschaft-da').click();
+  await expect(page.getByTestId('kasse-mannschaften')).toContainText('2 von 2 Spielern da');
+  await expect(page.getByTestId('kasse-liste')).not.toContainText('Mona Leiterin'); // Begleitperson zahlt nicht
+  await layoutPruefen(page, page.locator('main'));
+  await bild(page, '18-14-kasse-checkin');
+  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  // Einzel: beide sind über die Mannschaft eingecheckt
+  const karte = page.getByTestId('konkurrenz').filter({ hasText: 'Einzel' }).first();
+  await expect(karte.getByTestId('auslosen')).toBeDisabled();
+  await expect(karte.getByTestId('checkin-konkurrenz')).toContainText('2 von 2 da');
+  await layoutPruefen(page, karte);
+  await bild(page, '18-15-checkin-konkurrenz');
+  await karte.getByTestId('checkin-abschliessen').click();
+  await expect(karte.getByTestId('checkin-konkurrenz')).toContainText('Check-in abgeschlossen');
+  await expect(karte.getByTestId('auslosen')).toBeEnabled();
+});

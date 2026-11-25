@@ -53,7 +53,7 @@ export const HELFER_STANDARD: readonly Aufgabe[] = ['ergebnisse', 'aufruf'];
 export const ARTEN_JE_AUFGABE: Record<Aufgabe, readonly string[]> = {
   ergebnisse: ['spiel.ergebnis', 'mannschaft.aufgestellt'],
   aufruf: ['spiel.aufgerufen', 'spiel.aufruf_zurueck'],
-  kasse: ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'],
+  kasse: ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt', 'konkurrenz.checkin', 'praemie.ausgezahlt'],
   oberschiri: ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt', 'mannschaft.aufgestellt'],
 };
 /**
@@ -62,7 +62,7 @@ export const ARTEN_JE_AUFGABE: Record<Aufgabe, readonly string[]> = {
  * benutzen, was alle Geräte gleich berechnen müssen (Tabellen, Auslosung, Spiele).
  */
 /** (ab 0.11: volle Sicht = Leitung und Helfer mit Aufgabe „kasse“) */
-export const NUR_VOLLE_SICHT: readonly string[] = ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'];
+export const NUR_VOLLE_SICHT: readonly string[] = ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt', 'praemie.ausgezahlt'];
 /** Spieler- und Konkurrenz-IDs: Kleinbuchstaben und Ziffern (ab 0.11, auch in Spiel-IDs wie g0-<a>-<b> eindeutig) */
 export const ID_MUSTER = /^[a-z0-9]{1,16}$/;
 
@@ -802,6 +802,16 @@ export const ART = {
   startgeldStorniert: 'startgeld.storniert',
   /** Check-in am Turniertag (Daten: { spieler, da: true|false }) – Kasse oder Leitung, nur volle Sicht */
   teilnehmerEingecheckt: 'teilnehmer.eingecheckt',
+  /**
+   * Ab 0.18: Check-in einer Konkurrenz abgeschlossen bzw. wieder geöffnet (Daten: { konkurrenz, fertig }) – Kasse oder
+   * Leitung. Mit turnier.daten checkinPflicht lässt sich erst danach auslosen.
+   */
+  konkurrenzCheckin: 'konkurrenz.checkin',
+  /**
+   * Ab 0.18: Siegprämie ausgezahlt (Daten: { id, konkurrenz, teilnehmer, platz, betrag: Cent }) – Kasse oder Leitung,
+   * nur volle Sicht. Beleg mit Nummer aus der ID; Storno über startgeld.storniert { buchung: id } ist nicht vorgesehen.
+   */
+  praemieAusgezahlt: 'praemie.ausgezahlt',
 } as const;
 
 /* ---------- Online-Anmeldung mit Warteliste (ab Server 0.11, nur Online-Server mit Mailversand) ----------
@@ -817,16 +827,28 @@ export interface AnmeldungKonkurrenz {
   /** Konkurrenz-ID im Turnier */
   id: string;
   name: string;
-  art: 'einzel' | 'doppel' | 'mixed';
-  /** Höchstzahl Teilnehmer; null = unbegrenzt */
+  /** ab 0.18 auch Mannschaft */
+  art: 'einzel' | 'doppel' | 'mixed' | 'mannschaft';
+  /** Höchstzahl Teilnehmer (Personen, Paare bzw. Mannschaften); null = unbegrenzt */
   max: number | null;
+  /**
+   * Anmeldeform (ab 0.18): einzel = nur Einzelne (Paare/Mannschaften bildet die Leitung), gruppe = nur Paare bzw.
+   * ganze Mannschaften, beides. Einzel-Konkurrenzen immer „einzel“. Fehlt: Doppel „beides“, Mannschaft „gruppe“.
+   */
+  form?: AnmeldeForm;
+  /** Sollstärke einer Mannschaft (ab 0.18, nur Mannschaft) */
+  min?: number | null;
+  maxSpieler?: number | null;
   /** Startgeld in Cent; null = keins */
   startgeld: number | null;
   /** Nur Leitung: Plätze, die schon von Hand im Turnier vergeben sind (zählen gegen die Höchstzahl) */
   vorab?: number;
 }
+export type AnmeldeForm = 'einzel' | 'gruppe' | 'beides';
 export interface AnmeldungEinstellungen {
   offen: boolean;
+  /** Gruppenanmeldung durch eine volljährige Mannschaftsleitung (ab 0.18; fehlt = an) */
+  gruppen?: boolean;
   /** Meldeschluss (ISO); null = bis zum Turniertag */
   schluss: string | null;
   konkurrenzen: AnmeldungKonkurrenz[];
@@ -856,6 +878,9 @@ export interface AnmeldungInfo {
   moeglich: boolean;
   /** Ab 0.17: Jugendturnier – keine Einzelanmeldung online (Meldung über Verein/Mannschaftsleitung) */
   jugend?: boolean;
+  /** Ab 0.18: Einzelanmeldung möglich (nicht bei Jugendturnieren) bzw. Gruppenanmeldung angeboten */
+  einzel?: boolean;
+  gruppe?: boolean;
   /** Je Konkurrenz: vergebene Plätze und Länge der Warteliste (ohne Namen) */
   belegung: Record<string, { plaetze: number; warteliste: number }>;
 }
@@ -901,6 +926,40 @@ export interface AnmeldungStand {
   abmeldbar: boolean;
   /** Per Knopf bestätigt (der Link allein bestätigt nicht – Mail-Scanner öffnen Links) */
   bestaetigt: boolean;
+  /** Gruppenanmeldung (ab 0.18): Namen der Gemeldeten stehen in „name“ je Konkurrenz */
+  gruppe?: boolean;
+}
+/**
+ * Gruppenanmeldung (ab 0.18) über POST anmeldung.senden: Eine volljährige Mannschaftsleitung meldet Personen (auch
+ * Minderjährige, ohne deren E-Mail) für Einzel, Doppel und Mannschaften. Indizes beziehen sich auf „personen“.
+ */
+export interface GruppenAnmeldungAnfrage {
+  turnier: string;
+  typ: 'gruppe';
+  vorname: string;
+  nachname: string;
+  verein: string;
+  email: string;
+  volljaehrig: boolean;
+  erziehungsberechtigte: boolean;
+  datenschutz: boolean;
+  verteiler?: boolean;
+  personen: { vorname: string; nachname: string; ttr?: number | null; ttrGeschaetzt?: boolean; klasse?: string | null; geschlecht?: 'm' | 'w' | 'd' | null; jahrgang?: number | null }[];
+  /** fuehrer: Index in personen oder -1 = die Mannschaftsleitung als Begleitperson */
+  meldungen: { konkurrenz: string; personen: number[]; name?: string; fuehrer?: number; wechsler?: number[] }[];
+  website?: string;
+}
+export const GRUPPE_MAX_PERSONEN = 40;
+/** Person einer Gruppenanmeldung (Liste der Leitung); Spieler-ID im Turnier = Anmelde-ID + pid (z. B. „…p2“), Leitung = Anmelde-ID + „l“ */
+export interface GruppenPerson {
+  pid: string;
+  vorname: string;
+  nachname: string;
+  ttr: number | null;
+  ttrGeschaetzt: boolean;
+  klasse: string | null;
+  geschlecht: 'm' | 'w' | 'd' | null;
+  jahrgang: number | null;
 }
 /** POST anmeldung.bestaetigen { turnier, schluessel } → AnmeldungStand (Schlüssel aus dem Bestätigungslink) */
 /** POST anmeldung.stand { turnier, schluessel } → AnmeldungStand (Schlüssel aus dem Abmeldelink) */
@@ -927,9 +986,22 @@ export interface AnmeldungEintrag {
   angelegt: string;
   /** null = noch nicht per Mail bestätigt */
   bestaetigt: string | null;
-  konkurrenzen: { id: string; status: AnmeldeStatus; position: number | null; partner: string | null; partnerStatus?: PartnerStatus | null }[];
+  konkurrenzen: {
+    id: string;
+    status: AnmeldeStatus;
+    position: number | null;
+    partner: string | null;
+    partnerStatus?: PartnerStatus | null;
+    /** ab 0.18: Nummer des Eintrags (für anmeldung.aendern), gemeldete Personen (pid) und Mannschaft einer Gruppenanmeldung */
+    eintrag?: number;
+    wer?: string[] | null;
+    mannschaft?: { name: string; fuehrer: string; wechsler: string[] } | null;
+  }[];
   /** Ins Turnier übernommen (Spieler-ID) */
   spieler: string | null;
+  /** ab 0.18: Einzel- oder Gruppenanmeldung (bei Gruppen sind Name/Verein die der Mannschaftsleitung) */
+  typ?: 'einzel' | 'gruppe';
+  personen?: GruppenPerson[] | null;
 }
 export interface AnmeldungenAntwort {
   einstellungen: AnmeldungEinstellungen;
@@ -956,6 +1028,8 @@ export interface AnmeldungAendernAnfrage {
   id: string;
   konkurrenz: string;
   status: AnmeldeStatus;
+  /** ab 0.18: nur dieser Eintrag (Gruppenanmeldung) */
+  eintrag?: number;
 }
 /** POST anmeldung.uebernommen { turnier, ids } – Anmeldungen sind als Spieler im Turnier */
 /** POST anmeldung.loeschen { turnier, id } – Anmeldung endgültig löschen */

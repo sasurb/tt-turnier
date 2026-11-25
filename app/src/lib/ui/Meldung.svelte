@@ -10,6 +10,7 @@
   import { giroCode, ibanAnzeige } from '../engine/girocode';
   import Hilfe from './Hilfe.svelte';
   import QrCode from './turnier/QrCode.svelte';
+  import GruppenMeldung from './GruppenMeldung.svelte';
 
   /**
    * Öffentliche Online-Anmeldung zu einem Turnier (#/meldung/<turnier>) und – mit dem Schlüssel aus
@@ -35,6 +36,10 @@
   /** Ab 0.18: Ankündigungen künftiger Turniere (Verteiler der Sparte) */
   let verteiler = $state(false);
   let website = $state(''); // Fangfeld für Bots
+  /** Ab 0.18: selbst anmelden oder als Mannschaftsleitung eine Gruppe */
+  let art = $state<'einzel' | 'gruppe'>('einzel');
+  /** Konkurrenzen, für die man sich einzeln anmelden kann (ganze Mannschaften nur über die Gruppenanmeldung) */
+  const einzelKonkurrenzen = $derived((info?.einstellungen.konkurrenzen ?? []).filter((k) => !(k.art === 'mannschaft' && (k.form ?? 'gruppe') === 'gruppe')));
 
   const pflicht = $derived(new Set(info?.einstellungen.angaben ?? []));
   const datum = (d: string | null) => (d ? new Date(`${d}T12:00:00`).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
@@ -47,6 +52,7 @@
       datenschutz &&
       volljaehrig &&
       gewaehlt.every(([, w]) => !w.partner.trim() || /.+@.+\..+/.test(w.partnerEmail.trim())) &&
+      gewaehlt.every(([id, w]) => info?.einstellungen.konkurrenzen.find((k) => k.id === id)?.form !== 'gruppe' || w.partner.trim() !== '') &&
       (!pflicht.has('ttr') || (hatTtr !== '' && f.ttr !== '')) &&
       (!pflicht.has('klasse') || !!f.klasse.trim()) &&
       (!pflicht.has('geschlecht') || !!f.geschlecht) &&
@@ -65,6 +71,7 @@
       else {
         info = await api.anmeldungInfo(turnier);
         wahl = Object.fromEntries(info.einstellungen.konkurrenzen.map((k) => [k.id, { an: info!.einstellungen.konkurrenzen.length === 1, partner: '', partnerEmail: '' }]));
+        if (info.einzel === false && info.gruppe) art = 'gruppe';
       }
     } catch (x) {
       fehler = fehlerText(x, T.app.fehlerAllgemein);
@@ -102,7 +109,9 @@
         klasse: pflicht.has('klasse') ? f.klasse.trim() || null : null,
         geschlecht: pflicht.has('geschlecht') ? ((f.geschlecht || null) as 'm' | 'w' | 'd' | null) : null,
         jahrgang: pflicht.has('jahrgang') ? zahl(f.jahrgang) : null,
-        konkurrenzen: gewaehlt.map(([id, w]) => ({ id, ...(w.partner.trim() ? { partner: w.partner.trim(), partnerEmail: w.partnerEmail.trim() } : {}) })),
+        konkurrenzen: gewaehlt
+          .filter(([id]) => einzelKonkurrenzen.some((k) => k.id === id))
+          .map(([id, w]) => ({ id, ...(w.partner.trim() && info?.einstellungen.konkurrenzen.find((k) => k.id === id)?.form !== 'einzel' ? { partner: w.partner.trim(), partnerEmail: w.partnerEmail.trim() } : {}) })),
         volljaehrig,
         datenschutz,
         ...(verteiler ? { verteiler: true } : {}),
@@ -162,7 +171,7 @@
     <h2>{T.meldung.stand}</h2>
     <p><strong>{stand.vorname} {stand.nachname}</strong></p>
     <ul class="liste" data-testid="meldung-stand">
-      {#each stand.konkurrenzen as k (k.id)}
+      {#each stand.konkurrenzen as k, i (`${k.id}-${i}`)}
         <li class="reihe zwischen">
           <span class="wachsen">{k.name}{#if k.partner} <span class="leise">({T.meldung.mit(k.partner)}{k.partnerStatus ? ` · ${T.meldung.partnerStatus[k.partnerStatus]}` : ''})</span>{/if}: <strong class="st-{k.status}">{k.status === null ? T.meldung.unbestaetigt : k.status === 'platz' ? T.meldung.platzSicher : k.status === 'warteliste' ? T.meldung.warteliste(k.position) : T.meldung.abgemeldet}</strong></span>
           {#if stand.bestaetigt && stand.abmeldbar && k.status !== 'abgemeldet' && stand.konkurrenzen.filter((x) => x.status !== 'abgemeldet').length > 1}
@@ -205,11 +214,25 @@
   {#if info.einstellungen.schluss}<p class="leise">{T.meldung.schluss(new Date(info.einstellungen.schluss).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}</p>{/if}
   {#if gesendet}
     <div class="meldung ok" role="status" data-testid="meldung-gesendet">{T.meldung.gesendet}</div>
-  {:else if info.jugend}
+  {:else if info.jugend && !info.gruppe}
     <div class="meldung info" role="status" data-testid="meldung-jugend">{T.meldung.jugend}</div>
   {:else if !info.moeglich}
     <div class="meldung info" role="status">{T.meldung.geschlossen}</div>
   {:else}
+    {#if info.gruppe}
+      {#if info.einzel === false}
+        <div class="meldung info" role="status" data-testid="meldung-jugend">{T.meldung.jugendGruppe}</div>
+      {:else}
+        <fieldset class="art-wahl">
+          <legend>{T.meldung.artFrage}<Hilfe text={T.anm.gruppenHilfe} /></legend>
+          <label class="wahl"><input type="radio" name="m-art" value="einzel" bind:group={art} />{T.meldung.artEinzel}</label>
+          <label class="wahl"><input type="radio" name="m-art" value="gruppe" bind:group={art} data-testid="meldung-art-gruppe" />{T.meldung.artGruppe}</label>
+        </fieldset>
+      {/if}
+    {/if}
+    {#if art === 'gruppe'}
+      <GruppenMeldung {info} {turnier} gesendet={() => { gesendet = true; scrollTo(0, 0); }} />
+    {:else}
     <form class="karte" onsubmit={senden} novalidate>
       <label>{T.meldung.vorname}<input bind:value={f.vorname} autocomplete="given-name" maxlength="80" required /></label>
       <label>{T.meldung.nachname}<input bind:value={f.nachname} autocomplete="family-name" maxlength="80" required /></label>
@@ -237,12 +260,12 @@
 
       <fieldset>
         <legend>{T.meldung.konkurrenzen}</legend>
-        {#each info.einstellungen.konkurrenzen as k (k.id)}
+        {#each einzelKonkurrenzen as k (k.id)}
           <label class="haken">
             <input type="checkbox" bind:checked={wahl[k.id]!.an} data-testid="meldung-konkurrenz" />
             <span>{k.name} <span class="leise">· {frei(k.id)}{k.startgeld ? ` · ${T.meldung.startgeld(euro(k.startgeld))}` : ''}</span></span>
           </label>
-          {#if k.art !== 'einzel' && wahl[k.id]!.an}
+          {#if (k.art === 'doppel' || k.art === 'mixed') && k.form !== 'einzel' && wahl[k.id]!.an}
             <label class="einzug">{T.meldung.partner}<input bind:value={wahl[k.id]!.partner} maxlength="80" /></label>
             {#if wahl[k.id]!.partner.trim()}
               <div class="einzug">
@@ -269,6 +292,7 @@
       {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
       <button type="submit" class="breit" disabled={sendet || !vollstaendig} data-testid="meldung-senden">{T.meldung.senden}</button>
     </form>
+    {/if}
   {/if}
 {/if}
 

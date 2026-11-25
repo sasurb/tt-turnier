@@ -28,6 +28,8 @@
   import AuslosungVorschau from './AuslosungVorschau.svelte';
   import { istRundenModus } from '../../engine/runden';
   import KonkurrenzForm from './KonkurrenzForm.svelte';
+  import CheckinKonkurrenz from './CheckinKonkurrenz.svelte';
+  import { auslosungWartetAufCheckin } from '../../engine/kasse';
 
   let {
     z,
@@ -234,9 +236,13 @@
           {/each}
         </select>
       {/if}
+      {#if z.checkinPflicht && !begonnen(k)}
+        <CheckinKonkurrenz {z} {k} leitung={true} {eintragen} />
+      {/if}
       <div class="reihe knoepfe">
-        <button class:zweit={aktuell} onclick={auslosen}>{k.auslosungGruppen || k.auslosungKo ? T.konk.neuAuslosen : T.konk.auslosen}</button>
+        <button class:zweit={aktuell} onclick={auslosen} disabled={auslosungWartetAufCheckin(z, k)} data-testid="auslosen">{k.auslosungGruppen || k.auslosungKo ? T.konk.neuAuslosen : T.konk.auslosen}</button>
       </div>
+      {#if auslosungWartetAufCheckin(z, k)}<p class="leise">{T.checkin.erstCheckin}</p>{/if}
       {#if (k.auslosungGruppen || k.auslosungKo) && !aktuell}<p class="meldung info">{T.konk.veraltet}</p>{/if}
       {#if aktuell}
         {#if phase1 === 'gruppen'}

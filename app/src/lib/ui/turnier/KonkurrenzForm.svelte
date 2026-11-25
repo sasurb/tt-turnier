@@ -1,7 +1,7 @@
 <script lang="ts">
   import TtrGrenzenWahl from './TtrGrenzenWahl.svelte';
   import { T } from '../../texte';
-  import { SYSTEME, SYSTEM_REIHE, bisSiege, folgeLesen, folgeText, standardMannschaft, systemVon, type SystemId } from '../../engine/mannschaft';
+  import { MAX_MANNSCHAFT, SYSTEME, SYSTEM_REIHE, bisSiege, folgeLesen, folgeText, standardMannschaft, systemVon, type SystemId } from '../../engine/mannschaft';
   import { ALLES_AUSWAEHLBAR, ALLE_ARTEN, MODI, centAus, standardEinstellungen, type BestOf, type Geschlecht, type KonkurrenzAuswahl, type KonkurrenzEinstellungen } from '../../engine/modell';
   import { modiFuerArt } from '../../engine/auswahl';
   import { klassen as klassenStore } from '../../klassen.svelte';
@@ -84,6 +84,15 @@
   let system = $state<SystemId>(start.mannschaft?.system ?? 'bundes4');
   // svelte-ignore state_referenced_locally
   let durchspielen = $state(start.mannschaft?.durchspielen ?? false);
+  /** Sollstärke, Ersatzregel, Wechsel (ab 0.18) */
+  // svelte-ignore state_referenced_locally
+  let mMin = $state(start.mannschaft?.min != null ? String(start.mannschaft.min) : '');
+  // svelte-ignore state_referenced_locally
+  let mMax = $state(start.mannschaft?.max != null ? String(start.mannschaft.max) : '');
+  // svelte-ignore state_referenced_locally
+  let mErsatz = $state(start.mannschaft?.ersatz ?? 0);
+  // svelte-ignore state_referenced_locally
+  let mWechsel = $state(start.mannschaft?.wechsel ?? false);
   // svelte-ignore state_referenced_locally
   let eigeneFolge = $state(start.mannschaft?.eigen ? folgeText(start.mannschaft.eigen.folge) : 'D1-D1, 1-2, 2-1, 1-1, 2-2');
   const eigenGelesen = $derived(folgeLesen(eigeneFolge));
@@ -91,7 +100,7 @@
     system === 'eigen'
       ? typeof eigenGelesen === 'string'
         ? null
-        : systemVon({ mannschaft: { system: 'eigen', durchspielen, eigen: eigenGelesen } })
+        : systemVon({ mannschaft: { ...standardMannschaft(), system: 'eigen', durchspielen, eigen: eigenGelesen } })
       : SYSTEME[system],
   );
   /** Spielsysteme zur Wahl: die angebotenen, die zur Art passen; bei bestehenden Konkurrenzen auch das eigene */
@@ -115,7 +124,13 @@
         fehler = eigenGelesen;
         return;
       }
-      mannschaft = { ...standardMannschaft(), system, durchspielen, eigen: system === 'eigen' && typeof eigenGelesen !== 'string' ? eigenGelesen : null };
+      const lo = zahl(mMin);
+      const hi = zahl(mMax);
+      if (lo === undefined || hi === undefined || (lo !== null && (lo < 1 || lo > MAX_MANNSCHAFT)) || (hi !== null && (hi < 1 || hi > MAX_MANNSCHAFT)) || (lo !== null && hi !== null && hi < lo)) {
+        fehler = T.mannschaft.staerkeFalsch(MAX_MANNSCHAFT);
+        return;
+      }
+      mannschaft = { ...standardMannschaft(), system, durchspielen, eigen: system === 'eigen' && typeof eigenGelesen !== 'string' ? eigenGelesen : null, min: lo, max: hi, ersatz: mErsatz, wechsel: mWechsel };
     }
     const aus: KonkurrenzEinstellungen = {
       ...$state.snapshot(e),
@@ -193,6 +208,16 @@
       {/if}
       {#if system !== 'braunschweig'}<label class="haken"><input type="checkbox" bind:checked={durchspielen} /> {T.mannschaft.durchspielen}</label>{/if}
       <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={e.zweiTische} data-testid="zwei-tische" /> {T.konk.zweiTische}</label><Hilfe text={T.konk.zweiTischeHilfe} /></div>
+      <div class="label-zeile"><span class="fett">{T.mannschaft.staerke}</span><Hilfe text={T.mannschaft.staerkeHilfe} /></div>
+      <div class="reihe staerke">
+        <label class="klein-feld">{T.mannschaft.min}<input bind:value={mMin} inputmode="numeric" placeholder={sysVorschau ? String(Math.max(1, sysVorschau.einzel)) : ''} data-testid="staerke-min" /></label>
+        <label class="klein-feld">{T.mannschaft.max}<input bind:value={mMax} inputmode="numeric" placeholder={sysVorschau ? String(Math.max(1, sysVorschau.einzel) + 2) : ''} data-testid="staerke-max" /></label>
+      </div>
+      <div class="label-zeile"><label for="ersatz-{id}">{T.mannschaft.ersatz}</label><Hilfe text={T.mannschaft.ersatzHilfe} /></div>
+      <select id="ersatz-{id}" bind:value={mErsatz} data-testid="ersatz">
+        {#each [0, 1, 2, 3, 4] as n (n)}<option value={n}>{T.mannschaft.ersatzWahl(n)}</option>{/each}
+      </select>
+      <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={mWechsel} data-testid="wechsel" /> {T.mannschaft.wechsel}</label><Hilfe text={T.mannschaft.wechselHilfe} /></div>
     </fieldset>
   {/if}
 
@@ -408,4 +433,7 @@
   h3 { margin-top: 16px; }
   .zeit { max-width: 10rem; }
   .mannschaft textarea { width: 100%; }
+  .staerke { align-items: flex-end; }
+  .klein-feld { flex: 1 1 8rem; margin: 0; font-weight: 400; }
+  .fett { font-weight: 600; }
 </style>

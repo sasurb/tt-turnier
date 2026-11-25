@@ -242,7 +242,7 @@ final class Nachrichten
             $zeilen[(string)$z['id']] = mb_strtolower((string)$z['email']);
         }
         foreach ($spieler as $id) {
-            $anm = isset($zeilen[$id]) ? $id : (preg_match('/^([a-z0-9]{10})p\d{1,3}$/D', $id, $m) && isset($zeilen[$m[1]]) ? $m[1] : null);
+            $anm = isset($zeilen[$id]) ? $id : (preg_match('/^([a-z0-9]{10})(p\d{1,3}|l)$/D', $id, $m) && isset($zeilen[$m[1]]) ? $m[1] : null);
             if ($anm !== null) {
                 $aus[$zeilen[$anm]][] = $id;
             }

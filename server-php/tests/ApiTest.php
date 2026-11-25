@@ -1501,7 +1501,7 @@ rufe($api, 'POST', 'sparte.anmeldung', ['id' => $sid, 'anmeldung' => 'frei'], $d
     'konkurrenzen' => [['id' => 'e', 'name' => 'Einzel', 'art' => 'einzel', 'max' => null, 'startgeld' => null]], 'bank' => null], $sara);
 pruefe($s === 200, 'Online-Anmeldung eingerichtet');
 [$s, $d] = rufe($api, 'GET', 'anmeldung', null, null, ['turnier' => $kr]);
-pruefe($s === 200 && $d['jugend'] === true && $d['moeglich'] === false, 'Jugendturnier: Online-Einzelanmeldung geschlossen');
+pruefe($s === 200 && $d['jugend'] === true && $d['einzel'] === false && $d['gruppe'] === true, 'Jugendturnier: Online-Einzelanmeldung geschlossen (ab 0.18 Gruppenanmeldung möglich)');
 [$s] = rufe($api, 'POST', 'anmeldung.senden', ['turnier' => $kr, 'vorname' => 'Kai', 'nachname' => 'K', 'email' => 'kai@example.org', 'volljaehrig' => true, 'datenschutz' => true, 'konkurrenzen' => [['id' => 'e']]], null, [], '10.17.1.1');
 pruefe($s === 410, 'Jugendturnier: Anmeldung abgewiesen');
 rufe($api, 'POST', 'turnier.einstellungen', ['turnier' => $kr, 'sicherungAn' => ['sara@example.org'], 'sicherungTakt' => 15], $krLeit);
@@ -1885,6 +1885,121 @@ $pdo18 = (fn() => $this->db)->call($api);
 pruefe((int)$pdo18->eine("SELECT COUNT(*) AS n FROM nachrichten WHERE bezug = 'spx'")['n'] === 0, 'Kennung entfernt: Posteingang gelöscht');
 $api->turnierEntfernen($nt);
 pruefe((int)$pdo18->eine('SELECT COUNT(*) AS n FROM nachrichten WHERE turnier_id = ?', [$nt])['n'] === 0, 'Turnier gelöscht: Nachrichten gelöscht');
+
+echo "Paket 0.18b: Anmeldeform, Gruppen- und Mannschaftsanmeldung, Ersatzregel und Wechsel\n";
+$mailerB = new TestMailer();
+$api = neueApi($mailerB);
+rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha', 'email' => 'admin@example.org', 'passwort' => 'geheim123']);
+[, $d] = rufe($api, 'POST', 'login', ['email' => 'admin@example.org', 'passwort' => 'geheim123']);
+$adm = $d['token'];
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Jugend-Mannschaftscup', 'datum' => gmdate('Y-m-d', $zeit + 30 * 86400)], $adm);
+$jt = $d['turnier']['id'];
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('jg-000001', 'turnier.daten', ['jugend' => true])]], $adm, ['turnier' => $jt]);
+[$s, $d] = rufe($api, 'POST', 'anmeldung.einstellungen', ['turnier' => $jt, 'offen' => true, 'schluss' => null, 'hinweis' => '', 'angaben' => ['jahrgang'], 'ort' => '', 'bank' => null,
+    'konkurrenzen' => [
+        ['id' => 'je', 'name' => 'Jungen Einzel', 'art' => 'einzel', 'max' => null, 'startgeld' => 500],
+        ['id' => 'jd', 'name' => 'Jungen Doppel', 'art' => 'doppel', 'max' => null, 'startgeld' => 300, 'form' => 'gruppe'],
+        ['id' => 'jm', 'name' => 'Mannschaft', 'art' => 'mannschaft', 'max' => 1, 'startgeld' => 400, 'form' => 'gruppe', 'min' => 2, 'maxSpieler' => 3],
+    ]], $adm);
+pruefe($s === 200 && $d['einstellungen']['konkurrenzen'][2]['art'] === 'mannschaft' && $d['einstellungen']['konkurrenzen'][2]['maxSpieler'] === 3 && $d['einstellungen']['konkurrenzen'][1]['form'] === 'gruppe',
+    'Einstellungen: Mannschafts-Konkurrenz mit Sollstärke, Anmeldeform je Konkurrenz');
+[, $d] = rufe($api, 'GET', 'anmeldung', null, null, ['turnier' => $jt]);
+pruefe($d['moeglich'] === true && $d['einzel'] === false && $d['gruppe'] === true && $d['einstellungen']['konkurrenzen'][2]['min'] === 2, 'Jugendturnier: keine Einzelanmeldung, aber Gruppenanmeldung möglich');
+$gruppe = fn(array $extra = []) => $extra + [
+    'turnier' => $jt, 'typ' => 'gruppe', 'vorname' => 'Mona', 'nachname' => 'Leiterin', 'verein' => 'TSV Jugend', 'email' => 'mona@example.org',
+    'volljaehrig' => true, 'erziehungsberechtigte' => true, 'datenschutz' => true,
+    'personen' => [['vorname' => 'Tim', 'nachname' => 'A', 'jahrgang' => 2013], ['vorname' => 'Tom', 'nachname' => 'B', 'jahrgang' => 2012], ['vorname' => 'Ali', 'nachname' => 'C', 'jahrgang' => 2014]],
+    'meldungen' => [
+        ['konkurrenz' => 'je', 'personen' => [0]], ['konkurrenz' => 'je', 'personen' => [1]],
+        ['konkurrenz' => 'jd', 'personen' => [0, 1]],
+        ['konkurrenz' => 'jm', 'personen' => [0, 1, 2], 'name' => 'TSV Jugend I', 'fuehrer' => -1, 'wechsler' => [2]],
+    ],
+];
+[$s] = rufe($api, 'POST', 'anmeldung.senden', $gruppe(['erziehungsberechtigte' => false]), null, [], '10.18.2.1');
+pruefe($s === 400, 'Gruppenanmeldung nur mit „Erziehungsberechtigte einverstanden“');
+[$s] = rufe($api, 'POST', 'anmeldung.senden', $gruppe(['personen' => [['vorname' => 'Tim', 'nachname' => 'A']]]), null, [], '10.18.2.1');
+pruefe($s === 400, 'Pflichtangabe Jahrgang je Person');
+$g = $gruppe();
+$g['meldungen'][2] = ['konkurrenz' => 'jd', 'personen' => [0]];
+[$s, $d] = rufe($api, 'POST', 'anmeldung.senden', $g, null, [], '10.18.2.1');
+pruefe($s === 400 && str_contains($d['meldung'], 'nur Paare'), 'Anmeldeform „nur Paare“ wird geprüft');
+$g = $gruppe();
+$g['meldungen'][3]['personen'] = [0];
+[$s, $d] = rufe($api, 'POST', 'anmeldung.senden', $g, null, [], '10.18.2.1');
+pruefe($s === 400, 'Mannschaft unter der Sollstärke abgewiesen');
+$g = $gruppe();
+$g['meldungen'][1] = ['konkurrenz' => 'je', 'personen' => [0]];
+[$s] = rufe($api, 'POST', 'anmeldung.senden', $g, null, [], '10.18.2.1');
+pruefe($s === 400, 'eine Person je Konkurrenz nur einmal');
+[$s] = rufe($api, 'POST', 'anmeldung.senden', ['turnier' => $jt, 'vorname' => 'Ein', 'nachname' => 'Zeln', 'verein' => '', 'email' => 'ein@example.org', 'jahrgang' => 1990,
+    'konkurrenzen' => [['id' => 'je']], 'volljaehrig' => true, 'datenschutz' => true], null, [], '10.18.2.2');
+pruefe($s === 410, 'Jugendturnier: Einzelanmeldung weiter gesperrt');
+[$s] = rufe($api, 'POST', 'anmeldung.senden', $gruppe(['verteiler' => true]), null, [], '10.18.2.1');
+$m = mailAn($mailerB, 'mona@example.org');
+preg_match('~#/meldung/' . $jt . '/([a-f0-9]{64})~', $m?->text ?? '', $gk);
+pruefe($s === 200 && str_contains($m->betreff, 'Gruppenanmeldung') && !str_contains($m->text, 'Tim'), 'Gruppenanmeldung: Bestätigungsmail an die Leitung, ohne Namen');
+[$s, $d] = rufe($api, 'POST', 'anmeldung.bestaetigen', ['turnier' => $jt, 'schluessel' => $gk[1]]);
+pruefe($s === 200 && $d['gruppe'] === true && count($d['konkurrenzen']) === 4 && $d['startgeld'] === 500 * 2 + 300 * 2 + 400 * 3
+    && str_contains($d['konkurrenzen'][3]['name'], 'TSV Jugend I'), 'Bestätigt: Plätze je Meldung, Startgeld je Spieler (Doppel und Mannschaft)');
+pruefe(str_contains(mailAn($mailerB, 'mona@example.org')->text, 'Jungen Doppel: Tim A / Tom B'), 'Mail nennt die gemeldeten Personen je Konkurrenz');
+// Zweite Mannschaft: Höchstzahl 1 → Warteliste
+$g2 = $gruppe(['email' => 'nora@example.org', 'vorname' => 'Nora', 'verein' => 'SV Nord']);
+$g2['meldungen'] = [['konkurrenz' => 'jm', 'personen' => [0, 1], 'name' => 'SV Nord I', 'fuehrer' => 0]];
+rufe($api, 'POST', 'anmeldung.senden', $g2, null, [], '10.18.2.3');
+preg_match('~#/meldung/' . $jt . '/([a-f0-9]{64})~', mailAn($mailerB, 'nora@example.org')?->text ?? '', $nk);
+[, $d] = rufe($api, 'POST', 'anmeldung.bestaetigen', ['turnier' => $jt, 'schluessel' => $nk[1]]);
+pruefe($d['konkurrenzen'][0]['status'] === 'warteliste', 'Mannschaften zählen für die Höchstzahl je Mannschaft');
+[, $d] = rufe($api, 'GET', 'anmeldungen', null, $adm, ['turnier' => $jt]);
+$mona = array_values(array_filter($d['anmeldungen'], fn($x) => $x['vorname'] === 'Mona'))[0];
+pruefe($mona['typ'] === 'gruppe' && count($mona['personen']) === 3 && $mona['personen'][0]['jahrgang'] === 2013 && $mona['konkurrenzen'][3]['mannschaft']['fuehrer'] === 'leitung'
+    && $mona['konkurrenzen'][3]['mannschaft']['wechsler'] === ['p3'] && $mona['konkurrenzen'][2]['wer'] === ['p1', 'p2'], 'Liste der Leitung: Personen, Paare, Mannschaft mit Führung und Wechselspielern');
+[$s, $d] = rufe($api, 'POST', 'anmeldung.aendern', ['turnier' => $jt, 'id' => $mona['id'], 'konkurrenz' => 'je', 'eintrag' => 1, 'status' => 'abgemeldet'], $adm);
+$monaNeu = array_values(array_filter($d['anmeldungen'], fn($x) => $x['vorname'] === 'Mona'))[0];
+pruefe($monaNeu['konkurrenzen'][0]['status'] === 'platz' && $monaNeu['konkurrenzen'][1]['status'] === 'abgemeldet', 'Leitung ändert einen einzelnen Eintrag der Gruppe');
+// Ergebnis-Mail an die Mannschaftsleitung für alle ihre Personen
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('jg-000002', 'turnier.abgeschlossen', [])]], $adm, ['turnier' => $jt]);
+rufe($api, 'POST', 'turnier.ergebnis', ['turnier' => $jt, 'liste' => 'Liste', 'plaetze' => [['spieler' => $mona['id'] . 'p1', 'text' => 'Jungen Einzel: Platz 1'], ['spieler' => $mona['id'] . 'p2', 'text' => 'Jungen Einzel: Platz 2']]], $adm);
+$api->nachrichten->abarbeiten(25, 5.0);
+$em = mailAn($mailerB, 'mona@example.org');
+pruefe(str_contains($em->text, 'Platz 1') && str_contains($em->text, 'Platz 2'), 'Ergebnis-Mail: Mannschaftsleitung bekommt die Platzierungen ihrer Gruppe');
+
+// Ersatzregel und Wechsel: Server prüft wie die Engine
+[, $d] = rufe($api, 'POST', 'turnier.anlegen', ['name' => 'Ersatz-Cup', 'datum' => null], $adm);
+$et = $d['turnier']['id'];
+$einst = ['name' => 'M', 'modus' => 'jgj', 'art' => 'mannschaft', 'mannschaft' => ['system' => 'corbillon2', 'ersatz' => 1, 'wechsel' => true]];
+rufe($api, 'POST', 'events', ['ereignisse' => [
+    ereignis('es-000001', 'konkurrenz.angelegt', ['id' => 'm', 'einst' => $einst]),
+    ereignis('es-000002', 'spieler.angelegt', ['id' => 'a1', 'vorname' => 'A', 'nachname' => '1', 'verein' => '']),
+    ereignis('es-000003', 'spieler.angelegt', ['id' => 'a2', 'vorname' => 'A', 'nachname' => '2', 'verein' => '']),
+    ereignis('es-000004', 'spieler.angelegt', ['id' => 'a3', 'vorname' => 'A', 'nachname' => '3', 'verein' => '']),
+    ereignis('es-000005', 'spieler.angelegt', ['id' => 'b1', 'vorname' => 'B', 'nachname' => '1', 'verein' => '']),
+    ereignis('es-000006', 'spieler.angelegt', ['id' => 'bl', 'vorname' => 'Be', 'nachname' => 'Gleitung', 'verein' => '', 'begleitung' => true]),
+    ereignis('es-000007', 'mannschaft.gemeldet', ['konkurrenz' => 'm', 'id' => 'm-aaaa', 'name' => 'A', 'spieler' => ['a1', 'a2', 'a3'], 'fuehrer' => 'bl', 'wechsler' => ['a3']]),
+    ereignis('es-000008', 'mannschaft.gemeldet', ['konkurrenz' => 'm', 'id' => 'm-bbbb', 'name' => 'B', 'spieler' => ['b1'], 'fuehrer' => 'b1']),
+]], $adm, ['turnier' => $et]);
+[, $d] = rufe($api, 'POST', 'codes.anlegen', ['turnier' => $et, 'eintraege' => [['rolle' => 'spieler', 'bezug' => 'bl', 'name' => 'Be Gleitung'], ['rolle' => 'spieler', 'bezug' => 'b1', 'name' => 'B 1']]], $adm);
+$kc = [];
+foreach ($d['codes'] as $c) {
+    $kc[$c['bezug']] = $c['code'];
+}
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $et, 'code' => $kc['bl']]);
+$blTok = $d['token'];
+[, $d] = rufe($api, 'POST', 'turnier.zugang', ['turnier' => $et, 'code' => $kc['b1']]);
+$b1Tok = $d['token'];
+$auf = fn(string $id, string $m, string $g, array $einzel, array $extra = []) => ereignis($id, 'mannschaft.aufgestellt', $extra + ['konkurrenz' => 'm', 'spiel' => 'g1-m-aaaa-m-bbbb', 'mannschaft' => $m, 'gegner' => $g, 'einzel' => $einzel, 'doppel' => []]);
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [$auf('es-000010', 'm-aaaa', 'm-bbbb', ['a1', 'a2'], ['wechsel' => ['3' => 'a3']])]], $blTok, ['turnier' => $et]);
+pruefe($s === 200 && count($d['angenommen']) === 1, 'Begleitperson als Mannschaftsführung gibt die Aufstellung ab (mit Wechsel)');
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [$auf('es-000011', 'm-bbbb', 'm-aaaa', ['b1', 'b1'])]], $b1Tok, ['turnier' => $et]);
+pruefe($s === 200 && count($d['angenommen']) === 1, 'Ersatzregel: eine Position doppelt besetzt erlaubt (ersatz = 1)');
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [$auf('es-000012', 'm-bbbb', 'm-aaaa', ['b1', 'b1'], ['wechsel' => ['2' => 'a1']])]], $b1Tok, ['turnier' => $et]);
+pruefe(abgelehnt($s, $d, 'ungueltig'), 'Wechsel mit fremdem Spieler abgewiesen');
+rufe($api, 'POST', 'events', ['ereignisse' => [ereignis('es-000013', 'konkurrenz.geaendert', ['id' => 'm', 'einst' => ['mannschaft' => ['system' => 'corbillon2', 'ersatz' => 0, 'wechsel' => false]]])]], $adm, ['turnier' => $et]);
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [$auf('es-000014', 'm-aaaa', 'm-bbbb', ['a1', 'a1'])]], $blTok, ['turnier' => $et]);
+pruefe(abgelehnt($s, $d, 'ungueltig'), 'Ohne Ersatzregel: doppelt besetzte Position abgewiesen');
+[$s, $d] = rufe($api, 'POST', 'events', ['ereignisse' => [$auf('es-000015', 'm-aaaa', 'm-bbbb', ['a1', 'a2'], ['wechsel' => ['3' => 'a3']])]], $blTok, ['turnier' => $et]);
+pruefe(abgelehnt($s, $d, 'ungueltig'), 'Ohne Einstellung „Wechsel“ kein Wechsel');
+[, $d] = rufe($api, 'GET', 'events', null, $blTok, ['turnier' => $et, 'ab' => '0']);
+pruefe(in_array('es-000010', array_column($d['ereignisse'], 'id'), true), 'Begleitperson sieht die eigene (noch verdeckte) Aufstellung');
 
 echo "\n$anzahl Prüfungen, $fehler Fehler\n";
 exit($fehler === 0 ? 0 : 1);

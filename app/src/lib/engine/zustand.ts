@@ -13,6 +13,8 @@ import {
   istMannschaft,
   kampflosBegegnung,
   mannschaftEinstLesen,
+  MAX_MANNSCHAFT,
+  folgeFuer,
   standardMannschaft,
   systemVon,
   teilAus,
@@ -96,6 +98,8 @@ export interface TurnierZustand {
   klassenVorgabe: KlassenVorgabe | null;
   /** Check-in am Turniertag: Spieler-ID → da (nur volle Sicht) */
   checkin: Record<string, boolean>;
+  /** Ab 0.18: Auslosung erst nach „Check-in abschließen“ je Konkurrenz */
+  checkinPflicht: boolean;
   /** Startgeld-Buchungen in Reihenfolge (Quittungsnummer = nr; nur volle Sicht) */
   buchungen: Buchung[];
   abgeschlossen: boolean;
@@ -148,6 +152,7 @@ export function leererZustand(): TurnierZustand {
     konkurrenzarten: null,
     klassenVorgabe: null,
     checkin: leer(),
+    checkinPflicht: false,
     buchungen: [],
     abgeschlossen: false,
     notizen: [],
@@ -261,6 +266,7 @@ function spielerDatenLesen(d: Record<string, unknown>): Partial<SpielerDaten> {
   if (d.pool === null || typeof d.pool === 'string') r.pool = d.pool === null ? null : String(d.pool).slice(0, 64);
   if (d.lizenz === null) r.lizenz = null;
   else if (typeof d.lizenz === 'string' && /^[A-Za-z0-9-]{1,20}$/.test(d.lizenz.trim())) r.lizenz = d.lizenz.trim();
+  if (typeof d.begleitung === 'boolean') r.begleitung = d.begleitung;
   return r;
 }
 
@@ -364,6 +370,7 @@ function neueKonkurrenz(id: string, einst: KonkurrenzEinstellungen): KonkurrenzZ
     spiele: leer(),
     reihenfolge: [],
     rueckzuege: [],
+    checkinFertig: false,
   };
 }
 
@@ -931,6 +938,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (vo) z.veroeffentlichung = vo;
       if (d.namen === 'voll' || d.namen === 'kurz') z.namen = d.namen;
       if (typeof d.jugend === 'boolean') z.jugend = d.jugend;
+      if (typeof d.checkinPflicht === 'boolean') z.checkinPflicht = d.checkinPflicht;
       if (typeof d.appWertung === 'boolean' || d.appWertung === null) z.appWertung = d.appWertung as boolean | null;
       const pause = zahl(d.pause, 0, 60);
       if (pause !== undefined && pause !== null) z.pause = pause;
@@ -1496,6 +1504,16 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       z.checkin[sp.id] = d.da !== false;
       break;
     }
+    case ART.konkurrenzCheckin: {
+      if (!aufgaben.includes('kasse')) {
+        warnen('Den Check-in abschließen dürfen die Turnierleitung und die Kasse.');
+        break;
+      }
+      const k = konkurrenz();
+      if (!k) break;
+      k.checkinFertig = d.fertig !== false;
+      break;
+    }
     case ART.startgeldGebucht: {
       if (!aufgaben.includes('kasse')) {
         warnen('Startgeld buchen dürfen die Turnierleitung und die Kasse.');
@@ -1536,7 +1554,6 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
 /* ---------------- Mannschaften ---------------- */
 
 const MANNSCHAFT_ID = /^m-[A-Za-z0-9-]{4,38}$/;
-const MAX_MANNSCHAFT = 20;
 
 /** Mannschaft melden oder ändern (gleiche ID): Name, Verein, Spieler, Mannschaftsführung */
 function mannschaftMelden(z: TurnierZustand, k: KonkurrenzZustand, d: Record<string, unknown>): Pruefung {
@@ -1548,7 +1565,9 @@ function mannschaftMelden(z: TurnierZustand, k: KonkurrenzZustand, d: Record<str
   if (!sp.length || sp.length > MAX_MANNSCHAFT || sp.some((x) => !z.spieler[x])) return `Eine Mannschaft hat 1 bis ${MAX_MANNSCHAFT} Spieler aus dem Turnier.`;
   const belegt = sp.find((x) => Object.values(k.mannschaften).some((m) => m.id !== id && m.spieler.includes(x)));
   if (belegt) return `${z.spieler[belegt]!.vorname} ${z.spieler[belegt]!.nachname} spielt in „${k.einst.name}“ schon in einer anderen Mannschaft.`;
-  const fuehrer = typeof d.fuehrer === 'string' && sp.includes(d.fuehrer) ? d.fuehrer : null;
+  // Führung: Spieler der Mannschaft oder (ab 0.18) eine Begleitperson ohne eigene Meldung
+  const fuehrer = typeof d.fuehrer === 'string' && (sp.includes(d.fuehrer) || z.spieler[d.fuehrer]?.begleitung === true) ? d.fuehrer : null;
+  const wechsler = Array.isArray(d.wechsler) ? [...new Set(d.wechsler.filter((x): x is string => typeof x === 'string' && sp.includes(x)))] : [];
   const verein = text(d.verein, 80) ?? '';
   const alt = k.mannschaften[id];
   if (alt) {
@@ -1560,10 +1579,10 @@ function mannschaftMelden(z: TurnierZustand, k: KonkurrenzZustand, d: Record<str
       const weg = [...auf.einzel, ...auf.doppel.flat()].find((x) => x && !sp.includes(x));
       if (weg) return `${z.spieler[weg]?.vorname ?? ''} ${z.spieler[weg]?.nachname ?? ''} hat für die Mannschaft schon gespielt und bleibt gemeldet.`.trim();
     }
-    Object.assign(alt, { name, verein, spieler: sp, fuehrer });
+    Object.assign(alt, { name, verein, spieler: sp, fuehrer, wechsler });
     return null;
   }
-  k.mannschaften[id] = { id, name, verein, spieler: sp, fuehrer };
+  k.mannschaften[id] = { id, name, verein, spieler: sp, fuehrer, wechsler };
   if (begonnen(k)) {
     const f = nachmelden(k, id, d);
     if (f) {
@@ -1611,7 +1630,27 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
     return x && y && x !== y ? [x, y] : null;
   });
   const imEinzel = einzel.filter(Boolean) as string[];
-  if (new Set(imEinzel).size !== imEinzel.length) return 'Jeder Spieler steht im Einzel nur auf einer Position.';
+  // Ersatzregel (ab 0.18): Anwesende übernehmen bis zu „ersatz“ weitere Positionen, jeder höchstens zwei
+  const ersatz = einstFuer(k, s).mannschaft?.ersatz ?? 0;
+  const doppelt = imEinzel.length - new Set(imEinzel).size;
+  if (doppelt > ersatz || imEinzel.some((x) => imEinzel.filter((y) => y === x).length > 2))
+    return ersatz ? `Höchstens ${ersatz} Position(en) dürfen doppelt besetzt sein, jeder Spieler höchstens zwei.` : 'Jeder Spieler steht im Einzel nur auf einer Position.';
+  // Wechsel in der Begegnung (ab 0.18): je Einzel-Teilspiel ein anderer Spieler der Mannschaft
+  let wechsel: Record<string, string> | undefined;
+  if (d.wechsel && typeof d.wechsel === 'object' && !Array.isArray(d.wechsel)) {
+    if (!einstFuer(k, s).mannschaft?.wechsel) return 'Wechsel in der Begegnung sind in dieser Konkurrenz nicht vorgesehen.';
+    const roh2 = Object.entries(d.wechsel as Record<string, unknown>);
+    if (roh2.length > 30) return 'Zu viele Wechsel.';
+    const seite = s.a === mid ? 'a' : 'b';
+    const folge = folgeFuer(sys, seite === 'a' ? { einzel } : undefined, seite === 'b' ? { einzel } : undefined);
+    wechsel = {};
+    for (const [nr, sp] of roh2) {
+      const f = folge[Number(nr) - 1];
+      if (!/^[0-9]{1,2}$/.test(nr) || !f || f.art !== 'einzel' || typeof sp !== 'string' || !m.spieler.includes(sp)) return 'Wechsel ungültig.';
+      wechsel[nr] = sp;
+    }
+    if (!Object.keys(wechsel).length) wechsel = undefined;
+  }
   const imDoppel = doppel.flat().filter(Boolean) as string[];
   if (new Set(imDoppel).size !== imDoppel.length) return 'Jeder Spieler spielt nur in einem Doppel.';
   if (!imEinzel.length && !imDoppel.length) return 'Die Aufstellung ist leer.';
@@ -1632,7 +1671,13 @@ function aufstellen(z: TurnierZustand, k: KonkurrenzZustand, e: LokalesEreignis,
       if ((vorher ?? null) !== (jetzt ?? null)) return `Spiel ${t.nr} ist schon gespielt – die Aufstellung dafür lässt sich nicht mehr ändern.`;
     }
   }
-  const auf: Aufstellung = { einzel, doppel, ereignis: e.id, von: e.autor?.name ?? '', zeit: e.zeit };
+  if (alt && wechsel) {
+    // Wechsel für schon gespielte Teilspiele bleiben, wie sie waren
+    for (const t of teileVon(k, s)) {
+      if (t.eintrag && (alt.wechsel?.[String(t.nr)] ?? null) !== (wechsel[String(t.nr)] ?? null)) return `Spiel ${t.nr} ist schon gespielt – der Wechsel dafür lässt sich nicht mehr ändern.`;
+    }
+  }
+  const auf: Aufstellung = { einzel, doppel, ...(wechsel ? { wechsel } : {}), ereignis: e.id, von: e.autor?.name ?? '', zeit: e.zeit };
   b.aufstellung[mid] = auf;
   void z;
   return null;
@@ -1661,7 +1706,7 @@ function teilEreignis(z: TurnierZustand, k: KonkurrenzZustand, s: Spiel, nr: num
   if (!t) return 'Teilspiel nicht gefunden.';
   if (e.autor?.rolle === 'spieler' && !leitung) {
     const ich = e.autor.spieler ?? '';
-    const team = [s.a, s.b].map((x) => (x ? k.mannschaften[x] : undefined)).find((m) => m?.spieler.includes(ich));
+    const team = [s.a, s.b].map((x) => (x ? k.mannschaften[x] : undefined)).find((m) => m?.spieler.includes(ich) || (!!ich && m?.fuehrer === ich));
     const amtlichAlsHelfer = e.autor.helfer === true && !team;
     if (!amtlichAlsHelfer && !(t.a.includes(ich) || t.b.includes(ich) || (!!team && team.fuehrer === ich)))
       return 'Spieler tragen nur eigene Spiele ein; die Mannschaftsführung alle Spiele ihrer Begegnung.';

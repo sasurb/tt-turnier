@@ -40,6 +40,7 @@
       klasse: start.klasse ?? '',
       geschlecht: (start.geschlecht ?? '') as Geschlecht | '',
       jahrgang: start.jahrgang != null ? String(start.jahrgang) : '',
+      begleitung: !!start.begleitung,
     };
   }
   let d = $state(leer());
@@ -65,6 +66,7 @@
     if (angaben.includes('klasse')) daten.klasse = d.klasse.trim() || null;
     if (angaben.includes('geschlecht')) daten.geschlecht = d.geschlecht || null;
     if (angaben.includes('jahrgang')) daten.jahrgang = Number.isFinite(jg) ? jg : null;
+    if (d.begleitung || start.begleitung) daten.begleitung = d.begleitung;
     sendet = true;
     fehler = '';
     try {
@@ -129,9 +131,10 @@
   {#if neu}
     <label class="haken"><input type="checkbox" bind:checked={gleicherVerein} /> {T.tspieler.gleicherVerein}</label>
   {/if}
-  {#if mitPool}
+  {#if mitPool && !d.begleitung}
     <label class="haken"><input type="checkbox" bind:checked={inPool} /> {T.tspieler.auchInPool}</label>
   {/if}
+  <div class="haken-zeile"><label class="haken"><input type="checkbox" bind:checked={d.begleitung} data-testid="begleitung" /> {T.tspieler.begleitung}</label><Hilfe text={T.tspieler.begleitungHilfe} /></div>
   {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
   <div class="reihe">
     <button type="submit" disabled={sendet || (!d.vorname.trim() && !d.nachname.trim())}>{knopf}</button>
@@ -141,6 +144,7 @@
 
 <style>
   .spielerform { margin: 8px 0 12px; }
+  .haken-zeile { display: flex; align-items: center; gap: 6px; }
   .raster { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
   .raster .ganz { grid-column: 1 / -1; }
   @media (max-width: 420px) {

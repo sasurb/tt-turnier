@@ -5,7 +5,7 @@
   import { name } from '../../engine/abfragen';
   import { ergebnisText } from '../../engine/ergebnis';
   import { einstFuer, spielerName, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
-  import { aufstellungenKomplett, begegnungAuswerten, positionsName, systemVon, teileVon, zwischenstand, type TeilSpiel } from '../../engine/mannschaft';
+  import { aufstellungenKomplett, begegnungAuswerten, folgeFuer, positionsName, systemVon, teileVon, zwischenstand, type TeilSpiel } from '../../engine/mannschaft';
   import type { TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
   import ErgebnisDialog from './ErgebnisDialog.svelte';
@@ -42,7 +42,10 @@
   const sys = $derived(systemVon(einstFuer(k, spiel)));
   const teams = $derived({ a: spiel.a ? k.mannschaften[spiel.a] : undefined, b: spiel.b ? k.mannschaften[spiel.b] : undefined });
   /** Eigene Mannschaft (Spielerkennung) */
-  const meineSeite = $derived<Seite | null>(ich ? (teams.a?.spieler.includes(ich) ? 'a' : teams.b?.spieler.includes(ich) ? 'b' : null) : null);
+  // ab 0.18 gehört auch die Begleitperson (Führung ohne eigene Meldung) zur Mannschaft
+  const gehoert = (m: (typeof teams)['a'], x: string) => !!m && (m.spieler.includes(x) || m.fuehrer === x);
+  const meineSeite = $derived<Seite | null>(ich ? (gehoert(teams.a, ich) ? 'a' : gehoert(teams.b, ich) ? 'b' : null) : null);
+  const mEinst = $derived(einstFuer(k, spiel).mannschaft);
   const amtlich = $derived(leitung || (rolle === 'helfer' && (aufgaben.includes('ergebnisse') || aufgaben.includes('oberschiri'))) || (helfer && meineSeite === null));
   const fuehrung = $derived(!!ich && meineSeite !== null && teams[meineSeite]?.fuehrer === ich);
   const daten = $derived(k.begegnungen[spiel.id]);
@@ -65,12 +68,16 @@
   let form = $state<Seite | null>(null);
   let einzel = $state<string[]>([]);
   let doppel = $state<[string, string][]>([]);
+  /** Wechsel je Teilspiel (ab 0.18): Nummer → Spieler ('' = wie aufgestellt) */
+  let wechsel = $state<Record<string, string>>({});
   let fehler = $state('');
+  const wechselTeile = $derived(form && mEinst?.wechsel ? folgeFuer(sys, form === 'a' ? { einzel: einzel.map((x) => x || null) } : undefined, form === 'b' ? { einzel: einzel.map((x) => x || null) } : undefined).map((f, i) => ({ ...f, nr: i + 1 })).filter((f) => f.art === 'einzel') : []);
   let hinweis = $state('');
   function formOeffnen(s: Seite) {
     const a = aufstellungVon(s);
     einzel = Array.from({ length: sys.einzel }, (_, i) => a?.einzel[i] ?? '');
     doppel = Array.from({ length: sys.doppel }, (_, i) => [a?.doppel[i]?.[0] ?? '', a?.doppel[i]?.[1] ?? ''] as [string, string]);
+    wechsel = { ...(a?.wechsel ?? {}) };
     fehler = '';
     hinweis = '';
     form = s;
@@ -80,10 +87,12 @@
     if (!form) return;
     const team = form === 'a' ? spiel.a : spiel.b;
     const voll = einzel.filter(Boolean);
-    if (new Set(voll).size !== voll.length) {
-      fehler = T.mannschaft.doppeltEinzel;
+    const ersatz = mEinst?.ersatz ?? 0;
+    if (voll.length - new Set(voll).size > ersatz || voll.some((x) => voll.filter((y) => y === x).length > 2)) {
+      fehler = ersatz ? T.mannschaft.ersatzZuViel(ersatz) : T.mannschaft.doppeltEinzel;
       return;
     }
+    const w = Object.fromEntries(Object.entries(wechsel).filter(([nr, x]) => !!x && wechselTeile.some((t) => String(t.nr) === nr)));
     const imDoppel = doppel.flat().filter(Boolean);
     if (new Set(imDoppel).size !== imDoppel.length || doppel.some(([x, y]) => x && x === y)) {
       fehler = T.mannschaft.doppeltDoppel;
@@ -97,6 +106,7 @@
         gegner: form === 'a' ? spiel.b : spiel.a,
         einzel: einzel.map((x) => x || null),
         doppel: doppel.map(([x, y]) => (x && y ? [x, y] : null)),
+        ...(Object.keys(w).length ? { wechsel: w } : {}),
       });
       // Wer nicht zur Mannschaft gehört (Helfer), sieht die Aufstellung erst nach dem Aufdecken wieder
       hinweis = !leitung && meineSeite !== form && !komplett ? T.mannschaft.gespeichertVerdeckt : T.mannschaft.gespeichert;
@@ -210,6 +220,21 @@
           {/each}
         </div>
       {/each}
+      {#if mEinst?.ersatz}<p class="leise">{T.mannschaft.ersatzWahl(mEinst.ersatz)}</p>{/if}
+      {#if wechselTeile.length}
+        <details class="wechsel" data-testid="wechsel-teile">
+          <summary>{T.mannschaft.wechselTitel}</summary>
+          {#each wechselTeile as t (t.nr)}
+            {@const pos = form === 'a' ? t.a : t.b}
+            <label class="zeile"><span class="pos-name">{T.mannschaft.wechselSpiel(t.nr, positionsName(sys, 'einzel', form, pos))}</span>
+              <select bind:value={wechsel[String(t.nr)]} aria-label={T.mannschaft.wechselSpiel(t.nr, positionsName(sys, 'einzel', form, pos))}>
+                <option value="">{T.mannschaft.wechselKeiner}</option>
+                {#each team?.spieler ?? [] as id (id)}<option value={id}>{spielerName(z.spieler[id])}</option>{/each}
+              </select>
+            </label>
+          {/each}
+        </details>
+      {/if}
       {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
       <div class="reihe">
         <button type="submit" data-testid="aufstellung-senden">{T.mannschaft.abgeben}</button>

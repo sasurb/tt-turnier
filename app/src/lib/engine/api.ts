@@ -47,6 +47,7 @@ import type {
   PartnerAntwort,
   KontoLoeschenAnfrage,
   ErgebnisAnfrage,
+  GruppenAnmeldungAnfrage,
   ErgebnisAntwort,
   PostfachAntwort,
   RundmailAnfrage,
@@ -373,7 +374,7 @@ export class Api {
   anmeldungInfo(turnier: string) {
     return this.rufe<AnmeldungInfo>('GET', 'anmeldung', { query: { turnier } });
   }
-  anmeldungSenden(a: AnmeldungSendenAnfrage) {
+  anmeldungSenden(a: AnmeldungSendenAnfrage | GruppenAnmeldungAnfrage) {
     return this.rufe<{ ok: true; mail: boolean }>('POST', 'anmeldung.senden', { rumpf: a });
   }
   anmeldungBestaetigen(turnier: string, schluessel: string) {
@@ -391,8 +392,8 @@ export class Api {
   anmeldungEinstellungen(token: string, turnier: string, e: AnmeldungEinstellungen) {
     return this.rufe<AnmeldungenAntwort>('POST', 'anmeldung.einstellungen', { token, rumpf: { turnier, ...e } });
   }
-  anmeldungAendern(token: string, turnier: string, id: string, konkurrenz: string, status: AnmeldeStatus) {
-    return this.rufe<AnmeldungenAntwort>('POST', 'anmeldung.aendern', { token, rumpf: { turnier, id, konkurrenz, status } });
+  anmeldungAendern(token: string, turnier: string, id: string, konkurrenz: string, status: AnmeldeStatus, eintrag?: number) {
+    return this.rufe<AnmeldungenAntwort>('POST', 'anmeldung.aendern', { token, rumpf: { turnier, id, konkurrenz, status, ...(eintrag !== undefined ? { eintrag } : {}) } });
   }
   anmeldungUebernommen(token: string, turnier: string, ids: string[]) {
     return this.rufe<{ ok: true }>('POST', 'anmeldung.uebernommen', { token, rumpf: { turnier, ids } });

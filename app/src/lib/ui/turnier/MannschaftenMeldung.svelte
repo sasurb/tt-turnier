@@ -3,7 +3,7 @@
   import { T } from '../../texte';
   import { kurzId } from '../../engine/ids';
   import { spielerName } from '../../engine/modell';
-  import { mindestSpieler, systemVon, type Mannschaft } from '../../engine/mannschaft';
+  import { mindestSpieler, staerkeVon, systemVon, type Mannschaft } from '../../engine/mannschaft';
   import { begonnen, type TurnierZustand } from '../../engine/zustand';
   import type { KonkurrenzZustand } from '../../engine/modell';
   import { vereinMerken, vereinsVorschlaege } from '../../vereine';
@@ -14,13 +14,17 @@
 
   const fid = Math.random().toString(36).slice(2, 7);
   const sys = $derived(systemVon(k.einst));
-  const mindest = $derived(mindestSpieler(sys));
+  const staerke = $derived(staerkeVon(k.einst));
+  const mindest = $derived(Math.max(mindestSpieler(sys), staerke.min));
+  /** Begleitpersonen (ab 0.18): können die Mannschaft führen, ohne selbst zu spielen */
+  const begleitpersonen = $derived(z.spielerReihe.filter((id) => z.spieler[id]?.begleitung));
   const liste = $derived(k.meldungen.map((id) => k.mannschaften[id]).filter((m): m is Mannschaft => !!m));
   let offen = $state<string | null>(null); // 'neu' oder Mannschafts-ID
   let name = $state('');
   let verein = $state('');
   let spieler = $state<string[]>([]);
   let fuehrer = $state('');
+  let wechsler = $state<string[]>([]);
   let suche = $state('');
   let fehler = $state('');
   let sendet = $state(false);
@@ -29,7 +33,7 @@
   const vergeben = $derived(new Set(Object.values(k.mannschaften).filter((m) => m.id !== offen).flatMap((m) => m.spieler)));
   const auswahl = $derived(
     z.spielerReihe.filter((id) => {
-      if (vergeben.has(id)) return false;
+      if (vergeben.has(id) || z.spieler[id]?.begleitung) return false;
       const q = suche.trim().toLowerCase();
       const s = z.spieler[id]!;
       // Bei gesetztem Verein zuerst dessen Spieler; die Suche findet alle
@@ -54,6 +58,7 @@
     verein = m?.verein ?? '';
     spieler = m ? [...m.spieler] : [];
     fuehrer = m?.fuehrer ?? '';
+    wechsler = m ? [...(m.wechsler ?? [])] : [];
   }
 
   async function speichern(e: SubmitEvent) {
@@ -61,6 +66,10 @@
     if (!name.trim()) return;
     if (spieler.length < mindest) {
       fehler = T.mannschaft.zuWenig(mindest);
+      return;
+    }
+    if (spieler.length > staerke.max) {
+      fehler = T.mannschaft.zuViele(staerke.max);
       return;
     }
     sendet = true;
@@ -72,7 +81,8 @@
         name: name.trim(),
         verein: verein.trim(),
         spieler: [...spieler],
-        fuehrer: fuehrer && spieler.includes(fuehrer) ? fuehrer : null,
+        fuehrer: fuehrer && (spieler.includes(fuehrer) || begleitpersonen.includes(fuehrer)) ? fuehrer : null,
+        wechsler: wechsler.filter((x) => spieler.includes(x)),
       });
       vereinMerken(verein);
       offen = null;
@@ -96,7 +106,7 @@
         <span class="wachsen">
           <strong>{m.name}</strong>
           <span class="leise">
-            {m.verein ? `${m.verein} · ` : ''}{m.spieler.map((id) => spielerName(z.spieler[id]) + (id === m.fuehrer ? ' (MF)' : '')).join(', ')}
+            {m.verein ? `${m.verein} · ` : ''}{m.spieler.map((id) => spielerName(z.spieler[id]) + (id === m.fuehrer ? ' (MF)' : '') + ((m.wechsler ?? []).includes(id) ? ` (${T.mannschaft.wechslerKurz})` : '')).join(', ')}{m.fuehrer && !m.spieler.includes(m.fuehrer) ? ` · MF: ${spielerName(z.spieler[m.fuehrer])} (${T.mannschaft.begleitung})` : ''}
           </span>
         </span>
         <button class="zweit klein" onclick={() => oeffnen(m)}>{T.mannschaft.bearbeiten}</button>
@@ -127,7 +137,14 @@
     <select id="mfu-{fid}" bind:value={fuehrer}>
       <option value="">{T.mannschaft.keinFuehrer}</option>
       {#each spieler as id (id)}<option value={id}>{spielerName(z.spieler[id])}</option>{/each}
+      {#each begleitpersonen as id (id)}<option value={id}>{spielerName(z.spieler[id])} ({T.mannschaft.begleitung})</option>{/each}
     </select>
+    {#if spieler.length > staerke.min}
+      <div class="label-zeile"><span class="feldname">{T.mannschaft.wechsler}</span><Hilfe text={T.mannschaft.wechslerHilfe} /></div>
+      <ul class="auswahl" data-testid="wechsler">
+        {#each spieler as id (id)}<li><label class="haken"><input type="checkbox" value={id} bind:group={wechsler} /> {spielerName(z.spieler[id])}</label></li>{/each}
+      </ul>
+    {/if}
     {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
     <div class="reihe knoepfe">
       <button type="submit" disabled={sendet || !name.trim()}>{T.mannschaft.speichern}</button>

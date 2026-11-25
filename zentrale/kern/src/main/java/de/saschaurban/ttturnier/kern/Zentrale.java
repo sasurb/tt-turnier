@@ -73,10 +73,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     static {
         ARTEN_JE_AUFGABE.put("ergebnisse", Arrays.asList("spiel.ergebnis", "mannschaft.aufgestellt"));
         ARTEN_JE_AUFGABE.put("aufruf", Arrays.asList("spiel.aufgerufen", "spiel.aufruf_zurueck"));
-        ARTEN_JE_AUFGABE.put("kasse", Arrays.asList("startgeld.gebucht", "startgeld.storniert", "teilnehmer.eingecheckt"));
+        ARTEN_JE_AUFGABE.put("kasse", Arrays.asList("startgeld.gebucht", "startgeld.storniert", "teilnehmer.eingecheckt", "konkurrenz.checkin", "praemie.ausgezahlt"));
         ARTEN_JE_AUFGABE.put("oberschiri", Arrays.asList("spiel.ergebnis", "spiel.entschieden", "spiel.zurueckgesetzt", "mannschaft.aufgestellt"));
     }
-    static final List<String> NUR_VOLLE_SICHT = Arrays.asList("startgeld.gebucht", "startgeld.storniert", "teilnehmer.eingecheckt");
+    static final List<String> NUR_VOLLE_SICHT = Arrays.asList("startgeld.gebucht", "startgeld.storniert", "teilnehmer.eingecheckt", "praemie.ausgezahlt");
     private static final int MAX_KLASSEN = 40;
     /** Unbekannte Turnierkennungen je Anschluss und Viertelstunde, bevor gebremst wird */
     private static final int SUCHE_MAX = 30;
@@ -979,12 +979,41 @@ public final class Zentrale implements HttpServer.Bearbeiter {
     }
 
     /** Aufstellung von Helfern und Spielern prüfen (wie PHP Api::aufstellungPruefen); null = in Ordnung */
-    static final List<String> AUFSTELLUNG_FELDER = Arrays.asList("konkurrenz", "spiel", "mannschaft", "gegner", "einzel", "doppel");
+    static final List<String> AUFSTELLUNG_FELDER = Arrays.asList("konkurrenz", "spiel", "mannschaft", "gegner", "einzel", "doppel", "wechsel");
+
+    /** Ersatzregel und Wechsel laut Einträgen der Leitung (wie PHP Api::mannschaftsEinst): {ersatz, wechsel} */
+    static Object[] mannschaftsEinst(List<Map<String, Object>> liste, String konkurrenz) {
+        long ersatz = 0;
+        boolean wechsel = false;
+        boolean gestartet = false;
+        for (Map<String, Object> e : liste) {
+            Object art = e.get("art");
+            if (!leitungAutor(e)) continue;
+            Map<String, Object> x = Json.alsObjekt(e.get("daten"));
+            if (x == null) continue;
+            if ("phase.gestartet".equals(art) && konkurrenz.equals(x.get("konkurrenz"))) {
+                gestartet = true;
+                continue;
+            }
+            boolean angelegt = "konkurrenz.angelegt".equals(art);
+            if ((!angelegt && !"konkurrenz.geaendert".equals(art)) || !konkurrenz.equals(x.get("id")) || (gestartet && !angelegt)) continue;
+            if (angelegt) {
+                ersatz = 0;
+                wechsel = false;
+            }
+            Map<String, Object> einst = Json.alsObjekt(x.get("einst"));
+            Map<String, Object> m = einst == null ? null : Json.alsObjekt(einst.get("mannschaft"));
+            if (m == null) continue;
+            if (m.get("ersatz") instanceof Long && (Long) m.get("ersatz") >= 0 && (Long) m.get("ersatz") <= 4) ersatz = (Long) m.get("ersatz");
+            if (m.get("wechsel") instanceof Boolean) wechsel = (Boolean) m.get("wechsel");
+        }
+        return new Object[] {ersatz, wechsel};
+    }
     static final String SPIEL_ID_MANNSCHAFT = "^(g\\d{1,3}-m-[A-Za-z0-9-]{4,38}-m-[A-Za-z0-9-]{4,38}|(ko|tr|vl|fi)-\\d{1,2}-\\d{1,3}|ko-p3)$";
 
     static String aufstellungPruefen(List<Map<String, Object>> liste, Object daten, boolean spieler, boolean helfer, String bezug) {
         Map<String, Object> d = Json.alsObjekt(daten);
-        if (d == null || !AUFSTELLUNG_FELDER.containsAll(d.keySet()) || Json.schreiben(d).getBytes(StandardCharsets.UTF_8).length > 2048) return "Aufstellung ungültig.";
+        if (d == null || !AUFSTELLUNG_FELDER.containsAll(d.keySet()) || Json.schreiben(d).getBytes(StandardCharsets.UTF_8).length > 4096) return "Aufstellung ungültig.";
         String k = Json.alsText(d.get("konkurrenz"));
         String spiel = Json.alsText(d.get("spiel"));
         String m = Json.alsText(d.get("mannschaft"));
@@ -1012,7 +1041,17 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         List<Object> zusammen = new ArrayList<>(alle);
         zusammen.addAll(imDoppel);
         for (Object x : zusammen) if (!(x instanceof String) || !istMitglied(team, (String) x)) return "In der Aufstellung steht ein Spieler, der nicht zur Mannschaft gehört.";
-        if (new HashSet<>(alle).size() != alle.size() || new HashSet<>(imDoppel).size() != imDoppel.size() || zusammen.isEmpty()) return "Aufstellung ungültig (leer oder doppelt besetzt).";
+        Object[] me = mannschaftsEinst(liste, k);
+        int haeufig = 0;
+        for (Object x : alle) haeufig = Math.max(haeufig, Collections.frequency(alle, x));
+        if (alle.size() - new HashSet<>(alle).size() > (Long) me[0] || haeufig > 2 || new HashSet<>(imDoppel).size() != imDoppel.size() || zusammen.isEmpty()) return "Aufstellung ungültig (leer oder doppelt besetzt).";
+        if (d.containsKey("wechsel")) {
+            Map<String, Object> w = Json.alsObjekt(d.get("wechsel"));
+            if (w == null || !(Boolean) me[1] || w.size() > 30) return "Wechsel ungültig.";
+            for (Map.Entry<String, Object> x : w.entrySet()) {
+                if (!x.getKey().matches("^[0-9]{1,2}$") || Integer.parseInt(x.getKey()) < 1 || !(x.getValue() instanceof String) || !istMitglied(team, (String) x.getValue())) return "Wechsel ungültig.";
+            }
+        }
         int n = 0;
         Set<Object> begegnungen = new HashSet<>();
         for (Map<String, Object> e : liste) {
@@ -1055,7 +1094,8 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             String schluessel = d.get("konkurrenz") + "|" + d.get("spiel");
             boolean aufgedeckt = nennt.getOrDefault(schluessel + "|" + d.get("gegner"), Collections.emptySet()).contains(d.get("mannschaft"));
             if (aufgedeckt) offen.add(schluessel);
-            else if (!istMitglied(teams.get(d.get("konkurrenz") + "|" + d.get("mannschaft")), bezug)) verdeckt.add(id);
+            else if (!istMitglied(teams.get(d.get("konkurrenz") + "|" + d.get("mannschaft")), bezug)
+                && !(bezug != null && teams.get(d.get("konkurrenz") + "|" + d.get("mannschaft")) != null && bezug.equals(teams.get(d.get("konkurrenz") + "|" + d.get("mannschaft")).get("fuehrer")))) verdeckt.add(id);
         }
         return Arrays.asList(verdeckt, offen);
     }

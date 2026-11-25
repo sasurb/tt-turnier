@@ -5,11 +5,13 @@
   import { alsEineAktion } from '../../aktion';
   import { kurzId } from '../../engine/ids';
   import { centAus, euro } from '../../engine/modell';
-  import { kassenListe, kassenSumme, ohneCheckin, quittungsNr, type KassenZeile } from '../../engine/kasse';
+  import { kassenListe, kassenSumme, kassenZeile, mannschaftAnwesend, ohneCheckin, quittungsNr, type KassenZeile } from '../../engine/kasse';
   import { giroCode } from '../../engine/girocode';
   import type { Buchung, TurnierZustand } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
   import QrCode from './QrCode.svelte';
+  import CheckinKonkurrenz from './CheckinKonkurrenz.svelte';
+  import { begonnen } from '../../engine/zustand';
 
   /**
    * Empfang am Turniertag: Check-in und Startgeld (Leitung und Helfer mit Aufgabe „Kasse“).
@@ -79,6 +81,35 @@
       fehler = e instanceof Error ? e.message : String(e);
     }
   }
+  /* Ab 0.18: Check-in vor der Auslosung, Mannschaft auf einmal einchecken */
+  const offeneKonkurrenzen = $derived(z.konkurrenzReihe.map((id) => z.konkurrenzen[id]!).filter((k) => !begonnen(k) && k.meldungen.length > 0));
+  const mannschaften = $derived(
+    z.konkurrenzReihe
+      .map((id) => z.konkurrenzen[id]!)
+      .filter((k) => k.einst.art === 'mannschaft')
+      .flatMap((k) => k.meldungen.map((mid) => ({ k, m: k.mannschaften[mid]! })).filter((x) => !!x.m)),
+  );
+  async function pflichtSetzen(an: boolean) {
+    await eintragen(ART.turnierDaten, { checkinPflicht: an });
+  }
+  function offenFuer(spieler: string[]) {
+    return spieler.reduce((s, sid) => s + Math.max(0, kassenZeile(z, sid).offen), 0);
+  }
+  async function mannschaftDa(spieler: string[], name: string) {
+    fehler = '';
+    try {
+      await alsEineAktion(async () => {
+        for (const sid of spieler) {
+          if (z.checkin[sid] !== true) await eintragen(ART.teilnehmerEingecheckt, { spieler: sid, da: true });
+          const offen = kassenZeile(z, sid).offen;
+          if (offen > 0) await eintragen(ART.startgeldGebucht, { id: kurzId(), spieler: sid, betrag: offen, art: 'bar' });
+        }
+      });
+      hinweis = T.checkin.gebucht(name);
+    } catch (e) {
+      fehler = e instanceof Error ? e.message : String(e);
+    }
+  }
   async function stornieren(b: Buchung) {
     if (!confirm(T.kasse.stornoFrage)) return;
     await eintragen(ART.startgeldStorniert, { buchung: b.id });
@@ -126,7 +157,40 @@
     {/if}
   </div>
   {#if leitung && !z.kasse?.aussteller && mitStartgeld}<p class="leise">{T.kasse.einrichtenText}</p>{/if}
+  {#if leitung}
+    <div class="label-zeile pflicht"><label class="haken"><input type="checkbox" checked={z.checkinPflicht} onchange={(e) => pflichtSetzen(e.currentTarget.checked)} data-testid="checkin-pflicht" /> {T.checkin.pflicht}</label><Hilfe text={T.checkin.pflichtHilfe} /></div>
+  {/if}
 </section>
+
+{#if z.checkinPflicht && offeneKonkurrenzen.length}
+  <section class="karte" data-testid="checkin-konkurrenzen">
+    <h2>{T.checkin.konkurrenzen}</h2>
+    {#each offeneKonkurrenzen as k (k.id)}
+      <h3>{k.einst.name}</h3>
+      <CheckinKonkurrenz {z} {k} {leitung} {eintragen} />
+    {/each}
+  </section>
+{/if}
+
+{#if mannschaften.length}
+  <section class="karte" data-testid="kasse-mannschaften">
+    <h2>{T.checkin.mannschaften}<Hilfe text={T.checkin.mannschaftHilfe} /></h2>
+    <ul class="liste">
+      {#each mannschaften as { k, m } (`${k.id}|${m.id}`)}
+        {@const a = mannschaftAnwesend(z, k, m.id)}
+        {@const offen = offenFuer(m.spieler)}
+        <li class="reihe">
+          <span class="wachsen"><strong>{m.name}</strong> <span class="leise">· {k.einst.name}</span><br /><span class="leise" class:warn={a.da < a.min}>{T.checkin.mannschaftStand(a.da, m.spieler.length)}{a.da < a.min ? ` – ${T.mannschaft.unterbesetzt(a.da, a.min)}` : ''}</span></span>
+          {#if a.da < m.spieler.length || offen > 0}
+            <button class="zweit klein" onclick={() => mannschaftDa(m.spieler, m.name)} data-testid="mannschaft-da">{T.checkin.mannschaftDa(mitStartgeld && offen > 0 ? euro(offen) : '')}</button>
+          {:else}
+            <span class="marke">✓ {T.kasse.da}</span>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  </section>
+{/if}
 
 {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
 {#if fehler && !offen}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
@@ -203,6 +267,10 @@
 {/if}
 
 <style>
+  .haken { display: flex; gap: 10px; align-items: center; font-weight: 400; min-height: 44px; margin: 0; }
+  .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
+  .pflicht { margin-top: 8px; }
+  .warn { color: var(--orange-text); font-weight: 600; }
   h2 { display: flex; align-items: center; gap: 4px; }
   .summe { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 8px; margin: 8px 0 12px; }
   .summe div { background: var(--grund); border-radius: 8px; padding: 8px 10px; }

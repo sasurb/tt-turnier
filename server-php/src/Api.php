@@ -65,14 +65,14 @@ final class Api
     private const ARTEN_JE_AUFGABE = [
         'ergebnisse' => ['spiel.ergebnis', 'mannschaft.aufgestellt'],
         'aufruf' => ['spiel.aufgerufen', 'spiel.aufruf_zurueck'],
-        'kasse' => ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'],
+        'kasse' => ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt', 'konkurrenz.checkin', 'praemie.ausgezahlt'],
         'oberschiri' => ['spiel.ergebnis', 'spiel.entschieden', 'spiel.zurueckgesetzt', 'mannschaft.aufgestellt'],
     ];
     /** Spiel-IDs, für die es Aufstellungen gibt: Gruppen „g<nr>-<A>-<B>“, K.-o. „ko|tr|vl|fi-<runde>-<nr>“, „ko-p3“ */
     private const SPIEL_ID_MANNSCHAFT = '/^(g\d{1,3}-m-[A-Za-z0-9-]{4,38}-m-[A-Za-z0-9-]{4,38}|(ko|tr|vl|fi)-\d{1,2}-\d{1,3}|ko-p3)$/';
     /** @var array<string,array<string,array{spieler:list<string>,fuehrer:?string}>> je Anfrage */
     private array $mannschaftenCache = [];
-    private const NUR_VOLLE_SICHT = ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt'];
+    private const NUR_VOLLE_SICHT = ['startgeld.gebucht', 'startgeld.storniert', 'teilnehmer.eingecheckt', 'praemie.ausgezahlt'];
     private const MAX_POOL = 3000;
     private const MAX_UEBERSICHT = 60000;
     private const MAX_SICHERUNG_BYTES = 6 * 1024 * 1024;
@@ -1133,6 +1133,44 @@ final class Api
     }
 
     /**
+     * Ersatzregel und Wechsel einer Mannschafts-Konkurrenz laut den Einträgen der Leitung (konkurrenz.angelegt bzw.
+     * konkurrenz.geaendert, letzter zählt) – wie die Engine (mannschaftEinstLesen). Ohne Angabe: kein Ersatz, kein Wechsel.
+     * @return array{ersatz:int,wechsel:bool}
+     */
+    private function mannschaftsEinst(string $turnierId, string $konkurrenz): array
+    {
+        $aus = ['ersatz' => 0, 'wechsel' => false];
+        $zeilen = $this->db->alle(
+            "SELECT art, daten FROM ereignisse WHERE turnier_id = ? AND art IN ('konkurrenz.angelegt', 'konkurrenz.geaendert', 'phase.gestartet') AND autor_rolle IN ('leitung', 'admin', 'veranstalter') ORDER BY seq",
+            [$turnierId]
+        );
+        $gestartet = false;
+        foreach ($zeilen as $z) {
+            $x = json_decode((string)$z['daten'], true);
+            if (is_array($x) && $z['art'] === 'phase.gestartet' && ($x['konkurrenz'] ?? null) === $konkurrenz) {
+                $gestartet = true; // danach ist das Spielsystem fest (FEST_NACH_START)
+                continue;
+            }
+            if (!is_array($x) || ($x['id'] ?? null) !== $konkurrenz || ($gestartet && $z['art'] === 'konkurrenz.geaendert')) {
+                continue;
+            }
+            $m = $x['einst']['mannschaft'] ?? null;
+            if ($z['art'] === 'konkurrenz.angelegt') {
+                $aus = ['ersatz' => 0, 'wechsel' => false];
+            }
+            if (is_array($m)) {
+                if (is_int($m['ersatz'] ?? null) && $m['ersatz'] >= 0 && $m['ersatz'] <= 4) {
+                    $aus['ersatz'] = $m['ersatz'];
+                }
+                if (is_bool($m['wechsel'] ?? null)) {
+                    $aus['wechsel'] = $m['wechsel'];
+                }
+            }
+        }
+        return $aus;
+    }
+
+    /**
      * Aufstellung von Helfern und Spielern prüfen (wie die Engine, zustand.ts aufstellen): Mannschaft und Gegner
      * gemeldet, Spieler aus der Mannschaft, keine doppelten Positionen, nicht leer; Gruppenspiel-ID passt genau;
      * Spielerkennung ohne Helferrecht nur als Mannschaftsführung; höchstens 5 Abgaben je Mannschaft und Begegnung.
@@ -1142,7 +1180,7 @@ final class Api
     {
         $roh = json_encode($daten);
         $d = json_decode((string)$roh, true);
-        if (!is_array($d) || strlen((string)$roh) > 2048 || array_diff(array_keys($d), ['konkurrenz', 'spiel', 'mannschaft', 'gegner', 'einzel', 'doppel']) !== []) {
+        if (!is_array($d) || strlen((string)$roh) > 4096 || array_diff(array_keys($d), ['konkurrenz', 'spiel', 'mannschaft', 'gegner', 'einzel', 'doppel', 'wechsel']) !== []) {
             return 'Aufstellung ungültig.';
         }
         $k = $d['konkurrenz'] ?? null;
@@ -1193,8 +1231,24 @@ final class Api
                 return 'In der Aufstellung steht ein Spieler, der nicht zur Mannschaft gehört.';
             }
         }
-        if (count(array_unique($alle)) !== count($alle) || count(array_unique($imDoppel)) !== count($imDoppel) || ($alle === [] && $imDoppel === [])) {
+        // Ab 0.18: Ersatzregel (Anwesende übernehmen bis zu „ersatz“ weitere Einzelpositionen, jeder höchstens zwei)
+        $me = $this->mannschaftsEinst($turnierId, $k);
+        $doppelt = count($alle) - count(array_unique($alle));
+        $haeufig = $alle === [] ? 0 : max(array_count_values($alle));
+        if ($doppelt > $me['ersatz'] || $haeufig > 2 || count(array_unique($imDoppel)) !== count($imDoppel) || ($alle === [] && $imDoppel === [])) {
             return 'Aufstellung ungültig (leer oder doppelt besetzt).';
+        }
+        // Ab 0.18: Wechsel in der Begegnung (Teilspiel-Nummer → Spieler der Mannschaft), nur wenn eingestellt
+        if (array_key_exists('wechsel', $d)) {
+            $w = $d['wechsel'];
+            if (!is_array($w) || !$me['wechsel'] || count($w) > 30) {
+                return 'Wechsel ungültig.';
+            }
+            foreach ($w as $nr => $x) {
+                if (!preg_match('/^[0-9]{1,2}$/D', (string)$nr) || (int)$nr < 1 || !is_string($x) || !in_array($x, $team['spieler'], true)) {
+                    return 'Wechsel ungültig.';
+                }
+            }
         }
         $bisher = $this->db->alle(
             "SELECT daten FROM ereignisse WHERE turnier_id = ? AND art = 'mannschaft.aufgestellt' AND daten LIKE ?",
@@ -1236,7 +1290,8 @@ final class Api
         $meine = [];
         if ($bezug !== null) {
             foreach ($this->mannschaftenLaut($turnierId) as $schluessel => $team) {
-                if (in_array($bezug, $team['spieler'], true)) {
+                // ab 0.18 auch die Begleitperson als Mannschaftsführung
+                if (in_array($bezug, $team['spieler'], true) || $team['fuehrer'] === $bezug) {
                     $meine[$schluessel] = true;
                 }
             }

@@ -1,4 +1,5 @@
-import { spielerName } from './modell';
+import { spielerName, type KonkurrenzZustand } from './modell';
+import { staerkeVon, systemVon } from './mannschaft';
 import { spielerVon, teilnehmerVon, type Buchung, type TurnierZustand } from './zustand';
 
 /**
@@ -56,7 +57,8 @@ export function kassenZeile(z: TurnierZustand, spieler: string): KassenZeile {
 }
 
 export function kassenListe(z: TurnierZustand): KassenZeile[] {
-  return z.spielerReihe.map((id) => kassenZeile(z, id));
+  // Begleitpersonen (ab 0.18) zahlen nicht und werden nicht eingecheckt
+  return z.spielerReihe.filter((id) => !z.spieler[id]?.begleitung).map((id) => kassenZeile(z, id));
 }
 
 export interface KassenSumme {
@@ -119,4 +121,48 @@ export function quittungsNr(b: Pick<Buchung, 'id'>): string {
 /** Umsatzsteuer, die in einem Bruttobetrag enthalten ist (Cent, gerundet) */
 export function enthalteneUst(brutto: number, satz: number): number {
   return Math.round((brutto * satz) / (100 + satz));
+}
+
+/* ---------- Check-in je Konkurrenz (ab 0.18) ---------- */
+
+export interface CheckinStand {
+  /** gemeldete Teilnehmer (Spieler, Paare, Mannschaften) */
+  teilnehmer: number;
+  /** davon anwesend (Paar: beide; Mannschaft: genug Spieler laut Sollstärke und Ersatzregel) */
+  da: number;
+  /** Teilnehmer, die nicht (vollständig) da sind */
+  fehlend: string[];
+  /** Mannschaften unter der Sollstärke (Hinweis, Nachbesetzung nach Ersatzregel) */
+  unterbesetzt: { teilnehmer: string; da: number; min: number }[];
+}
+
+/** Anwesende Spieler einer Mannschaft und ob sie antreten kann */
+export function mannschaftAnwesend(z: TurnierZustand, k: KonkurrenzZustand, mid: string): { da: number; reicht: boolean; min: number } {
+  const m = k.mannschaften[mid];
+  if (!m) return { da: 0, reicht: false, min: 1 };
+  const da = m.spieler.filter((s) => z.checkin[s] === true).length;
+  const st = staerkeVon(k.einst);
+  const sys = systemVon(k.einst);
+  const noetig = Math.max(1, Math.min(st.min, Math.max(1, sys.einzel)) - (k.einst.mannschaft?.ersatz ?? 0));
+  return { da, reicht: da >= noetig, min: st.min };
+}
+
+export function checkinStand(z: TurnierZustand, k: KonkurrenzZustand): CheckinStand {
+  const aus: CheckinStand = { teilnehmer: k.meldungen.length, da: 0, fehlend: [], unterbesetzt: [] };
+  for (const t of k.meldungen) {
+    let ok: boolean;
+    if (k.einst.art === 'mannschaft') {
+      const a = mannschaftAnwesend(z, k, t);
+      ok = a.reicht;
+      if (a.da < a.min) aus.unterbesetzt.push({ teilnehmer: t, da: a.da, min: a.min });
+    } else ok = spielerVon(k, t).every((s) => z.checkin[s] === true);
+    if (ok) aus.da++;
+    else aus.fehlend.push(t);
+  }
+  return aus;
+}
+
+/** Ist die Auslosung gesperrt, weil der Check-in noch nicht abgeschlossen ist? */
+export function auslosungWartetAufCheckin(z: Pick<TurnierZustand, 'checkinPflicht'>, k: KonkurrenzZustand): boolean {
+  return z.checkinPflicht && !k.checkinFertig && !k.gestartet.gruppen && !k.gestartet.ko;
 }

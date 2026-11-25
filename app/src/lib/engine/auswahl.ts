@@ -76,5 +76,5 @@ export function auswahlFolgen(z: TurnierZustand, neu: KonkurrenzAuswahl): Auswah
 /** Spieler, die in keiner Konkurrenz gemeldet sind (nur sinnvoll, wenn es Konkurrenzen gibt) */
 export function ohneKonkurrenz(z: TurnierZustand): string[] {
   if (!z.konkurrenzReihe.length) return [];
-  return z.spielerReihe.filter((sp) => teilnahmen(z, sp).length === 0);
+  return z.spielerReihe.filter((sp) => !z.spieler[sp]?.begleitung && teilnahmen(z, sp).length === 0);
 }

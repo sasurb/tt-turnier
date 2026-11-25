@@ -218,7 +218,11 @@
                 </span>
                 {#if z.konkurrenzReihe.length}
                   {@const t = teilnahmen(z, id)}
-                  <span class="leise teilnahmen" class:keine={!t.length} data-testid="teilnahmen">{t.length ? T.tspieler.spieltIn(t.map((k) => z.konkurrenzen[k]!.einst.name).join(', ')) : T.tspieler.spieltNirgends}</span>
+                  {#if z.spieler[id]?.begleitung}
+                    <span class="leise teilnahmen" data-testid="teilnahmen">{T.tspieler.begleitungMarke}</span>
+                  {:else}
+                    <span class="leise teilnahmen" class:keine={!t.length} data-testid="teilnahmen">{t.length ? T.tspieler.spieltIn(t.map((k) => z.konkurrenzen[k]!.einst.name).join(', ')) : T.tspieler.spieltNirgends}</span>
+                  {/if}
                 {/if}
               </span>
               <button class="zweit klein" onclick={() => (bearbeite = id)}>{T.tspieler.bearbeiten}</button>

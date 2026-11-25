@@ -625,6 +625,9 @@ export const T = {
     kennungUngueltig: 'Deine Kennung gilt nicht mehr (gesperrt oder neu ausgegeben). Bitte bei der Turnierleitung nach der neuen Kennung fragen.',
   },
   tspieler: {
+    begleitung: 'Begleitperson (spielt nicht)',
+    begleitungHilfe: 'Z. B. eine Mannschaftsleitung, die nicht selbst spielt: Sie kann eine Mannschaft führen (Aufstellung, Ergebnisse) und eine Kennung bekommen, wird aber in keine Konkurrenz gemeldet und zahlt kein Startgeld.',
+    begleitungMarke: 'Begleitperson',
     entfernenLaeuft: (k: string) => `Dieser Spieler spielt schon in „${k}“ und kann nicht mehr entfernt werden. Nutze dort „Zurückziehen“.`,
     titel: 'Alle Teilnehmer',
     leer: 'Noch keine Teilnehmer. Füge sie aus dem Spielerpool hinzu oder lege neue an.',
@@ -1520,6 +1523,29 @@ export const T = {
       'Für Quittungen fehlen Aussteller und Anschrift. Bitte unter „Einstellungen“ → „Kasse und Quittung“ eintragen (z. B. Verein und Vereinsanschrift) – dann lassen sich die Quittungen drucken.',
   },
   mannschaft: {
+    staerke: 'Sollstärke (Spieler je Mannschaft)',
+    staerkeHilfe:
+      'Wie viele Spieler eine Mannschaft melden muss bzw. darf – inklusive Wechselspielern. Leer = aus dem Spielsystem (mindestens so viele wie Einzelpositionen, höchstens zwei mehr). Gilt für die Online-Anmeldung und den Check-in.',
+    min: 'Mindestens',
+    max: 'Höchstens',
+    staerkeFalsch: (n: number) => `Sollstärke: Zahlen von 1 bis ${n}, „Höchstens“ nicht kleiner als „Mindestens“.`,
+    ersatz: 'Ersatzregel bei Unterbesetzung',
+    ersatzHilfe:
+      'Fehlt ein Spieler, gehen seine Einzel nach Wettspielordnung kampflos verloren. Bei Hobbyturnieren können stattdessen Anwesende die Einzel fehlender Positionen zusätzlich übernehmen – in der Aufstellung steht dann ein Spieler auf zwei Positionen.',
+    ersatzWahl: (n: number) => (n === 0 ? 'Aus – fehlende Positionen kampflos (WO)' : n === 1 ? '1 Position darf doppelt besetzt sein' : `${n} Positionen dürfen doppelt besetzt sein`),
+    wechsel: 'Wechsel in der Begegnung erlauben',
+    wechselHilfe:
+      'Bei Mannschaften mit Wechselspielern: In der Aufstellung kann die Mannschaftsführung für einzelne Einzel einen anderen Spieler einsetzen (z. B. damit alle gleich oft spielen). Schon gespielte Einzel bleiben unverändert.',
+    wechsler: 'Wechselspieler',
+    wechslerHilfe: 'Wechselspieler zählen nicht für die Setzung – maßgeblich ist der TTR-Durchschnitt der Stammspieler (die besten je Einzelposition).',
+    unterbesetzt: (n: number, min: number) => `nur ${n} von mindestens ${min} Spielern da`,
+    begleitung: 'Begleitperson',
+    wechslerKurz: 'Wechsel',
+    zuViele: (n: number) => `Höchstens ${n} Spieler je Mannschaft (Sollstärke).`,
+    ersatzZuViel: (n: number) => `Höchstens ${n} Position(en) dürfen doppelt besetzt sein, jeder Spieler höchstens zwei.`,
+    wechselTitel: 'Wechsel in der Begegnung',
+    wechselSpiel: (nr: number, pos: string) => `Spiel ${nr} (${pos})`,
+    wechselKeiner: 'wie aufgestellt',
     braunschweigHinweis: 'Braunschweiger System: Position 4 leer lassen = Dreiermannschaft (dann gibt es nur ein Doppel). Das zweite Doppel wird nur gespielt, wenn beide als Vierermannschaft antreten. Es werden immer alle 10 Spiele gespielt.',
     system: 'Spielsystem der Mannschaften',
     systemHilfe:
@@ -1598,6 +1624,17 @@ export const T = {
     kontakt: 'Schreib mir über das Kontaktformular.',
   },
   anm: {
+    gruppeMarke: (n: number) => `Gruppe · ${n} ${n === 1 ? 'Person' : 'Personen'}`,
+    form: 'Anmeldeform',
+    formen: (mannschaft: boolean): Record<string, string> =>
+      mannschaft
+        ? { gruppe: 'Nur ganze Mannschaften', einzel: 'Nur Einzelne – Mannschaften bildet die Leitung', beides: 'Mannschaften und Einzelne' }
+        : { gruppe: 'Nur als Paar', einzel: 'Nur einzeln – Paare bildet die Leitung', beides: 'Als Paar oder einzeln' },
+    formHilfe:
+      'Wie man sich für diese Konkurrenz anmelden kann. Einzelne ordnest du nach der Übernahme selbst einem Paar bzw. einer Mannschaft zu. Ganze Mannschaften meldet eine Mannschaftsleitung über die Gruppenanmeldung (mit Mannschaftsname, Spielern innerhalb der Sollstärke und Mannschaftsführung).',
+    gruppen: 'Gruppenanmeldung durch eine Mannschaftsleitung erlauben',
+    gruppenHilfe:
+      'Eine volljährige Mannschaftsleitung (z. B. Jugendwart) meldet mehrere Spielerinnen und Spieler gesammelt für Einzel, Doppel und Mannschaften – auch Minderjährige, ohne deren E-Mail-Adressen. Sie bestätigt, dass die Erziehungsberechtigten einverstanden sind; Mails gehen nur an sie. Bei Jugendturnieren ist das der einzige Weg der Online-Anmeldung.',
     nochNichtFrei: (ab: string | null) =>
       ab
         ? `Die Online-Anmeldung steht neuen Sparten ab ${new Date(ab).toLocaleDateString('de-DE')} zur Verfügung – so kann niemand eine frisch angelegte Sparte zum Verschicken von Mails missbrauchen. Der Administrator kann sie früher freischalten (Kontaktformular).`
@@ -1658,6 +1695,38 @@ export const T = {
     auswahlFehlt: 'Bitte mindestens eine Konkurrenz zur Anmeldung auswählen.',
   },
   meldung: {
+    artFrage: 'Wie möchtest du melden?',
+    artEinzel: 'Ich melde mich selbst an',
+    artGruppe: 'Ich melde als Mannschaftsleitung mehrere Personen bzw. eine Mannschaft',
+    jugendGruppe: 'Bei diesem Jugendturnier meldet eine volljährige Mannschaftsleitung (z. B. Jugendwart) ihre Spielerinnen und Spieler gesammelt an.',
+    gruppe: {
+      leitung: 'Mannschaftsleitung (du)',
+      verein: 'Verein',
+      personen: 'Gemeldete Personen',
+      personenHilfe: 'Alle, die ihr meldet – auch Minderjährige. Ihre E-Mail-Adressen braucht es nicht: Alle Mails gehen an dich.',
+      person: (n: number) => `Person ${n}`,
+      personNeu: '+ Person hinzufügen',
+      personWeg: 'Person entfernen',
+      meldungen: 'Meldungen',
+      einzelIn: (k: string) => `${k}: wer spielt mit?`,
+      paarNeu: '+ Paar',
+      paar: (n: number) => `Paar ${n}`,
+      einzelnFuer: (k: string) => `${k}: einzeln melden (Leitung ordnet zu)`,
+      mannschaftNeu: '+ Mannschaft',
+      mannschaftName: 'Name der Mannschaft',
+      mannschaftSpieler: 'Spieler der Mannschaft',
+      staerke: (min: number, max: number) => (min === max ? `${min} Spieler` : `${min} bis ${max} Spieler`),
+      fuehrer: 'Mannschaftsführung',
+      fuehrerIch: 'Ich (Mannschaftsleitung)',
+      wechsler: 'Wechselspieler',
+      waehlen: 'bitte wählen',
+      entfernen: 'Entfernen',
+      volljaehrig: 'Ich bin mindestens 18 Jahre alt.',
+      eltern: 'Die Erziehungsberechtigten der gemeldeten Minderjährigen sind mit der Anmeldung und der Veröffentlichung von Namen und Ergebnissen einverstanden.',
+      senden: 'Gruppe anmelden',
+      fehlt: 'Bitte die markierten Angaben ergänzen: Namen aller Personen, mindestens eine Meldung, Mannschaften mit Namen und passender Spielerzahl.',
+      zusammenfassung: (p: number, m: number) => `${p} ${p === 1 ? 'Person' : 'Personen'}, ${m} ${m === 1 ? 'Meldung' : 'Meldungen'}`,
+    },
     titel: 'Anmeldung',
     laden: 'Anmeldung wird geladen …',
     geschlossen: 'Die Anmeldung für dieses Turnier ist geschlossen.',
@@ -2110,6 +2179,30 @@ export const T = {
     gesendetZahl: (n: number) => `Ankündigung an ${n} Personen in die Warteschlange gestellt.`,
     leer: 'Noch niemand eingetragen.',
     nichtFrei: 'Ankündigungen sind möglich, sobald eure Sparte freigegeben ist.',
+  },
+  checkin: {
+    titel: 'Check-in',
+    fertig: 'Check-in abgeschlossen',
+    stand: (da: number, n: number) => `${da} von ${n} da`,
+    hilfe:
+      'Vor der Auslosung wird geprüft, wer da ist: Einzel – der Spieler ist eingecheckt; Doppel – beide; Mannschaft – genug Spieler laut Sollstärke und Ersatzregel. „Check-in abschließen“ gibt die Auslosung frei; die Turnierleitung kann Fehlende dabei streichen. Eingecheckt wird an der Kasse.',
+    fehlt: 'Noch nicht da',
+    alleDa: 'Alle anwesend',
+    abschliessen: 'Check-in abschließen',
+    oeffnen: 'Check-in wieder öffnen',
+    streichenFrage: (n: number, namen: string) => `${n} nicht anwesend: ${namen}.\n\nOK = aus der Konkurrenz streichen, Abbrechen = gemeldet lassen.`,
+    erstCheckin: 'Ausgelost wird, sobald der Check-in dieser Konkurrenz abgeschlossen ist.',
+    ersatz: 'die Ersatzregel erlaubt doppelt besetzte Positionen',
+    pflicht: 'Auslosung erst nach abgeschlossenem Check-in',
+    pflichtHilfe:
+      'Damit niemand ausgelost wird, der nicht da ist: Jede Konkurrenz lässt sich erst auslosen, wenn ihr Check-in abgeschlossen ist (Knopf „Alle anwesend“ bzw. „Check-in abschließen“ hier und bei der Konkurrenz).',
+    konkurrenzen: 'Check-in je Konkurrenz',
+    mannschaften: 'Mannschaften',
+    mannschaftDa: (euro: string) => (euro ? `Mannschaft da · ${euro} kassieren` : 'Mannschaft da'),
+    mannschaftHilfe:
+      'Die Mannschaftsführung checkt die ganze Mannschaft auf einmal ein und zahlt das Startgeld aller Spieler (bar). Einzelne, die fehlen, danach unten in der Liste auf „Nicht da“ setzen. Fehlt jemand, kann die Turnierleitung die Mannschaft unter „Teilnehmer“ bis zur Höchstzahl nachbesetzen.',
+    mannschaftStand: (da: number, n: number) => `${da} von ${n} Spielern da`,
+    gebucht: (name: string) => `${name}: eingecheckt und kassiert.`,
   },
   kontoZugang: {
     titel: 'Turnierleitung mit Konto',

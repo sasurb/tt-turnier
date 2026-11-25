@@ -1,3 +1,4 @@
+import { standardMannschaft } from './mannschaft';
 import { describe, expect, it } from 'vitest';
 import { ART, type Autor } from '@shared/protokoll';
 import { Baukasten, LEITUNG, saetze } from './test/baukasten';
@@ -49,7 +50,7 @@ describe('Etappe 11: Mannschaftsturniere', () => {
   });
 
   it('Corbillon-Cup: Aufstellung, Teilspiele, Entscheidung nach 3 Siegen, Tabelle mit Punkten 2:0', () => {
-    const t = turnier(['a', 'b', 'c'], 2, { mannschaft: { system: 'corbillon2', durchspielen: false, eigen: null } });
+    const t = turnier(['a', 'b', 'c'], 2, { mannschaft: { ...standardMannschaft(), system: 'corbillon2', durchspielen: false, eigen: null } });
     t.auslosen('m');
     t.starten('m', 'gruppen');
     const k = t.z.konkurrenzen.m!;
@@ -87,7 +88,7 @@ describe('Etappe 11: Mannschaftsturniere', () => {
   });
 
   it('Rechte: Mannschaftsführung stellt auf, Aufstellung danach fest, Spieler tragen eigene Spiele ein, Gegner bestätigt', () => {
-    const t = turnier(['a', 'b'], 2, { mannschaft: { system: 'corbillon2', durchspielen: false, eigen: null } });
+    const t = turnier(['a', 'b'], 2, { mannschaft: { ...standardMannschaft(), system: 'corbillon2', durchspielen: false, eigen: null } });
     t.auslosen('m');
     t.starten('m', 'gruppen');
     const s = Object.values(t.z.konkurrenzen.m!.spiele)[0]!;
@@ -122,7 +123,7 @@ describe('Etappe 11: Mannschaftsturniere', () => {
   });
 
   it('Sperre gegen Nachbessern: ungültige erste Abgabe, dann gültige nach der des Gegners → abgelehnt', () => {
-    const t = turnier(['a', 'b'], 2, { mannschaft: { system: 'corbillon2', durchspielen: false, eigen: null } });
+    const t = turnier(['a', 'b'], 2, { mannschaft: { ...standardMannschaft(), system: 'corbillon2', durchspielen: false, eigen: null } });
     t.auslosen('m');
     t.starten('m', 'gruppen');
     const s = Object.values(t.z.konkurrenzen.m!.spiele)[0]!;
@@ -134,7 +135,7 @@ describe('Etappe 11: Mannschaftsturniere', () => {
     aufstellen(t, s.id, s.a!, [`${A}1`, `${A}2`], [[`${A}1`, `${A}2`]], spieler(`${A}1`));
     expect(t.z.warnungen.at(-1)!.text).toMatch(/nur die Turnierleitung/);
     // Spieler mit Helferrecht der Gegenseite darf nicht für A aufstellen
-    const t2 = turnier(['a', 'b'], 2, { mannschaft: { system: 'corbillon2', durchspielen: false, eigen: null } });
+    const t2 = turnier(['a', 'b'], 2, { mannschaft: { ...standardMannschaft(), system: 'corbillon2', durchspielen: false, eigen: null } });
     t2.auslosen('m');
     t2.starten('m', 'gruppen');
     const s2 = Object.values(t2.z.konkurrenzen.m!.spiele)[0]!;
@@ -148,7 +149,7 @@ describe('Etappe 11: Mannschaftsturniere', () => {
   });
 
   it('Unbesetzte Position geht kampflos an den Gegner; Unentschieden in der Gruppe 1:1 Punkte', () => {
-    const t = turnier(['a', 'b'], 4, { mannschaft: { system: 'bundes4', durchspielen: true, eigen: null } });
+    const t = turnier(['a', 'b'], 4, { mannschaft: { ...standardMannschaft(), system: 'bundes4', durchspielen: true, eigen: null } });
     t.auslosen('m');
     t.starten('m', 'gruppen');
     const s = Object.values(t.z.konkurrenzen.m!.spiele)[0]!;
@@ -178,7 +179,7 @@ describe('Etappe 11: Mannschaftsturniere', () => {
   });
 
   it('K.-o.: Gleichstand nach Sätzen entschieden, sonst Los der Leitung; Folgespiel sperrt Änderungen', () => {
-    const t = turnier(['a', 'b', 'c', 'd'], 2, { modus: 'ko', mannschaft: { system: 'eigen', durchspielen: true, eigen: { einzel: 2, doppel: 0, folge: [{ art: 'einzel', a: 1, b: 1 }, { art: 'einzel', a: 2, b: 2 }] } } });
+    const t = turnier(['a', 'b', 'c', 'd'], 2, { modus: 'ko', mannschaft: { ...standardMannschaft(), system: 'eigen', durchspielen: true, eigen: { einzel: 2, doppel: 0, folge: [{ art: 'einzel', a: 1, b: 1 }, { art: 'einzel', a: 2, b: 2 }] } } });
     t.auslosen('m');
     t.starten('m', 'ko');
     const k = t.z.konkurrenzen.m!;
@@ -216,7 +217,7 @@ describe('Etappe 11: Mannschaftsturniere', () => {
   });
 
   it('Mannschaft ändern: neue Spieler ja, wer schon gespielt hat, bleibt', () => {
-    const t = turnier(['a', 'b'], 2, { mannschaft: { system: 'corbillon2', durchspielen: false, eigen: null } });
+    const t = turnier(['a', 'b'], 2, { mannschaft: { ...standardMannschaft(), system: 'corbillon2', durchspielen: false, eigen: null } });
     t.spieler('a3');
     t.e(ART.mannschaftGemeldet, { konkurrenz: 'm', id: 'm-aaaa', name: 'Team A neu', verein: 'TTC A', spieler: ['a1', 'a2', 'a3'], fuehrer: 'a3' });
     expect(t.z.konkurrenzen.m!.mannschaften['m-aaaa']).toMatchObject({ name: 'Team A neu', fuehrer: 'a3' });

@@ -110,6 +110,8 @@ export interface SpielerDaten {
    * Import und Ergebnismeldung (docs/erweiterungen.md). Wie Jahrgang nur in der vollen Sicht.
    */
   lizenz?: string | null;
+  /** Begleitperson (ab 0.18): z. B. Mannschaftsleitung, die nicht selbst spielt – keine Meldung, kein Startgeld */
+  begleitung?: boolean;
 }
 
 export interface TurnierSpieler extends SpielerDaten {
@@ -506,6 +508,8 @@ export interface KonkurrenzZustand {
   /** Spiel-IDs in Spielfolge */
   reihenfolge: string[];
   rueckzuege: Rueckzugseintrag[];
+  /** Ab 0.18: Check-in dieser Konkurrenz abgeschlossen (Voraussetzung der Auslosung bei checkinPflicht) */
+  checkinFertig: boolean;
 }
 
 export interface Warnung {
