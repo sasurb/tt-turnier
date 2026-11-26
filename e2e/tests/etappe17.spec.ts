@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { reiterOeffnen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { registrierlinkOeffnen, letzteMail } from './mails';
 
@@ -116,7 +117,7 @@ test('Sparte, Einladung einer Turnierleitung, Recht „Turniere anlegen“, Auss
   await expect(p2).toHaveURL(new RegExp(`#/t/${kennung}`));
 
   // Einstellungen: Jugendturnier an, App-Wertung aus, Löschfrist 24 Monate, Textbaustein
-  await p2.getByRole('navigation', { name: 'Bereiche' }).getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(p2, 'Einstellungen');
   await expect(p2.getByTestId('jugend-schalter')).toBeChecked();
   await expect(p2.getByTestId('appwertung-schalter')).not.toBeChecked();
   await expect(p2.getByTestId('namen-kurz')).toBeChecked();

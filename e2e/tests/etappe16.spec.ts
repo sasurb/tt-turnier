@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { reiterOeffnen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 
 /**
@@ -29,7 +30,7 @@ async function layoutPruefen(page: Page, bereich?: Locator) {
 const nav = (page: Page) => page.getByRole('navigation', { name: 'Bereiche' });
 
 async function spielerAnlegen(page: Page, namen: [string, string][]) {
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, n] of namen) {
     await page.getByLabel('Vorname').fill(v);
@@ -130,7 +131,7 @@ test('Startassistent, Auswahl in den Einstellungen, Teilnehmer ohne Konkurrenz',
     ['Dora', 'Delta'],
   ]);
   // Einzel mit Anna und Ben, Doppel mit Cem/Dora
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   // Ohne Konkurrenz steht das Formular gleich offen
   await page.getByLabel('Name', { exact: true }).fill('Einzel offen');
   await page.getByRole('radio', { name: /^Jeder gegen jeden/ }).check();
@@ -149,7 +150,7 @@ test('Startassistent, Auswahl in den Einstellungen, Teilnehmer ohne Konkurrenz',
   await expect(doppel.getByText('1 Paar')).toBeVisible();
 
   // Einstellungen: Doppel abwählen → Vorschau zeigt, was passiert
-  await nav(page).getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   const aw = page.getByTestId('auswahl');
   await aw.locator('summary').click();
   await expect(aw.getByTestId('auswahl-art-einzel')).toBeChecked();
@@ -165,7 +166,7 @@ test('Startassistent, Auswahl in den Einstellungen, Teilnehmer ohne Konkurrenz',
   await expect(page.getByTestId('konkurrenz')).toHaveCount(0);
 
   // Teilnehmer: Hinweis auf die beiden ohne Konkurrenz, gesammelt melden
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   const ohne = page.getByTestId('ohne-konkurrenz');
   await expect(ohne).toContainText('2 Teilnehmer sind in keiner Konkurrenz gemeldet');
   await layoutPruefen(page, ohne);
@@ -175,12 +176,12 @@ test('Startassistent, Auswahl in den Einstellungen, Teilnehmer ohne Konkurrenz',
   await expect(page.getByTestId('ohne-konkurrenz')).toHaveCount(0);
 
   // Mixed wieder anbieten: Konkurrenzen-Formular zeigt es danach
-  await nav(page).getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await aw.locator('summary').click();
   await aw.getByTestId('auswahl-art-mixed').check();
   await expect(aw.getByText('Keine bestehende Konkurrenz ist betroffen.')).toBeVisible();
   await aw.getByTestId('auswahl-uebernehmen').click();
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByRole('button', { name: '+ Neue Konkurrenz' }).click();
   await expect(page.getByRole('radio', { name: 'Mixed', exact: true })).toBeVisible();
   expect(fehler).toEqual([]);
@@ -201,7 +202,7 @@ test('Gruppen + Platzierungsgruppen: Vorrunde, Platzierungsrunde, Gesamtplatzier
     ['Cem', 'Gamma'],
     ['Dora', 'Delta'],
   ]);
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Platzrunde');
   await page.getByRole('radio', { name: /^Gruppen \+ Platzierungsgruppen/ }).check();
   await page.getByLabel('Gewinnsätze', { exact: true }).selectOption('3');
@@ -222,7 +223,7 @@ test('Gruppen + Platzierungsgruppen: Vorrunde, Platzierungsrunde, Gesamtplatzier
   for (let i = 0; i < 2; i++) await ergebnis(page, page.locator('[data-testid=spiel]:not(.fertig)').first(), true, 2);
 
   // Platzierungsrunde: Gruppensieger um Platz 1–2, Zweite um 3–4
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   const vorschau = karte.getByTestId('platz-vorschau');
   await expect(vorschau).toContainText('Plätze 1–2');
   await expect(vorschau).toContainText('Plätze 3–4');
@@ -233,7 +234,7 @@ test('Gruppen + Platzierungsgruppen: Vorrunde, Platzierungsrunde, Gesamtplatzier
   await expect(karte.getByText('K.-o.-Runde')).toBeVisible();
 
   // Rückzug in der Platzierungsrunde und wieder zurücknehmen
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   const abschnitt = page.getByTestId('abschnitt-konkurrenz').first();
   if (!(await abschnitt.getAttribute('open'))) await abschnitt.locator('summary').click();
   await abschnitt.getByRole('combobox', { name: 'Rückzug' }).selectOption({ index: 1 });

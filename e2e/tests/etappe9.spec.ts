@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { angabenSetzen } from './hilfen';
+import { angabenSetzen, reiterOeffnen, reiterSichtbarMachen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 import { letzteMail } from './mails';
@@ -49,7 +49,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
 
   // Ein Tisch, Konkurrenz mit Startgeld und Höchstzahl 2
   await angabenSetzen(page, { tische: '1' });
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Herren');
   await page.getByLabel(/Jeder gegen jeden/).check();
   await page.getByTestId('startgeld').fill('8');
@@ -57,7 +57,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
 
   // Kasse und Quittung einrichten (Bankverbindung für den GiroCode)
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   const kasse = page.getByTestId('kasse-einstellungen');
   await kasse.getByLabel('Aussteller (Verein)').fill('TTC Frühling e. V.');
   await kasse.getByLabel(/^Anschrift/).fill('Hallenweg 1, 24937 Flensburg'); // ab 0.17 Pflicht für Quittungen
@@ -70,7 +70,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await expect(page.getByText('Kasse und Quittung gespeichert.')).toBeVisible();
 
   // Online-Anmeldung öffnen
-  await page.getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await page.getByTestId('abschnitt-anmeldungen').locator('summary').first().click();
   await page.getByTestId('anmeldung-oeffnen').click();
   await expect(page.getByTestId('anmeldung-status')).toHaveText('Anmeldung geöffnet');
@@ -174,7 +174,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await expect(page.getByText(/Änderung\(en\) übernommen/)).toBeVisible();
 
   // Kasse: Ada ist gestrichen (kein Startgeld), Cem nachgerückt; Check-in, 8 € bar, Quittung
-  await page.getByRole('link', { name: 'Kasse & Check-in', exact: true }).click();
+  await reiterOeffnen(page, 'Kasse & Check-in');
   await expect(page.getByTestId('kasse-liste').locator('li', { hasText: 'Ada Aufschlag' })).toContainText('Kein Startgeld');
   await expect(page.getByTestId('kasse-liste').locator('li', { hasText: 'Cem Netz' })).toContainText('Offen: 8,00 €');
   const zeile = page.getByTestId('kasse-liste').locator('li', { hasText: 'Ben Netz' });
@@ -206,7 +206,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await oeffentlich.close();
 
   // Helfer mit Aufgabe „Kasse“
-  await page.getByRole('link', { name: 'Zugänge' }).click();
+  await reiterOeffnen(page, 'Zugänge');
   const helfer = page.getByTestId('zugaenge-helfer');
   await helfer.locator('summary').click();
   await helfer.getByLabel('Name des Helfers').fill('Eva Kasse');
@@ -227,7 +227,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   const h = await k2.newPage();
   await h.goto(`./#/c/${tid}/${evaCode}`);
   await expect(h.getByTestId('angemeldet-als')).toContainText('Eva Kasse');
-  await expect(h.getByRole('link', { name: 'Kasse & Check-in', exact: true })).toBeVisible();
+  await expect(await reiterSichtbarMachen(h, 'Kasse & Check-in')).toBeVisible();
   await expect(h.getByRole('link', { name: 'Zugänge' })).toHaveCount(0);
   const cemZeile = h.getByTestId('kasse-liste').locator('li', { hasText: 'Cem Netz' });
   await cemZeile.getByTestId('checkin').click();
@@ -245,7 +245,7 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await bild(s, '98-mitteilung');
   await s.getByRole('link', { name: 'Spiele', exact: true }).click();
 
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByRole('button', { name: 'Auslosen' }).click();
   page.once('dialog', (d) => void d.accept());
   await page.getByTestId('starten').click();

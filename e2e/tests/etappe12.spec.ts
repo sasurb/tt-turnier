@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { reiterOeffnen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 
@@ -55,7 +56,32 @@ test('Teilnehmer je Konkurrenz und Reiter Spielerpool', async ({ page }, info) =
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
 
-  // Reiter: „Teilnehmer“ statt „Spieler“, „Spielerpool“ direkt vor „Einstellungen“
+  const mehr = nav(page).getByRole('button', { name: 'Mehr', exact: true });
+  const mobil = await page.evaluate(() => matchMedia('(max-width: 600px)').matches);
+  if (mobil) {
+    await expect(mehr).toHaveAttribute('aria-expanded', 'false');
+    const flaeche = await mehr.boundingBox();
+    expect(flaeche?.width).toBeGreaterThanOrEqual(44);
+    expect(flaeche?.height).toBeGreaterThanOrEqual(44);
+
+    const teilnehmer = nav(page).getByRole('link', { name: /^Teilnehmer/ });
+    await expect(teilnehmer).toHaveAttribute('aria-current', 'page');
+    await expect(nav(page).getByRole('link')).toHaveText(['Spiele', 'Tabellen', 'Teilnehmer']);
+    await mehr.focus();
+    await mehr.press('Enter');
+    await expect(mehr).toHaveAttribute('aria-expanded', 'true');
+    await expect(nav(page).getByRole('link')).toHaveText([
+      'Spiele', 'Tabellen', 'Teilnehmer', 'Kasse & Check-in', 'Konkurrenzen',
+      'Zugänge', 'Drucken', 'Spielerpool', 'Einstellungen',
+    ]);
+    await mehr.press('Space');
+    await expect(mehr).toHaveAttribute('aria-expanded', 'false');
+    await expect(teilnehmer).toBeVisible();
+    await mehr.press('Enter');
+  } else {
+    await expect(mehr).toBeHidden();
+  }
+
   const reiter = await nav(page).getByRole('link').allInnerTexts();
   expect(reiter.map((r) => r.trim())).not.toContain('Spieler');
   expect(reiter.some((r) => r.startsWith('Teilnehmer'))).toBe(true);
@@ -64,13 +90,13 @@ test('Teilnehmer je Konkurrenz und Reiter Spielerpool', async ({ page }, info) =
   await expect(page.getByText('Noch keine Konkurrenz angelegt.')).toBeVisible();
 
   // Drei Konkurrenzen: zwei Einzel, ein Doppel
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await konkurrenzAnlegen(page, 'Herren');
   await konkurrenzAnlegen(page, 'Damen');
   await konkurrenzAnlegen(page, 'Doppel', 'Doppel');
 
   // „Gleich melden für“ bietet nur die Einzel an; Häkchen bleiben für den nächsten Teilnehmer stehen
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   const meldenFuer = page.getByRole('group', { name: /Gleich melden für/ });
   await expect(meldenFuer.getByRole('checkbox')).toHaveCount(2);
@@ -128,7 +154,7 @@ test('Teilnehmer je Konkurrenz und Reiter Spielerpool', async ({ page }, info) =
   await bild(page, '80-teilnehmer-je-konkurrenz');
 
   // Unter „Konkurrenzen“ steht derselbe Stand
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   const herrenKarte = page.getByTestId('konkurrenz').filter({ hasText: 'Herren' }).first();
   await expect(herrenKarte.getByRole('heading', { name: 'Meldungen (3)' })).toBeVisible();
   await herrenKarte.getByRole('button', { name: 'Auslosen' }).click();
@@ -137,7 +163,7 @@ test('Teilnehmer je Konkurrenz und Reiter Spielerpool', async ({ page }, info) =
   await expect(herrenKarte.getByText('Gruppenphase')).toBeVisible();
 
   // Laufende Konkurrenz: Liste der Teilnehmer, Nachmelden im Abschnitt
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   const kid = await herren.getAttribute('data-konkurrenz');
   await page.goto(`./#/t/${tid}/teilnehmer/${kid}`);
   await expect(herren).toHaveAttribute('open', '');
@@ -155,7 +181,7 @@ test('Teilnehmer je Konkurrenz und Reiter Spielerpool', async ({ page }, info) =
   await expect(nav(page).getByRole('link', { name: /^Teilnehmer/ })).toHaveAttribute('aria-current', 'page');
 
   // Reiter „Spielerpool“: Pool des Kontos bearbeiten, Turnier-Teilnehmer sind markiert
-  await nav(page).getByRole('link', { name: 'Spielerpool' }).click();
+  await reiterOeffnen(page, 'Spielerpool');
   await expect(page.getByRole('heading', { name: 'Spielerpool', exact: true })).toBeVisible();
   await expect(page.getByText(/Änderungen hier gelten nur für den Pool/)).toBeVisible();
   const liste = page.getByTestId('pool-liste');
@@ -175,7 +201,7 @@ test('Teilnehmer je Konkurrenz und Reiter Spielerpool', async ({ page }, info) =
   await bild(page, '82-spielerpool-reiter');
 
   // Der neue Pool-Spieler lässt sich unter „Teilnehmer“ übernehmen
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await page.getByRole('button', { name: 'Aus dem Spielerpool' }).click();
   await page.getByRole('searchbox', { name: 'Suchen' }).first().fill(verein);
   await page.getByRole('checkbox', { name: new RegExp(`Paul Pool ${verein}`) }).check();

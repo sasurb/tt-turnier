@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { reiterOeffnen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 
 /**
@@ -53,7 +54,7 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${n} ✓`)).toBeVisible();
   }
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Offen');
   await page.getByLabel(/Jeder gegen jeden/).check();
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
@@ -65,7 +66,7 @@ test('Zentrale: Beitritt, Turnier anlegen, Spielerin trägt über das WLAN ein',
   await expect(page.getByTestId('konkurrenz').getByText('Gruppenphase')).toBeVisible();
 
   // Zugänge: Turnierkennung 8 Ziffern, Links zeigen auf die Adresse im WLAN, nicht auf 127.0.0.1
-  await page.getByRole('link', { name: 'Zugänge' }).click();
+  await reiterOeffnen(page, 'Zugänge');
   expect((await page.getByTestId('turnierkennung').innerText()).replace(/\s/g, '')).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/);
   const link = await page.getByLabel('Link').inputValue();
   expect(link.startsWith(lan)).toBe(true);

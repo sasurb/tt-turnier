@@ -1049,7 +1049,7 @@
   .reiter .mehr { display: none; }
   @media (max-width: 600px) {
     .reiter { flex-wrap: wrap; }
-    .reiter .mehr { display: inline-block; }
+    .reiter .mehr { display: inline-block; min-width: 44px; min-height: 44px; }
     .reiter:not(.mehrOffen) .nebenbereich:not(.aktiv) { display: none; }
   }
 </style>

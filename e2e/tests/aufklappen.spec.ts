@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { reiterOeffnen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 
@@ -13,7 +14,6 @@ async function bild(page: Page, name: string) {
   await page.screenshot({ path: `${ordner}/${name}.png`, fullPage: true });
 }
 
-const nav = (page: Page) => page.getByRole('navigation', { name: 'Bereiche' });
 
 async function konkurrenzAnlegen(page: Page, name: string) {
   const neu = page.getByRole('button', { name: /Neue Konkurrenz/ });
@@ -38,7 +38,7 @@ test('Konkurrenz bleibt zugeklappt, Zusammenlegen mit Hilfe', async ({ page }, i
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
 
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await konkurrenzAnlegen(page, 'Herren A');
   await konkurrenzAnlegen(page, 'Herren B');
 
@@ -69,8 +69,8 @@ test('Konkurrenz bleibt zugeklappt, Zusammenlegen mit Hilfe', async ({ page }, i
   await expect(a).not.toHaveAttribute('open');
   await expect(page.getByTestId('konkurrenz').filter({ hasText: 'Herren B' })).toHaveAttribute('open', '');
 
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
+  await reiterOeffnen(page, 'Konkurrenzen');
   await expect(page.getByTestId('konkurrenz').filter({ hasText: 'Herren A' })).not.toHaveAttribute('open');
 
   // Wieder aufklappen geht

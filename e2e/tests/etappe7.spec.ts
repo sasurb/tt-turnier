@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { angabenSetzen } from './hilfen';
+import { angabenSetzen, reiterOeffnen } from './hilfen';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 
@@ -67,7 +67,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${n} ✓`)).toBeVisible();
   }
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Offene Klasse');
   await page.getByLabel(/Jeder gegen jeden/).check();
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
@@ -117,7 +117,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await bild(beamer, '43-live-aufruf');
 
   // Namen für Zuschauer: Kurzform → der Beamer zeigt nur noch „Anna A.“
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await page.getByTestId('namen-kurz').check();
   await expect(page.getByText('Gespeichert.').first()).toBeVisible();
   await expect(live).not.toContainText('Alpha', { timeout: 20_000 });
@@ -132,7 +132,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await zuschauer.close();
 
   // Drucken: Spielzettel der aufgerufenen Spiele mit QR-Link
-  await page.getByRole('link', { name: 'Drucken' }).click();
+  await reiterOeffnen(page, 'Drucken');
   await expect(page.getByRole('heading', { name: 'Drucken und Export' })).toBeVisible();
   await layoutPruefen(page);
   await bild(page, '44-drucken-reiter');
@@ -178,7 +178,7 @@ test('Einzelgerät: K.-o.-Baum, Urkunden und Endstand drucken, Live-Anzeige im z
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${v}son ✓`)).toBeVisible();
   }
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Pokal');
   await page.getByRole('radio', { name: /^K\.-o\.-System/ }).check();
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
@@ -205,7 +205,7 @@ test('Einzelgerät: K.-o.-Baum, Urkunden und Endstand drucken, Live-Anzeige im z
   await bild(beamer, '47-live-lokal');
   await beamer.close();
 
-  await page.getByRole('link', { name: 'Drucken' }).click();
+  await reiterOeffnen(page, 'Drucken');
   await page.getByTestId('vorlage-baum').click();
   const dok = page.getByTestId('druck-dokument');
   await expect(dok.locator('.baum .box')).toHaveCount(3);

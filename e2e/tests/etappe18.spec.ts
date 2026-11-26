@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { reiterOeffnen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 import { letzteMail } from './mails';
@@ -43,7 +44,7 @@ async function alsAdmin(page: Page) {
 }
 
 async function spielerAnlegen(page: Page, namen: [string, string][]) {
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   for (const [v, n] of namen) {
     await page.getByLabel('Vorname').fill(v);
@@ -64,13 +65,13 @@ test('Posteingang, Nachricht an Teilnehmer, Ergebnisse verschicken, Verteiler', 
   await spielerAnlegen(page, [['Ida', 'Inbox'], ['Jan', 'Jaeger']]);
 
   // Konkurrenz „jeder gegen jeden“ mit beiden
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Offen');
   await page.getByLabel(/Jeder gegen jeden/).check();
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
 
   // Kennungen entstehen unter „Zugänge“; Idas Kennung merken
-  await nav(page).getByRole('link', { name: 'Zugänge' }).click();
+  await reiterOeffnen(page, 'Zugänge');
   const sp = page.getByTestId('zugaenge-spieler');
   await sp.locator('summary').click();
   await expect(sp.getByTestId('code')).toHaveCount(2);
@@ -84,7 +85,7 @@ test('Posteingang, Nachricht an Teilnehmer, Ergebnisse verschicken, Verteiler', 
   await expect(ida.getByTestId('postfach-zahl')).toHaveCount(0);
 
   // Leitung schickt eine Nachricht an alle Teilnehmer
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   const rm = page.getByTestId('abschnitt-rundmail');
   await rm.locator('summary').click();
   await rm.getByTestId('rm-alle').check();
@@ -118,7 +119,7 @@ test('Posteingang, Nachricht an Teilnehmer, Ergebnisse verschicken, Verteiler', 
   await expect(ida.getByTestId('postfach-zahl')).toHaveCount(0);
 
   // Ergebnisse eintragen (ein Spiel), abschließen, verschicken
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   const karte = page.getByTestId('konkurrenz');
   await karte.getByRole('button', { name: 'Alle melden' }).click();
   await karte.getByRole('button', { name: 'Auslosen' }).click();
@@ -133,7 +134,7 @@ test('Posteingang, Nachricht an Teilnehmer, Ergebnisse verschicken, Verteiler', 
   }
   await dlg.getByRole('button', { name: 'Ergebnis speichern' }).click();
   await expect(dlg).toBeHidden();
-  await nav(page).getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   page.once('dialog', (d) => void d.accept());
   await page.getByRole('button', { name: 'Turnier abschließen' }).click();
   const ev = page.getByTestId('ergebnis-versand');
@@ -207,7 +208,7 @@ test('Gruppenanmeldung mit Mannschaft, Übernahme, Mannschafts-Check-in, Auslosu
   const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
 
   // Einzel und Mannschaft (Corbillon, Sollstärke 2–3, Ersatzregel 1)
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Einzel');
   await page.getByLabel(/Jeder gegen jeden/).check();
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
@@ -226,7 +227,7 @@ test('Gruppenanmeldung mit Mannschaft, Übernahme, Mannschafts-Check-in, Auslosu
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
 
   // Online-Anmeldung mit Gruppenanmeldung öffnen
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await page.getByTestId('abschnitt-anmeldungen').locator('summary').first().click();
   await expect(page.getByTestId('anmeldeform')).toHaveValue('gruppe');
   await expect(page.getByTestId('gruppen-an')).toBeChecked();
@@ -284,7 +285,7 @@ test('Gruppenanmeldung mit Mannschaft, Übernahme, Mannschafts-Check-in, Auslosu
   await expect(page.getByTestId('abschnitt-spieler')).toContainText('Begleitperson');
 
   // Kasse: Auslosung erst nach Check-in; Mannschaft auf einmal einchecken
-  await nav(page).getByRole('link', { name: /Kasse/ }).click();
+  await reiterOeffnen(page, /Kasse/);
   await page.getByTestId('checkin-pflicht').check();
   const ck = page.getByTestId('checkin-konkurrenzen');
   await expect(ck.getByTestId('checkin-konkurrenz')).toHaveCount(2);
@@ -293,7 +294,7 @@ test('Gruppenanmeldung mit Mannschaft, Übernahme, Mannschafts-Check-in, Auslosu
   await expect(page.getByTestId('kasse-liste')).not.toContainText('Mona Leiterin'); // Begleitperson zahlt nicht
   await layoutPruefen(page, page.locator('main'));
   await bild(page, '18-14-kasse-checkin');
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   // Einzel: beide sind über die Mannschaft eingecheckt
   const karte = page.getByTestId('konkurrenz').filter({ hasText: 'Einzel' }).first();
   await expect(karte.getByTestId('auslosen')).toBeDisabled();
@@ -320,14 +321,14 @@ test('Schnelles Spiel, Übernahme in die Sparte, Favorit, Siegprämie', async ({
   await bild(page, '18-21-schnell-spiele');
 
   // Übernahme in ein Online-Turnier der Sparte
-  await nav(page).getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await page.getByTestId('in-sparte-knopf').click();
   await expect(page.getByText('Verbunden')).toBeVisible();
   await expect(page.locator('h1')).toContainText('Schnelles Spiel');
   await expect(page.locator('[data-testid=spiel]')).toHaveCount(3);
 
   // Favorit speichern und wieder übernehmen
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByRole('button', { name: '+ Neue Konkurrenz' }).click();
   await page.getByLabel('Name', { exact: true }).fill(`Preis ${geraet}`);
   await page.getByLabel(/K\.-o\.-System/).check();
@@ -343,7 +344,7 @@ test('Schnelles Spiel, Übernahme in die Sparte, Favorit, Siegprämie', async ({
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
 
   // Siegprämie einrichten (voraussichtlich, Steuerhinweis)
-  await nav(page).getByRole('link', { name: /Kasse/ }).click();
+  await reiterOeffnen(page, /Kasse/);
   const pr = page.getByTestId('kasse-praemien');
   await expect(pr).toContainText('Gemeinnützigkeit');
   await pr.getByTestId('praemie-einrichten').click();
