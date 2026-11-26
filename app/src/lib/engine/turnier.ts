@@ -185,7 +185,9 @@ export class TurnierSitzung {
   async fremdeAusstehende(): Promise<LokalesEreignis[]> {
     if (this.o.modus !== 'online' || !this.o.speicher.sitzungsbereiche) return [];
     const token = this.o.token?.() ?? null;
-    const eigenerBereich = this.turnier + '/' + (this.bindungFuer(token) ?? 'zuschauer');
+    const bindung = this.bindungFuer(token);
+    if (!token || !bindung?.startsWith('i-')) return [];
+    const eigenerBereich = this.turnier + '/' + bindung;
     const liste = await this.o.speicher.fremdeAusstehende?.(this.turnier, eigenerBereich) ?? [];
     return token === (this.o.token?.() ?? null) ? liste : [];
   }

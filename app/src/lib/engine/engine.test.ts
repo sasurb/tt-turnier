@@ -272,6 +272,10 @@ describe('IndexedDB-Speicher', () => {
     expect(server.ereignisse).toEqual([]);
     expect(await fremd.fremdeAusstehende()).toMatchObject([{ daten: e.daten }]);
 
+    const zuschauer = tab('', '');
+    expect(await zuschauer.fremdeAusstehende()).toEqual([]);
+    await zuschauer.fremdeVerwerfen(await fremd.fremdeAusstehende());
+
     const neu = tab('tok-b', identitaet);
     expect(await neu.ereignisse()).toMatchObject([{ id: e.id, status: 'ausstehend' }]);
     await neu.abgleich!.durchlauf();

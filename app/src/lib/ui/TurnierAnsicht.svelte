@@ -442,6 +442,11 @@
             eintrag = gemerktesTurnier(id) ?? null;
             zugangFehler = T.zugang.kennungUngueltig;
           } else {
+            const g = gemerktesTurnier(id);
+            if (g && g.kontoId === app.sitzung?.konto.id) {
+              turnierMerken({ ...g, kontoRolle: null, kontoIdentitaet: null });
+            }
+            kontoIdentitaet = null;
             bestaetigteKontoRechte = null;
           }
         },
@@ -611,7 +616,9 @@
     return () => clearInterval(timer);
   });
   async function fremdeSichern() {
-    const eintraege = fremde.map(({ id: eid, turnier, art, daten, zeit, geraet, autor }) =>
+    const aktuell = await sitzung?.fremdeAusstehende();
+    if (!aktuell?.length) return;
+    const eintraege = aktuell.map(({ id: eid, turnier, art, daten, zeit, geraet, autor }) =>
       ({ id: turnier === id ? eid : eid.slice(turnier.length + 1), art, daten, zeit, geraet, autor }));
     await dateiAusgeben(`TT-Turnier-${id}-ausstehend.json`, JSON.stringify({ turnier: id, eintraege }, null, 2), 'application/json', false);
   }
@@ -797,7 +804,7 @@
   {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
   {#if sperre?.zentrale}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.gesperrtOnline(sperre.zentrale)}</div>{/if}
   {#if sperre?.abgegeben}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.abgegebenHinweis}</div>{/if}
-  {#if fremde.length}
+  {#if schreibToken && fremde.length}
     <section class="meldung info" role="status" data-testid="fremde-ausstehende">
       <strong>{T.fremdeEintraege.titel(fremde.length)}</strong>
       <Hilfe text={T.fremdeEintraege.hilfe} />
