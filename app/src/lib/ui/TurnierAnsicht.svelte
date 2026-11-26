@@ -75,17 +75,21 @@
    * prüft das beim Öffnen; nach „Abmelden“ fällt es sofort weg, weil das Konto-Token nie am
    * Turnier gespeichert wird.
    */
-  let kontoRechte = $state<Rolle | null>(null);
-  let rechteFuer = ''; // Token, für das kontoRechte gilt
+  let bestaetigteKontoRechte = $state<Rolle | null>(null);
+  let rechteFuer = $state('');
+  let zerstoert = false;
+  const kontoRechte = $derived(app.sitzung?.token === rechteFuer ? bestaetigteKontoRechte : null);
   const kontoToken = $derived(kontoRechte && app.sitzung ? app.sitzung.token : null);
   /** Turnierinfo vom Server holen; mit Konto-Token auch die Rechte dieses Kontos */
   async function infoLaden() {
     const s = app.sitzung;
     const kennung = eintrag?.token ?? null;
+    let ersteAbfrage = true;
     try {
       // Mit Kennung: prüfen, ob sie noch gilt (gesperrt/neu ausgegeben → Gerät wird Zuschauer)
       const a = await api.turnier(id, kennung ?? s?.token ?? null);
-      if (kennung !== (eintrag?.token ?? null) || wechsel || s !== app.sitzung) return;
+      ersteAbfrage = false;
+      if (kennung !== (eintrag?.token ?? null) || zerstoert || wechsel || s !== app.sitzung) return;
       // Name und Datum kennt bei Online-Turnieren der Server (ohne Ereignis turnier.angelegt)
       if (eintrag && (a.turnier.name !== eintrag.name || a.turnier.datum !== eintrag.datum)) {
         turnierMerken({ ...eintrag, name: a.turnier.name, datum: a.turnier.datum });
@@ -107,24 +111,27 @@
         }
         if (s) {
           const k = await api.turnier(id, s.token);
-          kontoRechte = k.turnier.rechte ?? null;
-        } else kontoRechte = null;
+          if (zerstoert || wechsel || s !== app.sitzung) return;
+          bestaetigteKontoRechte = k.turnier.rechte ?? null;
+        } else bestaetigteKontoRechte = null;
       } else {
-        kontoRechte = s ? (a.turnier.rechte ?? null) : null;
+        bestaetigteKontoRechte = s ? (a.turnier.rechte ?? null) : null;
       }
       rechteFuer = s?.token ?? '';
       // Für den Offline-Betrieb merken (nur Anzeige – der Server prüft jeden Eintrag beim Nachtragen)
       const g = gemerktesTurnier(id);
-      if (g && s && (g.kontoRolle !== kontoRechte || g.kontoId !== s.konto.id)) turnierMerken({ ...g, kontoRolle: kontoRechte, kontoId: s.konto.id });
+      if (g && s && (g.kontoRolle !== bestaetigteKontoRechte || g.kontoId !== s.konto.id)) turnierMerken({ ...g, kontoRolle: bestaetigteKontoRechte, kontoId: s.konto.id });
     } catch (x) {
-      if (kennung && x instanceof ApiFehler && x.code === 'nicht_angemeldet') {
+      if (zerstoert || wechsel || s !== app.sitzung) return;
+      if (kennung && kennung !== (gemerktesTurnier(id)?.token ?? null)) return;
+      if (ersteAbfrage && kennung && x instanceof ApiFehler && x.code === 'nicht_angemeldet') {
         turnierAbmelden(id);
         eintrag = gemerktesTurnier(id) ?? null;
         zugangFehler = T.zugang.kennungUngueltig;
       }
       // Kein Netz: zuletzt bestätigte Rechte dieses Kontos weiter nutzen (Einträge warten auf das Netz)
       const g = gemerktesTurnier(id);
-      kontoRechte = x instanceof ApiFehler && x.istNetzwerk && s && g?.kontoId === s.konto.id ? (g.kontoRolle ?? null) : null;
+      bestaetigteKontoRechte = x instanceof ApiFehler && x.istNetzwerk && s && g?.kontoId === s.konto.id ? (g.kontoRolle ?? null) : null;
       rechteFuer = s?.token ?? '';
     }
   }
@@ -132,7 +139,7 @@
     const s = app.sitzung;
     if (lokal || laedt) return;
     if (!s) {
-      kontoRechte = null;
+      bestaetigteKontoRechte = null;
       rechteFuer = '';
       return;
     }
@@ -235,14 +242,12 @@
   /** Frühere Adressen …/anmeldung (bis 0.12) und …/spieler (bis 0.13): heute Reiter „Teilnehmer“ */
   const reiterNeu = $derived(reiter === 'anmeldung' || reiter === 'spieler' ? 'teilnehmer' : reiter);
   const aktiv = $derived<Reiter>(spielLink ? (rolle === 'spieler' ? 'meine' : 'spiele') : reiterNeu && reiterListe.includes(reiterNeu as Reiter) ? (reiterNeu as Reiter) : standardReiter);
-  let spielLinkGeoeffnet = '';
   $effect(() => {
     const l = spielLink;
-    if (!l || laedt || !zustand) return;
-    const schluessel = `${l.k}/${l.s}`;
-    if (spielLinkGeoeffnet === schluessel) return;
-    spielLinkGeoeffnet = schluessel;
-    if (zustand.konkurrenzen[l.k]?.spiele[l.s]) offen = { k: l.k, s: l.s };
+    if (!l || laedt || wechsel || !zustand?.konkurrenzen[l.k]?.spiele[l.s]) return;
+    offen = { k: l.k, s: l.s };
+    // Erst nach dem Öffnen auf den Reiter wechseln, auch wenn das Spiel erst beim Abgleich kommt.
+    ersetze(`t/${id}/${rolle === 'spieler' ? 'meine' : 'spiele'}`);
   });
 
   /** Online-Turniere ohne „turnier.angelegt“: Name und Datum vom Server (gemerkt am Gerät) */
@@ -388,23 +393,16 @@
             eintrag = gemerktesTurnier(id) ?? null;
             zugangFehler = T.zugang.kennungUngueltig;
           } else {
-            kontoRechte = null;
+            bestaetigteKontoRechte = null;
           }
         },
       });
+      if (!lokal) await infoLaden(); // Der Speicherbereich hängt von den bestätigten Kontorechten ab.
       await aktualisieren();
-      if (!lokal) await infoLaden(); // Rechte des Kontos vor der Reiterwahl kennen
       sitzung.start();
       if (code && !lokal) await codeVerwenden(code);
       // Reiter festhalten, damit die Seite beim Eintragen nicht springt
       if (!code && !reiter) ersetze(`t/${id}/${standardReiter}`);
-      // Spiel-Link: Adresse auf den Reiter setzen, damit „Zurück“ und Neuladen nicht erneut öffnen
-      if (reiter === 'spiel' && weitere.length === 2) {
-        const [k, s] = weitere;
-        if (zustand?.konkurrenzen[k!]?.spiele[s!]) offen = { k: k!, s: s! };
-        spielLinkGeoeffnet = `${k}/${s}`;
-        ersetze(`t/${id}/${rolle === 'spieler' ? 'meine' : 'spiele'}`);
-      }
       void einstellungenLaden();
       document.addEventListener('visibilitychange', beiSichtbarkeit);
       addEventListener('online', beiOnline);
@@ -417,6 +415,7 @@
   });
 
   onDestroy(() => {
+    zerstoert = true;
     sitzung?.stop();
     clearInterval(uhr);
     clearTimeout(uebersichtTimer);

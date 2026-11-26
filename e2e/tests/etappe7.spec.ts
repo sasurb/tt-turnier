@@ -158,7 +158,43 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await expect(dok.getByText(tid.replace(/^(.{4})(.{4})$/, '$1 $2'))).toBeVisible();
 
   // Spiel-Link vom Zettel öffnet das Ergebnis zum Eintragen
-  await page.goto(spielLink!.replace(/^.*#/, './#'));
+  const spielRoute = spielLink!.replace(/^.*#/, './#');
+  await test.step('QR-Link nach Neuladen für Konto-Leitung, Kennungs-Leitung und Helfer', async () => {
+    await page.getByRole('link', { name: /Zurück/ }).click();
+    await reiterOeffnen(page, 'Zugänge');
+    const leitung = page.getByTestId('zugaenge-leitung');
+    await expect(leitung.getByTestId('code')).toHaveCount(1);
+
+    const helfer = page.getByTestId('zugaenge-helfer');
+    await helfer.locator('summary').click();
+    await helfer.getByLabel('Name des Helfers').fill('QR Helfer');
+    await helfer.getByRole('button', { name: 'Helfer hinzufügen' }).click();
+
+    for (const bereich of [leitung, helfer]) {
+      const code = (await bereich.getByTestId('code').innerText()).replace(/\s/g, '');
+      const kontext = await browser.newContext({ ...info.project.use, baseURL: info.project.use.baseURL });
+      try {
+        const geraet = await kontext.newPage();
+        await geraet.goto(`./#/c/${tid}/${code}`);
+        await expect(geraet.getByTestId('angemeldet-als')).toBeVisible();
+        await geraet.close();
+        const qr = await kontext.newPage();
+        await qr.goto(spielRoute);
+        await expect(qr.getByRole('dialog')).toBeVisible();
+      } finally {
+        await kontext.close();
+      }
+    }
+
+    const konto = await page.context().newPage();
+    try {
+      await konto.goto(spielRoute);
+      await expect(konto.getByRole('dialog')).toBeVisible();
+    } finally {
+      await konto.close();
+    }
+  });
+  await page.goto(spielRoute);
   await expect(page.getByRole('dialog')).toBeVisible();
   await ergebnisEintragen(page);
   await expect(page).toHaveURL(new RegExp(`#/t/${tid}/spiele`));
