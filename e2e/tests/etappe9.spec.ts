@@ -169,6 +169,8 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await p.getByTestId('meldung-abmelden').click();
   await expect(p.getByTestId('meldung-stand')).toContainText('abgemeldet');
   await expect.poll(() => letzteMail(mail('cem'), /Nachgerückt/)?.text ?? '').toContain('Platz sicher');
+  await p.goto(linkAus(letzteMail(mail('cem'), /Bitte bestätigen/)?.text));
+  await expect(p.getByTestId('meldung-stand')).toContainText('Platz sicher');
   await page.reload();
   await page.getByTestId('anmeldung-uebernehmen').click();
   await expect(page.getByText(/Änderung\(en\) übernommen/)).toBeVisible();
