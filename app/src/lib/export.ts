@@ -1,6 +1,5 @@
 import { wertungVorlaeufig } from './engine/modell';
-import { endstand, name, nameLang, rundeVon } from './engine/abfragen';
-import { ergebnisText } from './engine/ergebnis';
+import { endstand, name, nameLang, rundeVon, spielErgebnisText } from './engine/abfragen';
 import { spielerVon, type TurnierZustand } from './engine/zustand';
 
 /**
@@ -101,5 +100,5 @@ export function ergebnisKurz(z: TurnierZustand, kid: string, sid: string): strin
   const s = z.konkurrenzen[kid]?.spiele[sid];
   if (!s) return '';
   if (s.status === 'freilos') return 'Freilos';
-  return s.ergebnis ? ergebnisText(s.ergebnis) : `${name(z, s.a)} – ${name(z, s.b)}`;
+  return s.ergebnis ? spielErgebnisText(z, s, s.ergebnis) : `${name(z, s.a)} – ${name(z, s.b)}`;
 }

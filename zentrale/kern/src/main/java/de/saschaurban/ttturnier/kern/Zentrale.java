@@ -758,7 +758,12 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         List<Speicher.Turnier> l = new ArrayList<>(turniere.values());
         l.sort((x, y) -> String.valueOf(y.kopf.get("angelegt")).compareTo(String.valueOf(x.kopf.get("angelegt"))));
         List<Object> aus = new ArrayList<>();
-        for (Speicher.Turnier t : l) aus.add(turnierAusgabe(t));
+        for (Speicher.Turnier t : l) {
+            Map<String, Object> eintrag = turnierAusgabe(t);
+            LocalDate ende = gespeichertesEnddatum(t);
+            eintrag.put("enddatum", ende == null ? null : ende.toString());
+            aus.add(eintrag);
+        }
         return Json.obj("turniere", aus);
     }
 
@@ -1359,16 +1364,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             List<Map<String, Object>> neu = new ArrayList<>();
             Map<String, Long> inDiesemAufruf = new HashMap<>();
             long seq = t.hoechsteSeq();
-            LocalDate ende = null;
-            for (Map<String, Object> eintrag : t.ereignisse) {
-                Map<String, Object> daten = Json.alsObjekt(eintrag.get("daten"));
-                Map<String, Object> verfasser = Json.alsObjekt(eintrag.get("autor"));
-                if ("turnier.daten".equals(eintrag.get("art")) && verfasser != null && "leitung".equals(verfasser.get("rolle"))
-                    && daten != null && daten.containsKey("enddatum")) {
-                    LocalDate datum = enddatumLesen(daten.get("enddatum"), Objects.toString(t.kopf.get("datum"), ""));
-                    if (datum != null || daten.get("enddatum") == null) ende = datum;
-                }
-            }
+            LocalDate ende = gespeichertesEnddatum(t);
             LocalDate eingang = berlinDatum(Instant.ofEpochSecond(jetzt()));
             for (Map<String, Object> e : geprueft) {
                 String id = (String) e.get("id");
@@ -1431,6 +1427,20 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         }
     }
 
+    private static LocalDate gespeichertesEnddatum(Speicher.Turnier t) {
+        LocalDate ende = null;
+        for (Map<String, Object> eintrag : t.ereignisse) {
+            Map<String, Object> daten = Json.alsObjekt(eintrag.get("daten"));
+            Map<String, Object> verfasser = Json.alsObjekt(eintrag.get("autor"));
+            if ("turnier.daten".equals(eintrag.get("art")) && verfasser != null && "leitung".equals(verfasser.get("rolle"))
+                && daten != null && daten.containsKey("enddatum")) {
+                LocalDate datum = enddatumLesen(daten.get("enddatum"), Objects.toString(t.kopf.get("datum"), ""));
+                if (datum != null || daten.get("enddatum") == null) ende = datum;
+            }
+        }
+        return ende;
+    }
+
     private static LocalDate enddatumLesen(Object wert, String startdatum) {
         if (!(wert instanceof String) || !((String) wert).matches("[0-9]{4}-[0-9]{2}-[0-9]{2}")) return null;
         try {
@@ -1484,6 +1494,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             if (a.rumpf.containsKey("datum")) {
                 Object d = a.rumpf.get("datum");
                 if (d != null && !(d instanceof String && P_DATUM.matcher((String) d).matches())) throw new ApiFehler("ungueltig", "Datum im Format JJJJ-MM-TT angeben.");
+                LocalDate ende = gespeichertesEnddatum(t);
+                if (d instanceof String && ende != null && ((String) d).compareTo(ende.toString()) > 0) {
+                    throw new ApiFehler("ungueltig", "Das Startdatum darf nicht nach dem Enddatum liegen.");
+                }
                 t.kopf.put("datum", d);
             }
             if (a.rumpf.containsKey("sicherungTakt")) {

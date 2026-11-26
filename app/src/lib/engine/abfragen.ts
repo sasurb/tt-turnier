@@ -13,6 +13,7 @@ import {
   spielerName,
   ttrBereichName,
   type KonkurrenzZustand,
+  type Ergebnis,
   type Seite,
   type Spiel,
   type TurnierSpieler,
@@ -20,6 +21,7 @@ import {
   type Zulassung,
 } from './modell';
 import { type Tabelle } from './wertung';
+import { ergebnisText } from './ergebnis';
 import { istRundenModus, rundenPlatzierungen } from './runden';
 import { mischen, zufallAus } from './zufall';
 import { systemVon } from './mannschaft';
@@ -36,6 +38,11 @@ export function name(z: TurnierZustand, id: string | null, k?: KonkurrenzZustand
   const m = k?.mannschaften?.[id] ?? Object.values(z.konkurrenzen).map((x) => x.mannschaften?.[id]).find(Boolean);
   if (m) return m.name;
   return '?';
+}
+
+export function spielErgebnisText(z: TurnierZustand, s: Pick<Spiel, 'a' | 'b'>, e: Ergebnis): string {
+  const id = e.gewinner ? s[e.gewinner] : null;
+  return ergebnisText(e, 'a', e.art === 'aufgabe' && id ? name(z, id) : undefined);
 }
 
 /** Langer Name eines Teilnehmers (Paar mit Vornamen) */

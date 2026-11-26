@@ -268,6 +268,7 @@ export interface TurnierInfo {
   sparte?: number | null;
   name: string;
   datum: string | null;
+  enddatum?: string | null;
   angelegt: string;
   /** Name des Kontos, dem das Turnier gehört (Turnierleitung) */
   veranstalter: string;

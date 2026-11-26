@@ -8,11 +8,10 @@
   import type { Rolle } from '@shared/protokoll';
   import { TurnierSitzung } from '../engine/turnier';
   import { berechnen, spielerVon, type TurnierZustand } from '../engine/zustand';
-  import { anstehendeSpiele, endstand, name, nameLang, platzText, rundeVon, sichtbar, tabelle, trostPlaetze, vorgabeVon } from '../engine/abfragen';
+  import { spielErgebnisText, anstehendeSpiele, endstand, name, nameLang, platzText, rundeVon, sichtbar, tabelle, trostPlaetze, vorgabeVon } from '../engine/abfragen';
   import { baumRunden, koRunden, rundenName } from '../engine/ko';
   import { einstFuer, gruppeTitel, istSchweizerArt, mitKo, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
   import { istRundenModus, kaiserTabelle, letzteRunde, schweizerTabelle } from '../engine/runden';
-  import { ergebnisText } from '../engine/ergebnis';
   import { zurueckgezogen } from '../engine/zustand';
   import { geraetId, gemerktesTurnier } from '../einstellungen';
   import { codeAnzeige } from '../code';
@@ -257,6 +256,11 @@
     document.title = titel;
     return () => (document.title = T.app.titel);
   });
+  const turnierzeitraum = $derived(
+    z?.enddatum && z.enddatum !== z.datum
+      ? z.datum ? `${datum(z.datum)} – ${datum(z.enddatum)}` : T.turnierDatum.bis(datum(z.enddatum))
+      : datum(z?.datum ?? null),
+  );
 </script>
 
 {#if laedt}
@@ -352,7 +356,7 @@
         {@const offen = allesSichtbar || aufstellungenKomplett(k, s)}
         <section class="seite bericht" data-testid="spielbericht">
           <h1>{T.druck.spielbericht}</h1>
-          <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {k.einst.name} · {rundeVon(k, s)}{s.tisch ? ` · ${T.spiele.tisch(s.tisch, s.tisch2)}` : ''} · {sys.name}</p>
+          <p class="unter">{z.name}{turnierzeitraum ? ` · ${turnierzeitraum}` : ''} · {k.einst.name} · {rundeVon(k, s)}{s.tisch ? ` · ${T.spiele.tisch(s.tisch, s.tisch2)}` : ''} · {sys.name}</p>
           <div class="teams">
             {#each ['a', 'b'] as const as seite (seite)}
               {@const tid = seite === 'a' ? s.a : s.b}
@@ -405,7 +409,7 @@
     {:else if kassenArt === 'kasse' && summe}
       <section class="seite">
         <h1>{T.druck.kasseArten.kasse}</h1>
-        <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {T.druck.standAm(new Date().toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}</p>
+        <p class="unter">{z.name}{turnierzeitraum ? ` · ${turnierzeitraum}` : ''} · {T.druck.standAm(new Date().toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}</p>
         <table class="kassentab">
           <thead><tr><th>{T.druck.spieler}</th><th>{T.kasse.checkin}</th><th class="z">{T.kasse.soll}</th><th class="z">{T.kasse.arten.bar}</th><th class="z">{T.kasse.arten.ueberweisung}</th><th class="z">{T.kasse.erlassen}</th><th class="z">{T.kasse.offen}</th></tr></thead>
           <tbody>
@@ -564,7 +568,7 @@
               </table>
               <ol class="spielfolge">
                 {#each k.reihenfolge.map((sid) => k.spiele[sid]!).filter((s) => s.phase === 'gruppen' && s.gruppe === g.nr && s.status !== 'entfallen') as s (s.id)}
-                  <li><span>{T.druck.rundeKurz(s.runde)}</span> {name(z, s.a, k)} – {name(z, s.b, k)} <strong>{s.ergebnis ? ergebnisText(s.ergebnis) : ''}</strong>{s.gestrichen ? ` (${T.druck.gestrichen})` : ''}</li>
+                  <li><span>{T.druck.rundeKurz(s.runde)}</span> {name(z, s.a, k)} – {name(z, s.b, k)} <strong>{s.ergebnis ? spielErgebnisText(z, s, s.ergebnis) : ''}</strong>{s.gestrichen ? ` (${T.druck.gestrichen})` : ''}</li>
                 {/each}
               </ol>
             </section>
@@ -602,7 +606,7 @@
                 </div>
                 {#if b === 'haupt' && k.spiele['ko-p3'] && ti === baumTeile(k, b).length - 1}
                   {@const p3 = k.spiele['ko-p3']!}
-                  <p class="p3"><strong>{T.konk.platz3}:</strong> {name(z, p3.a, k)} – {name(z, p3.b, k)} {p3.ergebnis ? ergebnisText(p3.ergebnis) : ''}</p>
+                  <p class="p3"><strong>{T.konk.platz3}:</strong> {name(z, p3.a, k)} – {name(z, p3.b, k)} {p3.ergebnis ? spielErgebnisText(z, p3, p3.ergebnis) : ''}</p>
                 {/if}
               </section>
             {/each}
@@ -614,7 +618,7 @@
     {:else if aktiv === 'ergebnisse'}
       <section class="block">
         <h1>{z.name}</h1>
-        <p class="klein">{[datum(z.datum), z.ort].filter(Boolean).join(' · ')}</p>
+        <p class="klein">{[turnierzeitraum, z.ort].filter(Boolean).join(' · ')}</p>
       </section>
       {#each konkurrenzen as k (k.id)}
         {@const v = zeige(k)}
@@ -656,7 +660,7 @@
               <h3>{T.druck.alleSpiele}</h3>
               <ul class="spiele-liste">
                 {#each k.reihenfolge.map((sid) => k.spiele[sid]!).filter((s) => s.ergebnis && s.status === 'gespielt') as s (s.id)}
-                  <li><span class="klein">{rundeVon(k, s)}</span> {name(z, s.a, k)} – {name(z, s.b, k)} <strong>{ergebnisText(s.ergebnis!)}</strong></li>
+                  <li><span class="klein">{rundeVon(k, s)}</span> {name(z, s.a, k)} – {name(z, s.b, k)} <strong>{spielErgebnisText(z, s, s.ergebnis!)}</strong></li>
                 {/each}
               </ul>
             {/if}
@@ -696,7 +700,7 @@
     {:else if aktiv === 'aushang'}
       <section class="aushang">
         <h1>{z.name}</h1>
-        <p class="unter">{[datum(z.datum), z.ort].filter(Boolean).join(' · ')}</p>
+        <p class="unter">{[turnierzeitraum, z.ort].filter(Boolean).join(' · ')}</p>
         {#if lokal}
           <p class="leer">{T.druck.aushangLokal}</p>
         {:else}
@@ -726,7 +730,7 @@
             <p class="text">{T.druck.urkundeText(u.k.einst.name + (u.zusatz ? ` (${u.zusatz})` : ''))}</p>
             <p class="platz">{u.platz}</p>
             <div class="fuss">
-              <span>{[z.ort, datum(z.datum)].filter(Boolean).join(', ')}</span>
+              <span>{[z.ort, turnierzeitraum].filter(Boolean).join(', ')}</span>
               <span class="linie">{e.unterschrift || T.druck.turnierleitung}</span>
             </div>
           </div>

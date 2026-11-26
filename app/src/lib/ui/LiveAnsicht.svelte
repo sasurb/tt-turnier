@@ -8,11 +8,10 @@
   import type { Rolle } from '@shared/protokoll';
   import { TurnierSitzung } from '../engine/turnier';
   import { berechnen, zurueckgezogen, type TurnierZustand } from '../engine/zustand';
-  import { alleSpiele, anstehendeSpiele, name, oeffentlich, platzierungen, rundeVon, sichtbar, tabelle, tische, trostPlaetze } from '../engine/abfragen';
+  import { spielErgebnisText, alleSpiele, anstehendeSpiele, name, oeffentlich, platzierungen, rundeVon, sichtbar, tabelle, tische, trostPlaetze } from '../engine/abfragen';
   import { baumRunden, koRunden, rundenName } from '../engine/ko';
   import { gruppeTitel, istSchweizerArt, mitKo, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
   import { istRundenModus, kaiserTabelle, letzteRunde, rundenZahl, schweizerTabelle } from '../engine/runden';
-  import { ergebnisText } from '../engine/ergebnis';
   import { geraetId, gemerktesTurnier } from '../einstellungen';
   import { codeAnzeige } from '../code';
   import { appBasis } from '../zentrale.svelte';
@@ -355,7 +354,7 @@
                 {#each ergebnisse as s (s.konkurrenz + s.id)}
                   <li>
                     <span class="paar-klein"><span class:sieger={s.gewinner === 'a'}>{name(z, s.a)}</span> – <span class:sieger={s.gewinner === 'b'}>{name(z, s.b)}</span></span>
-                    <span class="erg">{ergebnisText(s.ergebnis!)}{#if strittigerStand(s.stand)} · {T.spiele[s.stand!]} (vorläufig){/if}</span>
+                    <span class="erg">{spielErgebnisText(z, s, s.ergebnis!)}{#if strittigerStand(s.stand)} · {T.spiele[s.stand!]} (vorläufig){/if}</span>
                     <span class="ort">{ort(s)}</span>
                   </li>
                 {/each}

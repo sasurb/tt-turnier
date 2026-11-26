@@ -221,11 +221,11 @@
       <label for="n">{T.neu.name}</label>
       <input id="n" bind:value={name} placeholder={T.neu.namePlatzhalter} autocomplete="off" required />
       <div class="raster">
-        <div><label for="d">Startdatum</label><input id="d" type="date" bind:value={datum} /></div>
-        <div><div class="label-zeile"><label for="ed">Enddatum – optional</label><Hilfe text="Spielergebnisse können nur bis zum Turnierende eingegeben werden. Die Turnierleitung kann das Turnier verlängern." /></div>
+        <div><label for="d">{T.turnierDatum.start}</label><input id="d" type="date" bind:value={datum} /></div>
+        <div><div class="label-zeile"><label for="ed">{T.turnierDatum.ende}</label><Hilfe text={T.turnierDatum.endeHilfe} /></div>
         <input id="ed" type="date" min={datum} bind:value={enddatum} /></div>
       </div>
-      {#if !enddatum}<p class="leise">Ohne Enddatum wird das Turnier mit offenem Ende angelegt</p>{/if}
+      {#if !enddatum}<p class="leise">{T.turnierDatum.offen}</p>{/if}
       <div class="raster">
         <div><label for="ort">{T.assistent.ort}</label><input id="ort" bind:value={ort} maxlength="120" /></div>
         <div>

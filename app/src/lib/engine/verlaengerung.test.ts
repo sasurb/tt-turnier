@@ -19,5 +19,8 @@ it.each([null, 4])('F-002: beendeten Satz bei Aufgabe schützen, echte Verlänge
 it('F-003: 3:1 Sätze für A, aber Spielsieg bei Aufgabe für B', () => {
   const w = ergebnisWerten({ saetze: [[11, 6], [11, 7], [11, 8]], laufend: [8, 3], aufgabe: 'a' }, 5, 'punkte', 4);
   expect(w).toMatchObject({ ok: true, ergebnis: { satzA: 3, satzB: 1, gewinner: 'b', art: 'aufgabe', saetze: [[11, 6], [11, 7], [11, 8], [8, 11]] } });
-  if (w.ok) expect(ergebnisText(w.ergebnis)).toContain('Aufgabe, zweite Seite gewinnt');
+  if (w.ok) {
+    expect(ergebnisText(w.ergebnis)).toContain('Aufgabe, zweite Seite gewinnt');
+    expect(ergebnisText(w.ergebnis, 'a', 'Ben Schulz')).toContain('Aufgabe, Ben Schulz gewinnt');
+  }
 });

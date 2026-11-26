@@ -42,3 +42,12 @@ it('V-002: bei einem Altturnier bleibt das bisherige Datum erhalten', () => {
   expect(t.z.abgeschlossen).toBe(true);
   expect(t.z.enddatum).toBeNull();
 });
+
+it('V-002: Startdatum nach vorhandenem Enddatum wird abgewiesen', () => {
+  const t = new Baukasten();
+  t.e(ART.turnierAngelegt, { name: 'Turnier', datum: '2026-12-03' });
+  t.e(ART.turnierDaten, { enddatum: '2026-12-06' });
+  t.e(ART.turnierUmbenannt, { name: 'Turnier', datum: '2026-12-07' });
+  expect(t.z.datum).toBe('2026-12-03');
+  expect(t.z.enddatum).toBe('2026-12-06');
+});

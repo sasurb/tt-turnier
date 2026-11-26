@@ -11,8 +11,7 @@
   import type { AbgleichStatus } from '../engine/abgleich';
   import type { LokalesEreignis } from '../engine/typen';
   import { berechnen, fristgebundeneAktion, nachTurnierende, type TurnierZustand } from '../engine/zustand';
-  import { name as spName } from '../engine/abfragen';
-  import { ergebnisText } from '../engine/ergebnis';
+  import { spielErgebnisText, name as spName } from '../engine/abfragen';
   import type { Spiel } from '../engine/modell';
   import { uebersichtText } from '../engine/uebersicht';
   import { anzeigeName, kontoSitzung, geraetId, gemerktesTurnier, turnierAbmelden, turnierMerken, type GemerktesTurnier } from '../einstellungen';
@@ -690,7 +689,7 @@
       case ART.spielErgebnis: {
         const s = z && typeof d.spiel === 'string' ? z.konkurrenzen[String(d.konkurrenz)]?.spiele[d.spiel] : undefined;
         const namen = z ? `${spName(z, String(d.a ?? ''))} – ${spName(z, String(d.b ?? ''))}` : '';
-        const erg = s?.eintrag?.ereignis === e.id && s.ergebnis ? ` ${ergebnisText(s.ergebnis)}` : '';
+        const erg = s?.eintrag?.ereignis === e.id && s.ergebnis ? ` ${spielErgebnisText(zustand!, s, s.ergebnis)}` : '';
         return `${art}: ${namen}${erg}${k ? ` (${k})` : ''}`;
       }
       default:

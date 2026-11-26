@@ -3,7 +3,7 @@ import { ART, type Autor } from '@shared/protokoll';
 import { Baukasten, LEITUNG, saetze } from './test/baukasten';
 import { auswahlFolgen, auswahlPruefen, angeboten, modiFuerArt, ohneKonkurrenz } from './auswahl';
 import { automatischeAufrufe, endstand, gesamtPlatzierung, platzierungen, rundeVon, tabelle, tische } from './abfragen';
-import { braunschweigFolge, SYSTEME, teileVon, teilId } from './mannschaft';
+import { braunschweigFolge, standardMannschaft, SYSTEME, teileVon, teilId } from './mannschaft';
 import { appWertungen } from './appwertung';
 import { einstFuer, gruppeTitel, standardEinstellungen, type KonkurrenzEinstellungen } from './modell';
 import { platzGruppenBilden, rueckzugZuruecknehmenPruefen, zurueckgezogen } from './zustand';
@@ -181,6 +181,59 @@ describe('0.16: Gruppen + Platzierungsgruppen', () => {
     expect(plan.gruppen.flatMap((g) => g.mitglieder)).not.toContain('s8');
     t.e(ART.phaseGestartet, { konkurrenz: 'k', phase: 'ko', gruppen: plan.gruppen.map((g) => g.mitglieder) });
     expect(rueckzugZuruecknehmenPruefen(t.z.konkurrenzen.k!, 's8')).toMatch(/Vorrunde/);
+  });
+
+  it('SIM-TTT-001 T-06 / F-017: C12-Rückzug lässt C11 und C21 unten gegeneinander spielen', () => {
+    const t = new Baukasten();
+    const teamId = (name: string) => `m-${name.toLowerCase()}x`;
+    const gruppen = [['C11', 'C12', 'C13'], ['C21', 'C22', 'C23']];
+    const name = (id: string) => id.slice(2, -1).toUpperCase();
+    const kader = (id: string) => [name(id).toLowerCase() + 'a', name(id).toLowerCase() + 'b'];
+    t.konkurrenz('c', {
+      art: 'mannschaft', modus: 'gruppen_platz', gruppenGroesse: 3, aufsteiger: 2,
+      mannschaft: { ...standardMannschaft(), system: 'zweier3', durchspielen: false, eigen: null },
+      endrunde: { bestOf: null, mannschaft: { ...standardMannschaft(), system: 'corbillon2', durchspielen: false, eigen: null } },
+    }, []);
+    for (const n of gruppen.flat()) {
+      const id = teamId(n);
+      const spieler = kader(id);
+      for (const p of spieler) t.spieler(p);
+      t.e(ART.mannschaftGemeldet, { konkurrenz: 'c', id, name: n, spieler, fuehrer: spieler[0] });
+    }
+    t.e(ART.auslosung, { konkurrenz: 'c', phase: 'gruppen', zufall: 1, gruppen: gruppen.map((g) => g.map(teamId)) });
+    t.starten('c', 'gruppen');
+    expect(t.z.warnungen.map((w) => w.text)).toEqual([]);
+    // Begegnungsergebnisse aus SIM-TTT-001, S. 11. Satzpunkte je Teilspiel sind Testwerte.
+    const ergebnisse: Record<string, number[]> = {
+      'C11-C12': [1, 2], 'C11-C13': [1, 2], 'C12-C13': [1, 2],
+      'C21-C22': [0, 2], 'C21-C23': [1, 2], 'C22-C23': [0, 2],
+    };
+    for (const s of Object.values(t.z.konkurrenzen.c!.spiele)) {
+      const a = s.a!;
+      const b = s.b!;
+      for (const [mannschaft, gegner] of [[a, b], [b, a]] as const) {
+        const einzel = kader(mannschaft);
+        t.e(ART.mannschaftAufgestellt, { konkurrenz: 'c', spiel: s.id, mannschaft, gegner, einzel, doppel: [einzel] });
+      }
+      const paarung = [name(a), name(b)].sort();
+      const [links, rechts] = ergebnisse[paarung.join('-')]!;
+      const linkeSiege = [...Array(links).fill(true), ...Array(rechts).fill(false)];
+      for (const [i, linksSiegt] of linkeSiege.entries()) {
+        const ergebnis = linksSiegt === (name(a) === paarung[0]) ? sieg : niederlage;
+        t.e(ART.spielErgebnis, { konkurrenz: 'c', spiel: teilId(s.id, i + 1), a, b, ergebnis });
+      }
+      expect(t.z.konkurrenzen.c!.spiele[s.id]?.status).toBe('gespielt');
+    }
+    expect(Object.values(t.z.konkurrenzen.c!.spiele)).toHaveLength(6);
+    t.e(ART.teilnehmerAbgemeldet, { konkurrenz: 'c', id: teamId('C12') });
+    const plan = platzGruppenBilden(t.z.konkurrenzen.c!, true);
+    if (!plan.ok) throw new Error(plan.grund);
+    expect(plan.gruppen.map((g) => g.mitglieder.map(name).sort())).toEqual([['C13', 'C22', 'C23'], ['C11', 'C21']]);
+    t.e(ART.phaseGestartet, { konkurrenz: 'c', phase: 'ko', rueckzugUebergang: 'vakanz', gruppen: plan.gruppen.map((g) => g.mitglieder) });
+    const unterePaarung = Object.values(t.z.konkurrenzen.c!.spiele).find((s) =>
+      s.a && s.b && !s.gestrichen && [name(s.a), name(s.b)].sort().join('-') === 'C11-C21'
+    );
+    expect(unterePaarung?.status).toBe('offen');
   });
 
   it('Mannschaften wie beim TTT: Vorrunde Zweier-System, Platzierungsrunde Corbillon-Cup', () => {

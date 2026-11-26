@@ -79,6 +79,10 @@
   async function kopfSpeichern(e: SubmitEvent) {
     e.preventDefault();
     const datum = /^\d{4}-\d{2}-\d{2}$/.test(tDatum) ? tDatum : null;
+    if (datum && z.enddatum && datum > z.enddatum) {
+      zeige('kopf', false, T.turnierDatum.reihenfolge);
+      return;
+    }
     try {
       if (!lokal && token) await api.einstellungenSetzen(token, { turnier: id, name: tName.trim(), datum });
       await eintragen(ART.turnierUmbenannt, { name: tName.trim(), datum });
@@ -285,11 +289,11 @@
     <h3>{T.einstellungen.kopfTitel}</h3>
     <form onsubmit={kopfSpeichern} class="kopf-form">
       <label>{T.neu.name}<input bind:value={tName} minlength="2" maxlength="160" required /></label>
-      <div class="label-zeile"><label for="te-datum">{T.neu.datum}</label><Hilfe text={T.einstellungen.datumHilfe} /></div>
+      <div class="label-zeile"><label for="te-datum">{T.turnierDatum.start}</label><Hilfe text={T.einstellungen.datumHilfe} /></div>
       <input id="te-datum" type="date" bind:value={tDatum} data-testid="turnier-datum" />
-      <label for="te-ende">Enddatum – optional</label>
+      <div class="label-zeile"><label for="te-ende">{T.turnierDatum.ende}</label><Hilfe text={T.turnierDatum.endeHilfe} /></div>
       <input id="te-ende" type="date" min={tDatum} bind:value={tEnde} />
-      <small class="leise">Ergebnisse sind bis zum Ende dieses Tages (Europe/Berlin) möglich. Zum Verlängern ein späteres Enddatum speichern.</small>
+      {#if !tEnde}<small class="leise">{T.turnierDatum.offen}</small>{/if}
       <button type="submit" class="zweit" disabled={tName.trim().length < 2}>{T.app.speichern}</button>
     </form>
     {@render hinweis('kopf')}

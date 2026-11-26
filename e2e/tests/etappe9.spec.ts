@@ -255,7 +255,8 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   const einst = page.getByTestId('aufruf-einstellungen');
   await einst.locator('summary').click();
   await einst.getByTestId('automatisch').check();
-  await expect(page.getByTestId('tische').locator('li').first()).toContainText('–');
+  const tisch = page.getByTestId('tisch-1');
+  await expect(tisch.getByRole('button', { name: /Spielinformationen Tisch 1/ })).toHaveText(/Ben Netz.*Cem Netz|Cem Netz.*Ben Netz/);
   await expect(s.getByTestId('aufruf-hinweis')).toContainText('Tisch 1', { timeout: 20_000 });
   await layoutPruefen(s);
   await bild(s, '99-aufruf-hinweis');

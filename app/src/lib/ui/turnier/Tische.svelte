@@ -2,7 +2,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { ART } from '@shared/protokoll';
   import { T } from '../../texte';
-  import { anstehendeSpiele, automatischeAufrufe, beschaeftigt, freierTisch, name, rundeVon, tische, verliererAmTisch } from '../../engine/abfragen';
+  import { spielErgebnisText, anstehendeSpiele, automatischeAufrufe, beschaeftigt, freierTisch, name, rundeVon, tische, verliererAmTisch } from '../../engine/abfragen';
   import { spielerName, uhrzeitText, type Spiel } from '../../engine/modell';
   import { gelernteSatzMinuten, zeitplanGedrosselt, zeitplanSofort } from '../../engine/zeitplan';
   import { spielerVon, type TurnierZustand } from '../../engine/zustand';
@@ -327,7 +327,7 @@
             {@const offen = teile.find((x) => x.status === 'offen')}
             {#if offen}<div class="klein">Nächstes offenes Teilspiel {offen.nr}</div>{/if}
           {:else if s.ergebnis}
-            <strong>{ergebnisText(s.ergebnis)}</strong>
+            <strong>{spielErgebnisText(z, s, s.ergebnis)}</strong>
             <div class="klein">{s.ergebnis.saetze?.map(([a,b]) => a + ':' + b).join(' · ') ?? ''}</div>
           {:else}<span class="klein">Belegt · Ergebnis offen</span>{/if}
           {#if s.tisch2}<div class="leise klein">{T.tische.mitTisch(s.tisch === t.nr ? s.tisch2 : s.tisch!)}</div>{/if}
@@ -541,9 +541,17 @@
   .kopf { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .kopf strong { font-size: 1.15rem; }
   .marke.frei { color: var(--blau); border-color: var(--blau); }
-  .spielfeld { width: 100%; position: relative; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 12px; padding: 8px; min-height: 60px; margin: 6px 0; border: 3px double white; outline: 1px solid #165778; border-radius: 3px; background: linear-gradient(to bottom, transparent 49%, #ffffff80 49%, #ffffff80 51%, transparent 51%), #14577b; color: white; overflow-wrap: anywhere; }
-  .spielfeld::before { content: ''; position: absolute; inset: 0 auto 0 50%; border-left: 2px dashed white; }
-  .spielfeld span { position: relative; background: #14577b; padding: 2px; }
+  .tische {
+    --spielfeld-hintergrund: #14577b;
+    --spielfeld-markierung: #fff;
+    --spielfeld-linie: color-mix(in srgb, var(--spielfeld-markierung) 50%, transparent);
+  }
+  @media (prefers-color-scheme: dark) {
+    .tische { --spielfeld-hintergrund: #194766; --spielfeld-markierung: #e8edf3; }
+  }
+  .spielfeld { width: 100%; position: relative; display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 12px; padding: 8px; min-height: 60px; margin: 6px 0; border: 3px double var(--spielfeld-markierung); outline: 1px solid var(--spielfeld-hintergrund); border-radius: 3px; background: linear-gradient(to bottom, transparent 49%, var(--spielfeld-linie) 49%, var(--spielfeld-linie) 51%, transparent 51%), var(--spielfeld-hintergrund); color: var(--spielfeld-markierung); overflow-wrap: anywhere; }
+  .spielfeld::before { content: ''; position: absolute; inset: 0 auto 0 50%; border-left: 2px dashed var(--spielfeld-markierung); }
+  .spielfeld span { position: relative; background: var(--spielfeld-hintergrund); padding: 2px; }
   .spielfeld span:only-child { grid-column: span 2; justify-self: center; }
   .spielfeld.leer { opacity: .65; }
   .klein { font-size: 0.9rem; }

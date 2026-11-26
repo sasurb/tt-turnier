@@ -218,7 +218,7 @@ export function ergebnisGleich(x: Ergebnis, y: Ergebnis): boolean {
 }
 
 /** „3:1 (11:7, 9:11, 11:5, 12:10)“ – optional aus Sicht von B */
-export function ergebnisText(e: Ergebnis, ausSichtVon: Seite = 'a'): string {
+export function ergebnisText(e: Ergebnis, ausSichtVon: Seite = 'a', gewinnerName?: string): string {
   const b = ausSichtVon === 'b';
   // Mannschafts-Begegnung: gewonnene Spiele, Sätze in Klammern
   if (e.spiele) {
@@ -226,7 +226,7 @@ export function ergebnisText(e: Ergebnis, ausSichtVon: Seite = 'a'): string {
     return `${x}:${y} (${b ? `${e.satzB}:${e.satzA}` : `${e.satzA}:${e.satzB}`} Sätze)${e.art === 'kampflos' ? ' kampflos' : ''}`;
   }
   const stand = b ? `${e.satzB}:${e.satzA}` : `${e.satzA}:${e.satzB}`;
-  const zusatz = e.art === 'kampflos' ? ' kampflos' : e.art === 'aufgabe' && e.gewinner ? ` (Aufgabe, ${e.gewinner === ausSichtVon ? 'erste' : 'zweite'} Seite gewinnt)` : '';
+  const zusatz = e.art === 'kampflos' ? ' kampflos' : e.art === 'aufgabe' && e.gewinner ? ` (Aufgabe, ${gewinnerName || (e.gewinner === ausSichtVon ? 'erste Seite' : 'zweite Seite')} gewinnt)` : '';
   if (!e.saetze || e.art === 'kampflos') return stand + zusatz;
   const s = e.saetze.map(([x, y]) => (b ? `${y}:${x}` : `${x}:${y}`)).join(', ');
   return `${stand} (${s})${zusatz}`;

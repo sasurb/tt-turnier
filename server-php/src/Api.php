@@ -925,7 +925,9 @@ final class Api
                 [$s['konto_id'], $s['konto_id'], $s['konto_id']]
             );
         }
-        return ['turniere' => array_map([self::class, 'turnierAusgabe'], $zeilen)];
+        return ['turniere' => array_map(fn(array $t): array => self::turnierAusgabe($t) + [
+            'enddatum' => $this->turnierEnddatum($t['id'], (string)($t['datum'] ?? '')),
+        ], $zeilen)];
     }
 
     /** Grenzen für neue Turniere (Admin ausgenommen): je Sparte höchstens TURNIERE_JE_KONTO, je Konto und Tag TURNIERE_JE_TAG */
@@ -2448,6 +2450,10 @@ final class Api
             }
             if ($datum === null && $this->db->eine('SELECT id FROM anmeldungen WHERE turnier_id = ? LIMIT 1', [$t['id']]) !== null) {
                 throw new ApiFehler('konflikt', 'Es gibt Online-Anmeldungen – das Datum bleibt gesetzt (die Löschfrist richtet sich danach).');
+            }
+            $ende = $this->turnierEnddatum((string)$t['id'], (string)($t['datum'] ?? ''));
+            if ($datum !== null && $ende !== null && $datum > $ende) {
+                throw new ApiFehler('ungueltig', 'Das Startdatum darf nicht nach dem Enddatum liegen.');
             }
             $this->db->ausfuehren('UPDATE turniere SET datum = ? WHERE id = ?', [$datum, $t['id']]);
         }

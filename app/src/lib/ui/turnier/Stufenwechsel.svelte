@@ -65,12 +65,14 @@
       <h3>{T.konk.platzRunde}<Hilfe text={T.konk.aufsteigerPlatzHilfe} /></h3>
       <p class="leise">{T.konk.platzRundeText}</p>
       {#if k.vorHauptrunde?.length}
-        <label>Rückzug nach der Vorrunde
-          <select bind:value={vakanz}>
-            <option value={false}>Nachrücken</option>
-            <option value={true}>Platz frei lassen</option>
-          </select>
-        </label>
+        <div class="label-zeile">
+          <label for="vakanz-{k.id}">{T.konk.rueckzugUebergang}</label>
+          <Hilfe text={T.konk.rueckzugUebergangHilfe} />
+        </div>
+        <select id="vakanz-{k.id}" bind:value={vakanz}>
+          <option value={false}>{T.konk.nachruecken}</option>
+          <option value={true}>{T.konk.platzFrei}</option>
+        </select>
       {/if}
       {#if !platzPlan.ok}
         <p class="meldung info">{platzPlan.grund}</p>

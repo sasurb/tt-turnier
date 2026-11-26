@@ -5,7 +5,7 @@
   import { name, vorgabeVon } from '../../engine/abfragen';
   import { istRundenModus } from '../../engine/runden';
   import { ergebnisText, ergebnisWerten, gewinnSaetze, satzAusVerliererpunkten } from '../../engine/ergebnis';
-  import { einstFuer, festeSaetzeVon, type ErgebnisEingabe, type ErgebnisEintrag, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
+  import { einstFuer, festeSaetzeVon, type Ergebnis, type ErgebnisEingabe, type ErgebnisEintrag, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
   import type { TurnierZustand } from '../../engine/zustand';
 
   let {
@@ -53,6 +53,10 @@
   const bestOf = $derived(einstFuer(k, spiel).bestOf);
   const gewinn = $derived(gewinnSaetze(bestOf));
   const vorgabe = $derived(namen ? null : vorgabeVon(z, k, spiel));
+  function formatiertesErgebnis(e: Ergebnis): string {
+    const sieger = e.gewinner ? (namen?.[e.gewinner === 'a' ? 0 : 1] ?? name(z, spiel[e.gewinner], k)) : undefined;
+    return ergebnisText(e, 'a', sieger);
+  }
   const nameA = $derived((namen ? namen[0] : name(z, spiel.a)) + (meineSeite === 'a' ? ` (${T.erg.du})` : ''));
   const nameB = $derived((namen ? namen[1] : name(z, spiel.b)) + (meineSeite === 'b' ? ` (${T.erg.du})` : ''));
   const kannEintragen = $derived(darf && (spiel.status === 'offen' || spiel.status === 'gespielt') && !spiel.gestrichen && !spiel.gesperrt && !(spiel.kampflosDurchRueckzug && !spiel.eintrag));
@@ -208,7 +212,7 @@
 
   {#if spiel.ergebnis}
     <div class="aktuell">
-      <strong class="gross">{ergebnisText(spiel.ergebnis)}</strong>
+      <strong class="gross">{formatiertesErgebnis(spiel.ergebnis)}</strong>
       {#if spiel.stand}<span class="marke stand-{spiel.stand}">{T.spiele[spiel.stand]}</span>{/if}
       {#if spiel.kampflosDurchRueckzug}<span class="marke">{T.spiele.kampflosRueckzug}</span>{/if}
       {#if spiel.gestrichen}<span class="marke">{T.spiele.gestrichen}</span>{/if}
@@ -222,14 +226,14 @@
     <ul class="liste">
       {#each spiel.alternativen as alt (alt.ereignis)}
         <li class="reihe zwischen">
-          <span><strong>{ergebnisText(alt.ergebnis)}</strong><br /><span class="leise">{vonText(alt)}</span></span>
+          <span><strong>{formatiertesErgebnis(alt.ergebnis)}</strong><br /><span class="leise">{vonText(alt)}</span></span>
           <button class="klein" disabled={sendet} onclick={() => senden(ART.spielEntschieden, { ereignis: alt.ereignis })}>{T.erg.entscheiden}</button>
         </li>
       {/each}
     </ul>
   {:else if entscheidet && spiel.stand === 'angefochten' && spiel.eintrag}
     <p>{T.erg.entscheidenText}</p>
-    <button class="breit" disabled={sendet} onclick={() => senden(ART.spielEntschieden, { ereignis: spiel.eintrag!.ereignis })}>{T.erg.entscheiden}: {ergebnisText(spiel.eintrag.ergebnis)}</button>
+    <button class="breit" disabled={sendet} onclick={() => senden(ART.spielEntschieden, { ereignis: spiel.eintrag!.ereignis })}>{T.erg.entscheiden}: {formatiertesErgebnis(spiel.eintrag.ergebnis)}</button>
   {/if}
 
   {#if gegnerHatEingetragen && spiel.stand === 'eingetragen' && !formOffen}
@@ -334,7 +338,7 @@
 
       <div class="vorschau" aria-live="polite">
         {#if wertung.ok}
-          <strong>{ergebnisText(wertung.ergebnis)}</strong> – {wertung.ergebnis.gewinner === null ? T.erg.unentschieden : T.erg.gewinnt(wertung.ergebnis.gewinner === 'a' ? name(z, spiel.a) : name(z, spiel.b))}
+          <strong>{formatiertesErgebnis(wertung.ergebnis)}</strong> – {wertung.ergebnis.gewinner === null ? T.erg.unentschieden : T.erg.gewinnt(wertung.ergebnis.gewinner === 'a' ? name(z, spiel.a) : name(z, spiel.b))}
         {:else}
           <span class="leise">{wertung.fehler}</span>
         {/if}

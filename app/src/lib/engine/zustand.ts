@@ -948,6 +948,10 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
     case ART.turnierAngelegt:
     case ART.turnierUmbenannt: {
       if (e.art === ART.turnierUmbenannt && !nurLeitung()) break;
+      if (e.art === ART.turnierUmbenannt && typeof d.datum === 'string' && z.enddatum && d.datum > z.enddatum) {
+        warnen('Das Startdatum darf nicht nach dem Enddatum liegen.');
+        break;
+      }
       if (typeof d.name === 'string') z.name = d.name;
       if (typeof d.datum === 'string' || d.datum === null) z.datum = d.datum as string | null;
       break;

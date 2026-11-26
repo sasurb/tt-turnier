@@ -2138,6 +2138,8 @@ $frist = ereignis('frist-0001', 'turnier.daten', ['enddatum' => '2026-12-06']);
 $rechtzeitig = array_replace(ereignis('frist-0002', 'spiel.ergebnis'), ['zeit' => '2026-12-06T22:55:00Z']);
 [, $aFrist] = rufe($apiFrist, 'POST', 'events', ['ereignisse' => [$frist, $rechtzeitig]], $tokenFrist, $frageFrist);
 pruefe(count($aFrist['angenommen']) === 2, 'V-002: am letzten Tag bis Mitternacht eingeben');
+[$s] = rufe($apiFrist, 'POST', 'turnier.einstellungen', ['turnier' => $idFrist, 'datum' => '2026-12-07'], $tokenFrist);
+pruefe($s === 400, 'V-002: gespeichertes Enddatum verhindert ein späteres Startdatum');
 $zeit = strtotime('2026-12-06T23:10:00Z');
 $offline = array_replace($rechtzeitig, ['id' => 'frist-0003']);
 $zuSpaet = array_replace($rechtzeitig, ['id' => 'frist-0004', 'zeit' => '2026-12-06T23:05:00Z']);
