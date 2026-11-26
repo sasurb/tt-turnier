@@ -126,6 +126,8 @@ export const HANDBUCH: HandbuchKapitel[] = [
           '2. Unter „Konkurrenzen“ ganz oben festlegen, welche Angaben du führst (TTR, Klasse, Geschlecht, Jahrgang) und wie viele Tische es gibt; darunter die Konkurrenzen mit Modus, Gewinnsätzen und Wertung anlegen.',
           '3. Unter „Teilnehmer“ alle Teilnehmenden anlegen – aus dem Spielerpool, über die Online-Anmeldung oder von Hand. Mit „Gleich melden für“ landen sie direkt in den angehakten Konkurrenzen.',
           '4. Darunter, unter „Teilnehmer je Konkurrenz“, für jede Konkurrenz festlegen, wer mitspielt – nicht jeder spielt überall mit. Im Doppel bildest du dort die Paare, bei Mannschaften die Teams.',
+          'Das Startdatum und ein optionales Enddatum lassen sich unter „Einstellungen“ ändern. Das Enddatum gilt bis zum Tagesende in Europe/Berlin. Zum Verlängern speichert die Leitung ein späteres Datum.',
+          'Wer ein Konto erstellt, erhält zuerst einen Bestätigungslink per E-Mail. Über diesen Link lässt sich die Registrierung innerhalb von 24 Stunden abschließen.',
           '5. Unter „Konkurrenzen“ auslosen, Vorschau prüfen, starten. Was Spieler und Zuschauer sehen, stellst du unter „Einstellungen“ ein.',
           '6. Deinen Spielerpool für alle Turniere pflegst du im Reiter „Spielerpool“ (auch CSV-Import und -Export).',
         ],
@@ -210,6 +212,8 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Auslosen',
         text: [
+          'Nach Abschluss der Vorrunde kann die Leitung die nächste Stufe auch im Reiter „Spiele“ starten.',
+          'Rechtzeitig offline erfasste Ergebnisse, die erst nach dem Enddatum eintreffen, prüft die Turnierleitung unter „Spiele“. Offene Streitfälle machen die Wertung vorläufig.',
           'Unter „Konkurrenzen“ → Konkurrenz → „Auslosen“: Die App schlägt Gruppengröße und Setzung (nach TTR) vor. In der Vorschau kannst du Spieler tauschen, bevor du startest.',
           'Freilose gehen zuerst an Gesetzte, Setzpositionen 1 oben, 2 unten, 3 und 4 gelost.',
         ],
@@ -263,6 +267,7 @@ export const HANDBUCH: HandbuchKapitel[] = [
         titel: 'Aufrufen',
         text: [
           'Ein Spiel auf einen freien Tisch ziehen (Griff ⠿) oder unter „Nächste Spiele“ antippen. Auf Wunsch belegt das Gerät freie Tische automatisch, berücksichtigt die Mindestpause und sagt den Aufruf an.',
+          'Die grafische Tischfläche zeigt die Paarung und die Belegung. Tippe auf den Tisch, um das Spiel zu öffnen. Berechtigte Personen können ein Spiel auf einen freien Tisch verschieben.',
           'Wer gerade an einem Tisch spielt, wird nicht ein zweites Mal aufgerufen. Gesperrte Tische (nur Leitung) bleiben frei.',
         ],
       },

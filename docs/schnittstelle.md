@@ -37,7 +37,9 @@ Die Typen stehen in [`shared/protokoll.ts`](../shared/protokoll.ts).
 | POST | `logout` | Token | Token ungültig machen |
 | GET | `ich` | Token | Rolle, Name, ggf. Konto bzw. `spieler` (Spieler-ID) |
 | POST | `passwort.aendern` | Konto | `{alt, neu}`; beendet andere Sitzungen |
-| POST | `registrieren` | offen | `{name, email, passwort, website}` → `{token, konto}`; `website` ist ein Fangfeld und muss leer sein |
+| GET | `registrieraufgabe` | offen | `{aufgabe, bits}` mit an IP-Adresse und Schwierigkeit gebundener Signatur, 10 Minuten gültig |
+| POST | `registrierlink` | offen | `{email, aufgabe, nonce, einladung?, website?}` → `{ok}`; sendet einen 24 Stunden gültigen Bestätigungslink |
+| POST | `registrieren` | Bestätigungslink | `{name, email, passwort, nachweis, volljaehrig, bedingungen, einladung?, verein?, sparte?, website?}` → `{token, konto}`; `nachweis` ist Pflicht, `website` ist ein Fangfeld und muss leer sein |
 | POST | `passwort.vergessen` | offen | `{email}` → immer `{ok}`; bei bekanntem Konto Mail mit Link `…#/zuruecksetzen/<schlüssel>` |
 | POST | `passwort.zuruecksetzen` | Schlüssel | `{schluessel, neu}` → `{token, konto}`; Link gilt 1 Stunde, einmalig; beendet alle Sitzungen |
 | POST | `konto.loeschen` | Konto | `{passwort}`; löscht Konto, Turniere, Ereignisse, Sitzungen (nicht Admin) |
@@ -444,3 +446,25 @@ immer erlaubt. Zuschauer bekommen Begleitpersonen als `{ vorname: "Begleitperson
 Mails mit geheimen Links landen nie in der Warteschlange; das Server-Protokoll enthält keine Adressen.
 Rundmail- und Ergebnis-Mails gehen nur bei freigegebener Sparte raus (sonst nur Posteingang); Antwortadresse ist nur
 das sendende Konto. Verteiler-Bestätigungslinks gelten einmal.
+
+
+## Schema 11
+
+Die Rechenaufgabe verlangt `bits` führende Nullbits in SHA-256 von
+`${aufgabe}:${nonce}`. Der Server verwendet standardmäßig 17 Bit und begrenzt
+`registrieraufgabe_bits` in der Serverkonfiguration auf 12–20 Bit.
+
+`registrierlinks` speichert Prüfwerte für Bestätigungslinks, ihre einmalige Verwendung
+und die Versandbegrenzung. Ungültige, abgelaufene oder bereits verbrauchte Nachweise
+ergeben `ungueltig` (400). Doppelte Adressen ergeben erst nach gültigem
+Adressnachweis `konflikt` (409). Versandgrenzen ergeben `zu_viele_versuche` (429);
+ohne eingerichteten Mailversand liefert `registrierlink` `nicht_eingerichtet` (503).
+
+`turnier.daten` unterstützt `enddatum` als ISO-Kalendertag oder `null`.
+Das Ende gilt einschließlich des angegebenen Tages in der Zeitzone Europe/Berlin.
+Der Server speichert nach Fristablauf empfangene Ergebnisse, die rechtzeitig erfasst
+wurden, als `spiel.ergebnis_spaet`. Der Inhalt entspricht `spiel.ergebnis`.
+Die Leitung entscheidet mit `spiel.spaet_geprueft` und
+`{ereignis, uebernehmen}`. Ungültige Datumswerte und nach Turnierende erfasste
+Ergebnisse, Spielaufrufe und Phasenstarts werden beim Ereignisversand einzeln
+als `ungueltig` zurückgemeldet.

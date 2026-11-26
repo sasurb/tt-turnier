@@ -17,7 +17,7 @@ async function ohneServer(page: Page) {
 async function bild(page: Page, name: string) {
   const ordner = `bilder/${test.info().project.name}`;
   mkdirSync(ordner, { recursive: true });
-  await page.screenshot({ path: `${ordner}/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `${ordner}/${name}.png`, fullPage: true, scale: 'css' });
 }
 
 test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, Konto löschen', async ({ page, browser }, info) => {
