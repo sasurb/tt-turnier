@@ -647,12 +647,15 @@ public final class KernTest {
                 "name", "Admin", "email", "admin-" + zuf + "@example.org", "passwort", "admin-passwort"), null);
         }
         String mail = "zentrale-" + zuf + "@example.org";
-        String aufgabe = (String) o.rufe(basis, "registrieraufgabe", null, null, null).get("aufgabe");
+        Map<String, Object> rechenaufgabe = o.rufe(basis, "registrieraufgabe", null, null, null);
+        String aufgabe = (String) rechenaufgabe.get("aufgabe");
+        int bits = ((Number) rechenaufgabe.getOrDefault("bits", 12L)).intValue();
         int nonce = 0;
         java.security.MessageDigest sha = java.security.MessageDigest.getInstance("SHA-256");
         while (true) {
             byte[] h = sha.digest((aufgabe + ":" + nonce).getBytes(StandardCharsets.UTF_8));
-            if (h[0] == 0 && (h[1] & 255) < 16) break;
+            int praefix = ((h[0] & 255) << 16) | ((h[1] & 255) << 8) | (h[2] & 255);
+            if ((praefix >>> (24 - bits)) == 0) break;
             nonce++;
         }
         o.rufe(basis, "registrierlink", null, Json.obj("email", mail, "aufgabe", aufgabe, "nonce", nonce), null);

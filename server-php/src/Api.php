@@ -351,15 +351,24 @@ final class Api
     public function begrenzen(string $schluessel, int $max, int $fenster, string $meldung): void
     {
         $eigene = !$this->db->inTransaktion();
-        if ($eigene) $this->db->anfangen();
+        // Die Registrierung zählt innerhalb ihrer bereits serialisierten Reservierungstransaktion.
+        // Sonst erst den einzelnen Schlüssel sperren und dann die Transaktion beginnen, damit
+        // MySQL für die Zählung die letzten bestätigten Versuche sieht.
+        $mitSperre = $eigene && $this->db->treiber === 'mysql';
+        $name = "SHA2(CONCAT(DATABASE(), '|tt-versuch|', ?), 256)";
+        if ($mitSperre && (int)($this->db->eine("SELECT GET_LOCK($name, 5) AS gesperrt", [$schluessel])['gesperrt'] ?? 0) !== 1) {
+            throw new ApiFehler('zu_viele_versuche', $meldung);
+        }
         try {
-            if ($this->db->treiber === 'mysql') $this->db->eine("SELECT wert FROM meta WHERE schluessel = 'schema' FOR UPDATE");
+            if ($eigene) $this->db->anfangen();
             if ($this->anzahlVersuche($schluessel, $fenster) >= $max) throw new ApiFehler('zu_viele_versuche', $meldung);
             $this->fehlversuch($schluessel);
             if ($eigene) $this->db->festschreiben();
         } catch (\Throwable $e) {
             if ($eigene) $this->db->zurueckrollen();
             throw $e;
+        } finally {
+            if ($mitSperre) $this->db->eine("SELECT RELEASE_LOCK($name)", [$schluessel]);
         }
     }
 
@@ -1837,10 +1846,21 @@ final class Api
 
     /* ---------------- Konto selbst verwalten ---------------- */
 
+    private function registrierBits(): int
+    {
+        return max(12, min(20, (int)($this->config['registrieraufgabe_bits'] ?? 17)));
+    }
+
+    private function registrierSignatur(string $wert, string $ip, int $bits): string
+    {
+        return hash_hmac('sha256', $wert . '|' . $ip . '|' . $bits, $this->geheimnis());
+    }
+
     private function registrieraufgabe(Anfrage $a): array
     {
         $wert = $this->jetzt() . '.' . bin2hex(random_bytes(16));
-        return ['aufgabe' => $wert . '.' . hash_hmac('sha256', $wert . '|' . $a->ip, $this->geheimnis())];
+        $bits = $this->registrierBits();
+        return ['aufgabe' => $wert . '.' . $this->registrierSignatur($wert, $a->ip, $bits), 'bits' => $bits];
     }
 
     private function registrierlink(Anfrage $a): array
@@ -1849,20 +1869,20 @@ final class Api
             throw new ApiFehler('nicht_eingerichtet', 'Für die Registrierung muss der Mailversand eingerichtet sein.');
         }
         $this->fangfeld($a);
-        $this->begrenzen('registrierlink|' . $a->ip, 15, 3600, 'Bitte später erneut versuchen.');
         $email = $this->email($a);
-        $einladung = $a->rumpf['einladung'] ?? '';
+        $aufgabe = $a->rumpf['aufgabe'] ?? null;
+        $nonce = $a->rumpf['nonce'] ?? null;
+        $bits = $this->registrierBits();
+        if (!is_string($aufgabe) || !preg_match('/^(\d{10})\.([a-f0-9]{32})\.([a-f0-9]{64})$/D', $aufgabe, $m)
+            || (int)$m[1] < $this->jetzt() - 600 || (int)$m[1] > $this->jetzt()
+            || !hash_equals($this->registrierSignatur($m[1] . '.' . $m[2], $a->ip, $bits), $m[3])
+            || !is_int($nonce) || $nonce < 0 || (hexdec(substr(hash('sha256', $aufgabe . ':' . $nonce), 0, 6)) >> (24 - $bits)) !== 0) {
+            throw new ApiFehler('ungueltig', 'Bitte die Registrierung erneut starten.');
+        }
+        $einladung = array_key_exists('einladung', $a->rumpf) ? $a->rumpf['einladung'] : '';
         if (!is_string($einladung)) throw new ApiFehler('ungueltig', 'Ungültige Einladung.');
         if ($einladung !== '') {
             $this->sparten->einladungFuerRegistrierung(new Anfrage('POST', '', [], ['schluessel' => $einladung], null, $a->ip), $email);
-        }
-        $aufgabe = $a->rumpf['aufgabe'] ?? null;
-        $nonce = $a->rumpf['nonce'] ?? null;
-        if (!is_string($aufgabe) || !preg_match('/^(\d{10})\.([a-f0-9]{32})\.([a-f0-9]{64})$/D', $aufgabe, $m)
-            || (int)$m[1] < $this->jetzt() - 600 || (int)$m[1] > $this->jetzt()
-            || !hash_equals(hash_hmac('sha256', $m[1] . '.' . $m[2] . '|' . $a->ip, $this->geheimnis()), $m[3])
-            || !is_int($nonce) || $nonce < 0 || !str_starts_with(hash('sha256', $aufgabe . ':' . $nonce), '000')) {
-            throw new ApiFehler('ungueltig', 'Bitte die Registrierung erneut starten.');
         }
         $adresse = hash_hmac('sha256', strtolower($email), $this->geheimnis());
         $jetzt = $this->jetzt();
@@ -1878,6 +1898,7 @@ final class Api
             if ((int)$last['anzahl'] >= 3 || ($last['letzte'] !== null && (int)$last['letzte'] > $jetzt - 900)) {
                 throw new ApiFehler('zu_viele_versuche', 'Ein Link wurde bereits angefordert. Neuversand nach 15 Minuten, höchstens dreimal in 24 Stunden.');
             }
+            $this->begrenzen('registrierlink|' . $a->ip, 15, 3600, 'Bitte später erneut versuchen.');
             $this->db->ausfuehren('INSERT INTO registrierlinks (schluessel_hash, adresse_hash, einladung_hash, aufgabe_hash, gesendet) VALUES (?, ?, ?, ?, ?)',
                 [hash('sha256', $token), $adresse, hash('sha256', $einladung), hash('sha256', $aufgabe), $jetzt]);
             $this->db->festschreiben();
@@ -1897,10 +1918,6 @@ final class Api
         if (!$this->eingerichtet()) {
             throw new ApiFehler('nicht_eingerichtet', 'Der Server ist noch nicht eingerichtet.');
         }
-        $schluessel = 'registrieren|' . $a->ip;
-        // 5 je Stunde und Anschluss; nur Testumgebungen setzen in config.php einen höheren Wert (alle Tests laufen über 127.0.0.1)
-        $max = max(1, (int)($this->config['registrieren_je_stunde'] ?? 5));
-        $this->begrenzen($schluessel, $max, 3600, 'Von diesem Anschluss wurden gerade viele Konten angelegt. Bitte später erneut versuchen.');
         $this->fangfeld($a);
         $name = $this->text($a, 'name', 2, 120);
         $email = $this->email($a);
@@ -1913,18 +1930,40 @@ final class Api
             throw new ApiFehler('ungueltig', 'Bitte den Nutzungsbedingungen (mit Vereinbarung zur Auftragsverarbeitung) zustimmen.');
         }
         // Mit Einladung: Konto tritt der Sparte/dem Turnier/dem Ausschuss bei; sonst neue Sparte mit Verein
-        $einladung = is_string($a->rumpf['einladung'] ?? null) ? $this->sparten->einladungFuerRegistrierung(
-            new Anfrage('POST', '', [], ['schluessel' => $a->rumpf['einladung']], null, $a->ip), $email) : null;
+        $einladungSchluessel = array_key_exists('einladung', $a->rumpf) ? $a->rumpf['einladung'] : '';
+        if (!is_string($einladungSchluessel)) {
+            throw new ApiFehler('ungueltig', 'Ungültige Einladung.');
+        }
+        $einladung = $einladungSchluessel !== '' ? $this->sparten->einladungFuerRegistrierung(
+            new Anfrage('POST', '', [], ['schluessel' => $einladungSchluessel], null, $a->ip), $email) : null;
         $verein = $einladung === null ? (is_string($a->rumpf['verein'] ?? null) && trim($a->rumpf['verein']) !== '' ? $this->text($a, 'verein', 2, 160) : $name) : '';
         $sparteName = $einladung === null ? (is_string($a->rumpf['sparte'] ?? null) && trim($a->rumpf['sparte']) !== '' ? $this->text($a, 'sparte', 2, 120) : 'Tischtennis') : '';
-        $this->db->anfangen();
+        $nachweis = $a->rumpf['nachweis'] ?? '';
+        $ungueltig = 'Bitte die Registrierung über den gültigen Link aus deiner E-Mail abschließen.';
+        if (!is_string($nachweis) || !preg_match('/^[a-f0-9]{64}$/D', $nachweis)) {
+            throw new ApiFehler('ungueltig', $ungueltig);
+        }
+        $bedingung = 'verbraucht = 0 AND schluessel_hash = ? AND adresse_hash = ? AND einladung_hash = ? AND gesendet > ?';
+        $parameter = [hash('sha256', $nachweis), hash_hmac('sha256', strtolower($email), $this->geheimnis()), hash('sha256', $einladungSchluessel), $this->jetzt() - self::TAG];
+        if (!$this->db->eine("SELECT 1 FROM registrierlinks WHERE $bedingung", $parameter)) {
+            throw new ApiFehler('ungueltig', $ungueltig);
+        }
+        $schluessel = 'registrieren|' . $a->ip;
+        // 5 je Stunde und Anschluss; nur Testumgebungen setzen in config.php einen höheren Wert (alle Tests laufen über 127.0.0.1)
+        $max = max(1, (int)($this->config['registrieren_je_stunde'] ?? 5));
+        // Auch parallele Registrierungen desselben Anschlusses sehen den zuletzt
+        // bestätigten Zählerstand. SQLite serialisiert die Schreibtransaktion selbst.
+        $sperre = "SHA2(CONCAT(DATABASE(), '|tt-versuch|', ?), 256)";
+        $mysql = $this->db->treiber === 'mysql';
+        if ($mysql && (int)($this->db->eine("SELECT GET_LOCK($sperre, 5) AS ok", [$schluessel])['ok'] ?? 0) !== 1) {
+            throw new ApiFehler('zu_viele_versuche', 'Bitte die Registrierung später erneut versuchen.');
+        }
         try {
-            $nachweis = $a->rumpf['nachweis'] ?? '';
-            if (!is_string($nachweis) || !preg_match('/^[a-f0-9]{64}$/D', $nachweis) ||
-                $this->db->ausfuehren('UPDATE registrierlinks SET verbraucht = 1 WHERE verbraucht = 0 AND schluessel_hash = ? AND adresse_hash = ? AND einladung_hash = ? AND gesendet > ?',
-                    [hash('sha256', $nachweis), hash_hmac('sha256', strtolower($email), $this->geheimnis()), hash('sha256', $a->rumpf['einladung'] ?? ''), $this->jetzt() - self::TAG]) !== 1) {
-                throw new ApiFehler('ungueltig', 'Bitte die Registrierung über den gültigen Link aus deiner E-Mail abschließen.');
+            $this->db->anfangen();
+            if ($this->db->ausfuehren("UPDATE registrierlinks SET verbraucht = 1 WHERE $bedingung", $parameter) !== 1) {
+                throw new ApiFehler('ungueltig', $ungueltig);
             }
+            $this->begrenzen($schluessel, $max, 3600, 'Von diesem Anschluss wurden gerade viele Konten angelegt. Bitte später erneut versuchen.');
             $this->db->ausfuehren(
                 'INSERT INTO konten (name, email, passwort_hash, rolle, gesperrt, angelegt, aktiv, bedingungen) VALUES (?, ?, ?, ?, 0, ?, ?, ?)',
                 [$name, $email, password_hash($pw, PASSWORD_DEFAULT), 'veranstalter', $this->jetzt(), $this->jetzt(), self::BEDINGUNGEN_FASSUNG]
@@ -1945,6 +1984,8 @@ final class Api
         } catch (\Throwable $e) {
             $this->db->zurueckrollen();
             throw $e;
+        } finally {
+            if ($mysql) $this->db->eine("SELECT RELEASE_LOCK($sperre)", [$schluessel]);
         }
         $antwort = $this->anmeldungAusgeben((int)$k['id']);
 

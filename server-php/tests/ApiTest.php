@@ -27,7 +27,7 @@ function pruefe(bool $bedingung, string $text): void
     }
 }
 
-function neueApi(?TestMailer $mailer = null): Api
+function neueApi(?TestMailer $mailer = null, array $optionen = []): Api
 {
     global $zeit;
     $dsn = getenv('TT_TEST_DSN') ?: 'sqlite::memory:';
@@ -45,7 +45,7 @@ function neueApi(?TestMailer $mailer = null): Api
         'mail' => ['absender' => 'tt@example.org', 'admin' => 'betreiber@example.org'],
     ];
     $mailer ??= new TestMailer();
-    $api = new Api(new Datenbank($pdo), $config, function () use (&$zeit) {
+    $api = new Api(new Datenbank($pdo), $optionen + $config, function () use (&$zeit) {
         global $zeit;
         return $zeit;
     }, $mailer);
@@ -68,8 +68,8 @@ function mailAn(TestMailer $m, string $an): ?\TtTurnier\Mail
 function botAufgabe(Api $api, string $ip): array
 {
     [, $a] = rufe($api, 'GET', 'registrieraufgabe', null, null, [], $ip);
-    for ($n = 0; !str_starts_with(hash('sha256', $a['aufgabe'] . ':' . $n), '000'); $n++) {}
-    return $a + ['nonce' => $n];
+    for ($n = 0; (hexdec(substr(hash('sha256', $a['aufgabe'] . ':' . $n), 0, 6)) >> (24 - $a['bits'])) !== 0; $n++) {}
+    return ['aufgabe' => $a['aufgabe'], 'nonce' => $n];
 }
 
 /** @return array{0:int,1:array<string,mixed>} */
@@ -315,10 +315,25 @@ rufe($api, 'POST', 'setup', ['code' => 'einrichtung-123456', 'name' => 'Sascha',
 [$s, $d] = rufe($api, 'GET', 'info');
 pruefe($d['registrierung'] === true && $d['mail'] === true && $d['version'] === '0.18.0' && $d['nachrichten'] === true && $d['sparten'] === true && $d['aufgaben'] === true && $d['anmeldung'] === true && $d['codes'] === true && $d['kennungen'] === true, 'info: Registrierung, Mail, Codes und Kennungen bereit');
 $probe = ['name' => 'Probe', 'email' => 'probe@example.org', 'passwort' => 'probepass1', 'volljaehrig' => true, 'bedingungen' => true];
+[, $aufgabe] = rufe($api, 'GET', 'registrieraufgabe');
+pruefe($aufgabe['bits'] === 17, 'K6: 17 führende Nullbits sind der Standard');
+for ($schwacherNonce = 0; ; $schwacherNonce++) {
+    $p = hexdec(substr(hash('sha256', $aufgabe['aufgabe'] . ':' . $schwacherNonce), 0, 6));
+    if (($p >> 12) === 0 && ($p >> 7) !== 0) break;
+}
+[$s] = rufe($api, 'POST', 'registrierlink', ['email' => $probe['email'], 'aufgabe' => $aufgabe['aufgabe'], 'nonce' => $schwacherNonce]);
+pruefe($s === 400, 'K6: zwölf Nullbits genügen bei Schwierigkeit 17 nicht');
 [$s] = rufe($api, 'POST', 'registrieren', $probe, null, [], '10.11.0.1');
 pruefe($s === 400, 'F-019: ohne bestätigte Adresse kein Konto und keine Sitzung');
+for ($n = 0; $n < 16; $n++) {
+    [$s] = rufe($api, 'POST', 'registrierlink', ['email' => $probe['email'], 'aufgabe' => 'ungültig', 'nonce' => 0], null, [], '10.11.0.1');
+    pruefe($s === 400, 'Ungültige Rechenaufgabe verbraucht das Kontingent des Anschlusses nicht');
+}
 [$s] = rufe($api, 'POST', 'registrierlink', ['email' => $probe['email']] + botAufgabe($api, '10.11.0.1'), null, [], '10.11.0.1');
+pruefe($s === 200, 'Gültiger Nachweis funktioniert im selben Netz nach ungültigen Anfragen');
 preg_match('~#/aktivieren/([a-f0-9]{64})~', mailAn($mailer, $probe['email'])->text, $treffer);
+[$s, $d] = rufe($api, 'POST', 'registrieren', $probe + ['nachweis' => $treffer[1], 'einladung' => ['ungueltig']], null, [], '10.11.0.1');
+pruefe($s === 400 && $d['fehler'] === 'ungueltig', 'Einladung muss eine Zeichenkette sein');
 [$s] = rufe($api, 'POST', 'registrierlink', ['email' => $probe['email']] + botAufgabe($api, '10.11.0.1'), null, [], '10.11.0.1');
 pruefe($s === 429, 'F-023: Neuversand innerhalb von 15 Minuten begrenzt');
 [$s] = rufe($api, 'POST', 'registrieren', array_merge($probe, ['email' => 'andere@example.org', 'nachweis' => $treffer[1]]), null, [], '10.11.0.1');
@@ -332,6 +347,11 @@ $i = mailAn($mailer, 'betreiber@example.org');
 pruefe($i !== null && str_contains($i->betreff, 'TSV Nord') && str_contains($i->text, 'nord@example.org'), 'Info-Mail an den Administrator');
 [$s, $d] = registrierungMitMail($api, ['name' => 'Doppelt', 'email' => 'nord@example.org', 'passwort' => 'nordpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.2');
 pruefe($s === 400 && $d['fehler'] === 'ungueltig', 'Verbrauchter Nachweis kann kein zweites Konto für dieselbe Adresse anlegen');
+$zeit += 901;
+$vorher = count($mailer->mails);
+[$s, $d] = registrierungMitMail($api, ['name' => 'Doppelt', 'email' => 'nord@example.org', 'passwort' => 'nordpass1', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.2');
+pruefe(count($mailer->mails) === $vorher + 1 && $s === 409 && $d['fehler'] === 'konflikt',
+    'Ein frischer Nachweis wird verschickt, die doppelte Registrierung anschließend abgewiesen');
 [$s, $d] = registrierungMitMail($api, ['name' => 'Bot', 'email' => 'bot@example.org', 'passwort' => 'botpass12', 'website' => 'http://spam', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.3');
 pruefe($s === 400, 'Fangfeld ausgefüllt: abgewiesen');
 [$s, $d] = registrierungMitMail($api, ['name' => 'Kurz', 'email' => 'kurz@example.org', 'passwort' => 'kurz', 'volljaehrig' => true, 'bedingungen' => true], null, [], '10.1.0.4');
@@ -2129,6 +2149,60 @@ pruefe($artenFrist['frist-0002'] === 'spiel.ergebnis' && $artenFrist['frist-0003
 $verlaengern = ereignis('frist-0005', 'turnier.daten', ['enddatum' => '2026-12-07']);
 [, $aFrist] = rufe($apiFrist, 'POST', 'events', ['ereignisse' => [$verlaengern, $zuSpaet]], $tokenFrist, $frageFrist);
 pruefe(count($aFrist['angenommen']) === 2, 'V-002: nach Verlängerung neue Ergebnisse annehmen');
+
+$apiBits = neueApi(null, ['registrieraufgabe_bits' => 19]);
+[, $aufgabe] = rufe($apiBits, 'GET', 'registrieraufgabe');
+pruefe($aufgabe['bits'] === 19, 'K6: Schwierigkeit ist in der Server-Konfiguration einstellbar');
+
+if (function_exists('pcntl_fork')) {
+    echo "F-028: parallele Begrenzung\n";
+    $echtDsn = getenv('TT_TEST_DSN') ?: '';
+    $datei = $echtDsn === '' || $echtDsn === 'sqlite::memory:' ? tempnam(sys_get_temp_dir(), 'tt-limit-') : null;
+    $limitDsn = $datei ? 'sqlite:' . $datei : $echtDsn;
+    $oeffnen = static function () use ($limitDsn, $zeit): Api {
+        $pdo = new PDO($limitDsn, getenv('TT_TEST_USER') ?: null, getenv('TT_TEST_PASS') ?: null);
+        return new Api(new Datenbank($pdo), [], static fn(): int => $zeit, new TestMailer());
+    };
+    // Schema vor den parallelen Anfragen bereitstellen.
+    $start = $oeffnen();
+    rufe($start, 'GET', 'info');
+    unset($start);
+    $praefix = 'test-parallel-' . bin2hex(random_bytes(8));
+    $pids = [];
+    try {
+        for ($i = 0; $i < 12; $i++) {
+            $gruppe = $i % 2;
+            $pid = pcntl_fork();
+            if ($pid === -1) throw new RuntimeException('Testprozess konnte nicht gestartet werden.');
+            if ($pid === 0) {
+                try {
+                    $parallel = $oeffnen();
+                    usleep(30_000);
+                    $parallel->begrenzen($praefix . '-' . $gruppe, 3, 60, 'Testlimit');
+                    exit(0);
+                } catch (\TtTurnier\ApiFehler $e) {
+                    exit($e->code_ === 'zu_viele_versuche' ? 29 : 1);
+                } catch (Throwable $e) {
+                    fwrite(STDERR, $e->getMessage() . "\n");
+                    exit(1);
+                }
+            }
+            $pids[$pid] = $gruppe;
+        }
+        $zaehler = [[0 => 0, 29 => 0], [0 => 0, 29 => 0]];
+        foreach ($pids as $pid => $gruppe) {
+            pcntl_waitpid($pid, $status);
+            $code = pcntl_wifexited($status) ? pcntl_wexitstatus($status) : 1;
+            $zaehler[$gruppe][$code] = ($zaehler[$gruppe][$code] ?? 0) + 1;
+        }
+        pruefe($zaehler === [[0 => 3, 29 => 3], [0 => 3, 29 => 3]],
+            'F-028: bei je sechs parallelen Anfragen lassen beide Schlüssel jeweils genau drei zu');
+    } finally {
+        if ($datei) foreach ([$datei, $datei . '-wal', $datei . '-shm'] as $pfad) {
+            if (is_file($pfad)) unlink($pfad);
+        }
+    }
+}
 
 echo "\n$anzahl Prüfungen, $fehler Fehler\n";
 exit($fehler === 0 ? 0 : 1);

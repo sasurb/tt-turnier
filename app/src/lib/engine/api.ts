@@ -155,11 +155,15 @@ export class Api {
     return this.rufe<IchAntwort>('GET', 'ich', { token });
   }
   async registrierlink(email: string, einladung: string | null, website: string) {
-    const { aufgabe } = await this.rufe<{ aufgabe: string }>('GET', 'registrieraufgabe');
+    const { aufgabe, bits = 12 } = await this.rufe<{ aufgabe: string; bits?: number }>('GET', 'registrieraufgabe');
+    if (!Number.isInteger(bits) || bits < 12 || bits > 20) {
+      throw new ApiFehler('ungueltig', 'Die Rechenaufgabe für die Registrierung ist ungültig.');
+    }
     let nonce = 0;
     for (;;) {
       const hash = sha256(utf8ToBytes(aufgabe + ':' + nonce));
-      if (hash[0] === 0 && hash[1]! < 16) break;
+      const praefix = (hash[0]! << 16) | (hash[1]! << 8) | hash[2]!;
+      if ((praefix >>> (24 - bits)) === 0) break;
       if (++nonce % 256 === 0) await new Promise((fertig) => setTimeout(fertig, 0));
     }
     return this.rufe<{ ok: true }>('POST', 'registrierlink', { rumpf: { email, einladung: einladung ?? '', website, aufgabe, nonce } });

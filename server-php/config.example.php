@@ -13,6 +13,9 @@ return [
     ],
     // Einmaliger Code für die Einrichtungsseite (Administrator anlegen), mind. 12 Zeichen.
     'setup_code' => 'BITTE-AENDERN-mind-12-Zeichen',
+    // Registrierung: Zahl der führenden SHA-256-Nullbits (12 bis 20).
+    'registrieraufgabe_bits' => 17,
+
     // Adresse der App – für Links in Mails (Willkommen, Passwort zurücksetzen, Sicherung).
     'app_url' => 'https://example.org/tt-turnier/',
     'mail' => [
