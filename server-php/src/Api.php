@@ -1004,6 +1004,12 @@ final class Api
         return ['turnier' => self::turnierAusgabe($t), 'token' => $token, 'leitung' => self::codeAusgabe($leitung)];
     }
 
+    private function kennungsIdentitaet(array $c): string
+    {
+        $merkmale = json_encode([$c['turnier_id'], $c['rolle'], $c['bezug'], $c['code'], $c['angelegt']], JSON_THROW_ON_ERROR);
+        return 'kennung:' . $c['rolle'] . ':' . $c['bezug'] . ':' . hash_hmac('sha256', $merkmale, $this->geheimnis());
+    }
+
     /** Öffentlich. Mit Anmeldung steht in `rechte`, was diese Anmeldung im Turnier darf. */
     private function turnier(Anfrage $a): array
     {
@@ -1012,6 +1018,17 @@ final class Api
         if ($a->token !== null) {
             $s = $this->sitzung($a);
             $aus['rechte'] = $s === null ? null : $this->rechte($s, $t);
+            if ($s !== null && $aus['rechte'] !== null) {
+                if ($s['konto_id'] !== null) {
+                    $aus['identitaet'] = 'konto:' . $aus['rechte'] . ':' . $s['konto_id'];
+                } else {
+                    $c = $this->db->eine('SELECT c.* FROM codes c JOIN sitzungen s ON s.turnier_id = c.turnier_id
+                        AND s.rolle = c.rolle AND s.bezug = c.bezug
+                        WHERE s.token_hash = ? AND c.gesperrt = 0', [hash('sha256', $a->token)]);
+                    if ($c !== null) $aus['identitaet'] = $this->kennungsIdentitaet($c);
+                    else $aus['rechte'] = null;
+                }
+            }
             if ($aus['rechte'] === 'helfer') {
                 $aus['aufgaben'] = $this->aufgabenDerSitzung($s);
             }
@@ -1044,9 +1061,24 @@ final class Api
             $this->warten(min(2_000_000, 250_000 * ($fehl - self::ZUGANG_VERZOEGERN_AB + 1)));
         }
         $code = preg_replace('/\s+/', '', (string)($a->rumpf['code'] ?? ''));
-        $c = preg_match('/^[0-9]{8}$/', $code)
-            ? $this->db->eine('SELECT * FROM codes WHERE turnier_id = ? AND code = ? AND gesperrt = 0', [$t['id'], $code])
-            : null;
+        $c = null;
+        $token = null;
+        if (preg_match('/^[0-9]{8}$/', $code)) {
+            $this->db->anfangen();
+            try {
+                $sperre = $this->db->treiber === 'mysql' ? ' FOR UPDATE' : '';
+                $c = $this->db->eine('SELECT * FROM codes WHERE turnier_id = ? AND code = ? AND gesperrt = 0' . $sperre, [$t['id'], $code]);
+                if ($c !== null) {
+                    $rolle = (string)$c['rolle'];
+                    $helfer = $rolle === 'spieler' && (int)$c['helfer'] === 1;
+                    $token = $this->neuesToken(null, (string)$t['id'], $rolle, (string)$c['name'], (string)$c['bezug'], $helfer);
+                }
+                $this->db->festschreiben();
+            } catch (\Throwable $x) {
+                $this->db->zurueckrollen();
+                throw $x;
+            }
+        }
         if ($c === null) {
             $this->fehlversuch($schluessel);
             $this->fehlversuch($schluesselTurnier);
@@ -1056,10 +1088,8 @@ final class Api
             throw new ApiFehler('falsche_zugangsdaten', 'Diese Kennung passt nicht zu diesem Turnier.');
         }
         $this->versucheLoeschen($schluessel);
-        $rolle = (string)$c['rolle'];
-        $helfer = $rolle === 'spieler' && (int)$c['helfer'] === 1;
-        $token = $this->neuesToken(null, (string)$t['id'], $rolle, (string)$c['name'], (string)$c['bezug'], $helfer);
-        $antwort = ['token' => $token, 'rolle' => $rolle, 'name' => (string)$c['name']];
+        $antwort = ['token' => $token, 'rolle' => $rolle, 'name' => (string)$c['name'],
+            'identitaet' => $this->kennungsIdentitaet($c)];
         if ($rolle === 'spieler') {
             $antwort['spieler'] = (string)$c['bezug'];
             if ($helfer) {
@@ -3108,8 +3138,15 @@ final class Api
         self::nichtAufZentrale($t);
         [$rolle, $bezug] = $this->codeZiel($a);
         $this->codeLaden($t, $rolle, $bezug);
-        $this->db->ausfuehren('UPDATE codes SET code = ?, gesperrt = 0 WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$this->freierCode($t), $t['id'], $rolle, $bezug]);
-        $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        $this->db->anfangen();
+        try {
+            $this->db->ausfuehren('UPDATE codes SET code = ?, gesperrt = 0 WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$this->freierCode($t), $t['id'], $rolle, $bezug]);
+            $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+            $this->db->festschreiben();
+        } catch (\Throwable $x) {
+            $this->db->zurueckrollen();
+            throw $x;
+        }
         return ['code' => self::codeAusgabe($this->codeLaden($t, $rolle, $bezug))];
     }
 
@@ -3124,9 +3161,16 @@ final class Api
         if ($gesperrt) {
             $this->letzteLeitungPruefen($t, $rolle, $bezug);
         }
-        $this->db->ausfuehren('UPDATE codes SET gesperrt = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$gesperrt ? 1 : 0, $t['id'], $rolle, $bezug]);
-        if ($gesperrt) {
-            $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        $this->db->anfangen();
+        try {
+            $this->db->ausfuehren('UPDATE codes SET gesperrt = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$gesperrt ? 1 : 0, $t['id'], $rolle, $bezug]);
+            if ($gesperrt) {
+                $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+            }
+            $this->db->festschreiben();
+        } catch (\Throwable $x) {
+            $this->db->zurueckrollen();
+            throw $x;
         }
         return ['code' => self::codeAusgabe($this->codeLaden($t, $rolle, $bezug))];
     }
@@ -3138,8 +3182,15 @@ final class Api
         self::nichtAufZentrale($t);
         [$rolle, $bezug] = $this->codeZiel($a);
         $this->letzteLeitungPruefen($t, $rolle, $bezug);
-        $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
-        $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        $this->db->anfangen();
+        try {
+            $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
+            $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+            $this->db->festschreiben();
+        } catch (\Throwable $x) {
+            $this->db->zurueckrollen();
+            throw $x;
+        }
         $this->nachrichten->kennungEntfernt((string)$t['id'], $rolle, $bezug);
         return ['ok' => true];
     }

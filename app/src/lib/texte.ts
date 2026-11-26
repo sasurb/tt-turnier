@@ -1823,6 +1823,15 @@ export const T = {
     offen: 'Ohne Enddatum wird das Turnier mit offenem Ende angelegt',
     reihenfolge: 'Das Startdatum darf nicht nach dem gespeicherten Enddatum liegen. Speichere zuerst ein späteres Enddatum.',
   },
+  fremdeEintraege: {
+    titel: (n: number) => n === 1 ? 'Ein nicht gesendeter Eintrag einer früheren Anmeldung' : `${n} nicht gesendete Einträge früherer Anmeldungen`,
+    hilfe: 'Die Einträge liegen auf diesem Gerät und warten auf ihre ursprüngliche Anmeldung. Sichere sie als Datei, bevor du sie verwirfst.',
+    unbekannt: 'Unbekannter Autor',
+    anmelden: 'Mit dieser Anmeldung erneut anmelden',
+    sichern: 'Als Datei sichern',
+    verwerfen: 'Verwerfen',
+    bestaetigen: 'Diese nicht gesendeten Einträge dauerhaft von diesem Gerät löschen?',
+  },
   abgleichStatus: {
     lokal: 'Lokal gespeichert',
     ausstehend: 'Ausstehend',

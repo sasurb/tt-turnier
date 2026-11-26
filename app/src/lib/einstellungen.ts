@@ -32,6 +32,8 @@ export interface GemerktesTurnier {
    */
   kontoRolle?: Rolle | null;
   kontoId?: number | null;
+  kontoIdentitaet?: string | null;
+  kennungIdentitaet?: { bezug: string; tokenHash: string } | null;
 }
 
 export interface KontoSitzung {
@@ -142,6 +144,7 @@ export function turnierAbmelden(id: string) {
           helfer: null,
           aufgaben: null,
           wer: null,
+          kennungIdentitaet: null,
         }
       : t,
   );

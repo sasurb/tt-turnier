@@ -8,6 +8,8 @@
   import { app, fehlerText } from '../app.svelte';
   import { ApiFehler } from '../engine/api';
   import { TurnierSitzung } from '../engine/turnier';
+  import { SitzungsSpeicher } from '../engine/speicher';
+  import { identitaetsbindung, sitzungsbindung } from '../engine/sitzungsbindung';
   import type { AbgleichStatus } from '../engine/abgleich';
   import type { LokalesEreignis } from '../engine/typen';
   import { berechnen, fristgebundeneAktion, nachTurnierende, type TurnierZustand } from '../engine/zustand';
@@ -18,7 +20,7 @@
   import { codeAnzeige } from '../code';
   import { appBasis } from '../zentrale.svelte';
   import { nativ } from '../nativ';
-  import { erinnerungFaellig, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben, sicherungErstellen } from '../sicherung';
+  import { dateiAusgeben, erinnerungFaellig, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben, sicherungErstellen } from '../sicherung';
   import { etwasVerdeckt } from '../engine/abfragen';
   import { MAX_JE_RUECKNAHME, rueckgaengigBar, rueckgaengigPruefen } from '../engine/verlauf';
   import { aktuelleAktion } from '../aktion';
@@ -75,6 +77,7 @@
    * Turnier gespeichert wird.
    */
   let bestaetigteKontoRechte = $state<Rolle | null>(null);
+  let kontoIdentitaet = $state<string | null>(null);
   let rechteFuer = $state('');
   let zerstoert = false;
   const kontoRechte = $derived(app.sitzung?.token === rechteFuer ? bestaetigteKontoRechte : null);
@@ -103,23 +106,41 @@
           turnierAbmelden(id);
           eintrag = gemerktesTurnier(id) ?? null;
           zugangFehler = T.zugang.kennungUngueltig;
-        } else if (a.turnier.rechte === 'helfer' && a.turnier.aufgaben && eintrag && JSON.stringify(a.turnier.aufgaben) !== JSON.stringify(eintrag.aufgaben)) {
+        } else {
+          const aktuell = a.turnier.identitaet
+            ? { bezug: a.turnier.identitaet, tokenHash: sitzungsbindung(kennung)! }
+            : null;
+          if (eintrag && (eintrag.kennungIdentitaet?.bezug !== aktuell?.bezug || eintrag.kennungIdentitaet?.tokenHash !== aktuell?.tokenHash)) {
+            turnierMerken({ ...eintrag, kennungIdentitaet: aktuell });
+            eintrag = gemerktesTurnier(id) ?? null;
+          }
+        }
+        if (a.turnier.rechte === 'helfer' && a.turnier.aufgaben && eintrag && JSON.stringify(a.turnier.aufgaben) !== JSON.stringify(eintrag.aufgaben)) {
           // Aufgaben hat die Leitung geändert: gelten sofort
           turnierMerken({ ...eintrag, aufgaben: a.turnier.aufgaben });
           eintrag = gemerktesTurnier(id) ?? null;
+          const identitaet = a.turnier.identitaet;
+          if (identitaet) await new SitzungsSpeicher(speicher, identitaetsbindung(identitaet)).bestaetigteVerwerfen(id);
         }
         if (s) {
           const k = await api.turnier(id, s.token);
           if (zerstoert || wechsel || s !== app.sitzung) return;
           bestaetigteKontoRechte = k.turnier.rechte ?? null;
-        } else bestaetigteKontoRechte = null;
+          kontoIdentitaet = k.turnier.identitaet ?? null;
+        } else {
+          bestaetigteKontoRechte = null;
+          kontoIdentitaet = null;
+        }
       } else {
         bestaetigteKontoRechte = s ? (a.turnier.rechte ?? null) : null;
+        kontoIdentitaet = s ? (a.turnier.identitaet ?? null) : null;
       }
       rechteFuer = s?.token ?? '';
       // Für den Offline-Betrieb merken (nur Anzeige – der Server prüft jeden Eintrag beim Nachtragen)
       const g = gemerktesTurnier(id);
-      if (g && s && (g.kontoRolle !== bestaetigteKontoRechte || g.kontoId !== s.konto.id)) turnierMerken({ ...g, kontoRolle: bestaetigteKontoRechte, kontoId: s.konto.id });
+      if (g && s && (g.kontoRolle !== bestaetigteKontoRechte || g.kontoId !== s.konto.id || g.kontoIdentitaet !== kontoIdentitaet)) {
+        turnierMerken({ ...g, kontoRolle: bestaetigteKontoRechte, kontoId: s.konto.id, kontoIdentitaet });
+      }
     } catch (x) {
       if (zerstoert || wechsel || s !== app.sitzung) return;
       if (kennung && kennung !== (gemerktesTurnier(id)?.token ?? null)) return;
@@ -131,6 +152,7 @@
       // Kein Netz: zuletzt bestätigte Rechte dieses Kontos weiter nutzen (Einträge warten auf das Netz)
       const g = gemerktesTurnier(id);
       bestaetigteKontoRechte = x instanceof ApiFehler && x.istNetzwerk && s && g?.kontoId === s.konto.id ? (g.kontoRolle ?? null) : null;
+      kontoIdentitaet = bestaetigteKontoRechte ? (g?.kontoIdentitaet ?? null) : null;
       rechteFuer = s?.token ?? '';
     }
   }
@@ -139,6 +161,7 @@
     if (lokal || laedt) return;
     if (!s) {
       bestaetigteKontoRechte = null;
+      kontoIdentitaet = null;
       rechteFuer = '';
       return;
     }
@@ -162,6 +185,11 @@
   const anmeldungMoeglich = $derived(!lokal && app.server.art === 'bereit' && !!app.server.info.anmeldung && !app.server.info.zentrale);
   /** Token, mit dem dieses Gerät sendet: Kennung vor Konto */
   const schreibToken = $derived(eintrag?.token ?? kontoToken);
+  function identitaetFuer(token: string): string | null {
+    const kennung = eintrag?.kennungIdentitaet;
+    if (token === eintrag?.token && kennung?.tokenHash === sitzungsbindung(token)) return kennung.bezug;
+    return token === kontoToken ? kontoIdentitaet : null;
+  }
   const darfSchreiben = $derived(lokal || !!schreibToken);
   const name = $derived(zustand?.name || eintrag?.name || '');
   const link = $derived(`${appBasis()}#/t/${id}`);
@@ -315,8 +343,16 @@
     zugangFehler = '';
     try {
       const a = await api.turnierZugang(id, c);
-      turnierMerken({ ...eintrag!, rolle: a.rolle, token: a.token, spieler: a.spieler ?? null, helfer: a.helfer ?? false, aufgaben: a.aufgaben ?? null, wer: a.name ?? null });
+      turnierMerken({ ...eintrag!, rolle: a.rolle, token: a.token, spieler: a.spieler ?? null, helfer: a.helfer ?? false, aufgaben: a.aufgaben ?? null, wer: a.name ?? null,
+        kennungIdentitaet: a.identitaet ? { bezug: a.identitaet, tokenHash: sitzungsbindung(a.token)! } : null });
+      // Helferrechte können seit dem letzten Login eingeschränkt worden sein.
+      if (a.rolle === 'helfer' && a.identitaet) {
+        await new SitzungsSpeicher(speicher, identitaetsbindung(a.identitaet)).bestaetigteVerwerfen(id);
+      }
       eintrag = gemerktesTurnier(id) ?? null;
+      ereignisse = [];
+      zustand = null;
+      await aktualisieren();
       const n = a.name ?? '';
       hinweis = a.rolle === 'spieler' && !a.helfer ? T.zugang.willkommen(n) : a.rolle === 'leitung' ? T.zugang.willkommenLeitung(n) : T.zugang.willkommenHelfer(n);
       void sitzung?.abgleich?.anstossen();
@@ -383,7 +419,21 @@
         geraet: geraetId(),
         autor,
         api,
-        token: () => schreibToken,
+        token: () => wechsel || zerstoert ? null : schreibToken,
+        sichtVersion: () => {
+          const g = gemerktesTurnier(id);
+          return JSON.stringify([g?.token ?? null, g?.aufgaben ?? null, g?.helfer ?? false, kontoSitzung()?.token ?? null]);
+        },
+        bindungFuer: (token) => {
+          const identitaet = identitaetFuer(token);
+          return identitaet ? identitaetsbindung(identitaet) : null;
+        },
+        alterLesestandErlaubt: (token) => token === kontoToken || (token === eintrag?.token && eintrag.rolle === 'leitung'),
+        altbestandPasst: (e, token) => {
+          const autor = e.autor;
+          return !!autor?.spieler && autor.rolle === 'spieler' &&
+            identitaetFuer(token)?.startsWith(`kennung:spieler:${autor.spieler}:`) === true;
+        },
         beiAenderung: () => void aktualisieren(),
         // Kennung gesperrt/neu ausgegeben oder Konto ohne Rechte: sofort Zuschauer, Bestand bleibt vollständig
         beiRechteVerlust: () => {
@@ -538,6 +588,38 @@
     const t = setInterval(() => void anmeldungenPruefen(), 120_000);
     return () => clearInterval(t);
   });
+
+  let fremde = $state.raw<LokalesEreignis[]>([]);
+  let fremdeLaeuft = false;
+  const fremdeAutoren = $derived([...new Set(fremde.map((e) =>
+    e.autor ? `${T.rollen[e.autor.rolle]} · ${e.autor.name}` : T.fremdeEintraege.unbekannt
+  ))]);
+  async function fremdeLaden() {
+    if (!sitzung || fremdeLaeuft || wechsel) return;
+    fremdeLaeuft = true;
+    try {
+      fremde = await sitzung.fremdeAusstehende();
+    } finally {
+      fremdeLaeuft = false;
+    }
+  }
+  $effect(() => {
+    void schreibToken;
+    if (laedt || lokal || wechsel) return;
+    untrack(() => void fremdeLaden().catch(() => undefined));
+    const timer = setInterval(() => void fremdeLaden().catch(() => undefined), 15_000);
+    return () => clearInterval(timer);
+  });
+  async function fremdeSichern() {
+    const eintraege = fremde.map(({ id: eid, turnier, art, daten, zeit, geraet, autor }) =>
+      ({ id: turnier === id ? eid : eid.slice(turnier.length + 1), art, daten, zeit, geraet, autor }));
+    await dateiAusgeben(`TT-Turnier-${id}-ausstehend.json`, JSON.stringify({ turnier: id, eintraege }, null, 2), 'application/json', false);
+  }
+  async function fremdeVerwerfen() {
+    if (!confirm(T.fremdeEintraege.bestaetigen)) return;
+    await sitzung?.fremdeVerwerfen(fremde);
+    await fremdeLaden();
+  }
 
   /* ---------- Vom Server abgelehnte Einträge ---------- */
   const abgelehnt = $derived(ereignisse.filter((e) => e.status === 'abgelehnt'));
@@ -715,6 +797,23 @@
   {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
   {#if sperre?.zentrale}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.gesperrtOnline(sperre.zentrale)}</div>{/if}
   {#if sperre?.abgegeben}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.abgegebenHinweis}</div>{/if}
+  {#if fremde.length}
+    <section class="meldung info" role="status" data-testid="fremde-ausstehende">
+      <strong>{T.fremdeEintraege.titel(fremde.length)}</strong>
+      <Hilfe text={T.fremdeEintraege.hilfe} />
+      <p>{fremdeAutoren.join(', ')}</p>
+      <div class="reihe">
+        <button class="zweit" onclick={fremdeSichern}>{T.fremdeEintraege.sichern}</button>
+        <button class="zweit" onclick={fremdeVerwerfen}>{T.fremdeEintraege.verwerfen}</button>
+      </div>
+      <details>
+        <summary>{T.fremdeEintraege.anmelden}</summary>
+        <Mitmachen anmelden={mitCodeAnmelden} fehler={zugangFehler} />
+        <a href={linkZu('anmelden')}>{T.kopf.anmelden}</a>
+      </details>
+    </section>
+  {/if}
+
   {#if abgelehnt.length}
     <div class="meldung fehler abgelehnt" role="alert" data-testid="abgelehnt">
       <div class="wachsen">

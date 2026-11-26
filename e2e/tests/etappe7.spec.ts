@@ -258,3 +258,68 @@ test('Einzelgerät: K.-o.-Baum, Urkunden und Endstand drucken, Live-Anzeige im z
   expect(csv).toContain('Konkurrenz;Platz;Name;Verein');
   expect(csv.split('\r\n').filter((z) => z.startsWith('Pokal;'))).toHaveLength(4);
 });
+
+test('F-030: Ein Offline-Ergebnis bleibt bei erneuter Anmeldung mit derselben Kennung', async ({ page, browser }, info) => {
+  await page.goto('./#/anmelden');
+  await page.getByLabel('E-Mail').fill(ADMIN.email);
+  await page.getByLabel('Passwort', { exact: true }).fill(ADMIN.passwort);
+  await page.getByRole('button', { name: 'Anmelden' }).click();
+  await page.getByTestId('neues-turnier').click();
+  await page.getByLabel('Name des Turniers').fill('Offline-Ergebnis und erneute Anmeldung');
+  await page.getByRole('button', { name: 'Turnier anlegen' }).click();
+  await expect(page.getByText('Verbunden')).toBeVisible();
+  const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
+
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
+  for (const vorname of ['Ada', 'Ben']) {
+    await page.getByLabel('Vorname').fill(vorname);
+    await page.getByLabel('Nachname').fill('Test');
+    await page.getByRole('button', { name: 'Hinzufügen' }).click();
+    await expect(page.getByText(`${vorname} Test ✓`)).toBeVisible();
+  }
+  await reiterOeffnen(page, 'Konkurrenzen');
+  await page.getByLabel('Name', { exact: true }).fill('Einzel');
+  await page.getByLabel(/Jeder gegen jeden/).check();
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+  await page.getByRole('button', { name: 'Alle melden' }).click();
+  await page.getByRole('button', { name: 'Auslosen' }).click();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('starten').click();
+  await reiterOeffnen(page, 'Zugänge');
+  const kennung = (await page.getByTestId('zugaenge-leitung').getByTestId('code').innerText()).replace(/\s/g, '');
+
+  const kontext = await browser.newContext({ ...info.project.use, baseURL: info.project.use.baseURL, serviceWorkers: 'block' });
+  async function gespeicherteErgebnisse() {
+    const antwort = await page.request.get(`api/index.php?r=events&turnier=${tid}&ab=0`);
+    const daten = await antwort.json() as { ereignisse: { art: string }[] };
+    return daten.ereignisse.filter((e) => e.art === 'spiel.ergebnis').length;
+  }
+  try {
+    const link = `./#/c/${tid}/${kennung}`;
+    const route = /api\/index\.php\?r=events/;
+    await kontext.route(route, (r) => r.request().method() === 'POST' ? r.abort() : r.continue());
+    const vorher = await kontext.newPage();
+    const ersteAnmeldung = vorher.waitForResponse((r) => r.url().includes('r=turnier.zugang') && r.ok());
+    await vorher.goto(link);
+    const erstesToken = (await (await ersteAnmeldung).json()).token;
+    await expect(vorher.getByTestId('angemeldet-als')).toBeVisible();
+    await reiterOeffnen(vorher, 'Spiele');
+    await vorher.getByTestId('spiel').first().click();
+    await ergebnisEintragen(vorher);
+    expect(await gespeicherteErgebnisse()).toBe(0);
+    await vorher.close();
+
+    const danach = await kontext.newPage();
+    const anmeldung = danach.waitForResponse((r) => r.url().includes('r=turnier.zugang') && r.ok());
+    await danach.goto(link);
+    const neuesToken = (await (await anmeldung).json()).token;
+    expect(neuesToken).not.toBe(erstesToken);
+    await expect(danach.getByTestId('angemeldet-als')).toBeVisible();
+    await expect(danach.getByTestId('fremde-ausstehende')).toHaveCount(0);
+    await kontext.unroute(route);
+    await danach.evaluate(() => dispatchEvent(new Event('online')));
+    await expect.poll(gespeicherteErgebnisse).toBe(1);
+  } finally {
+    await kontext.close();
+  }
+});

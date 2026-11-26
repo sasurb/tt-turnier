@@ -663,7 +663,23 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         Map<String, Object> aus = turnierAusgabe(t);
         if (a.token != null) {
             Map<String, Object> s = sitzung(a);
-            aus.put("rechte", s == null ? null : rechte(s, t));
+            String rechte = s == null ? null : rechte(s, t);
+            aus.put("rechte", rechte);
+            if (rechte != null && wahr(s.get("konto"))) {
+                aus.put("identitaet", "konto:" + rechte + ":zentrale");
+            } else if (rechte != null) {
+                synchronized (this) {
+                    Map<String, Object> aktuell = sitzung(a);
+                    if (aktuell != null) {
+                        for (Map<String, Object> c : t.codes) {
+                            if (Objects.equals(c.get("rolle"), s.get("rolle")) && Objects.equals(c.get("bezug"), s.get("bezug")) && !wahr(c.get("gesperrt"))) {
+                                aus.put("identitaet", kennungsIdentitaet(t, c));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             if ("helfer".equals(aus.get("rechte"))) aus.put("aufgaben", aufgabenDerSitzung(s));
         }
         return Json.obj("turnier", aus);
@@ -813,6 +829,14 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         return Json.obj("turnier", turnierAusgabe(t), "token", token, "leitung", codeAusgabe(leitung));
     }
 
+    private synchronized String kennungsIdentitaet(Speicher.Turnier t, Map<String, Object> code) {
+        if (!(code.get("identitaet") instanceof String)) {
+            code.put("identitaet", zufallsText(32));
+            speicher.codesSpeichern(t);
+        }
+        return "kennung:" + code.get("rolle") + ":" + code.get("bezug") + ":" + code.get("identitaet");
+    }
+
     private Map<String, Object> turnierZugang(Anf a) {
         Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         // Bremsen ohne Aussperren richtiger Kennungen (siehe PHP-Server): Verzögerung ab dem 5. Fehlversuch je
@@ -829,33 +853,34 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         }
         String roh = Json.alsText(a.rumpf.get("code"));
         String code = roh == null ? "" : roh.replaceAll("\\s+", "");
-        Map<String, Object> c = null;
-        if (code.matches("^[0-9]{8}$")) {
-            synchronized (this) {
+        synchronized (this) {
+            Map<String, Object> c = null;
+            if (code.matches("^[0-9]{8}$")) {
                 for (Map<String, Object> x : t.codes) {
                     if (gleich(code, String.valueOf(x.get("code"))) && !wahr(x.get("gesperrt"))) { c = x; break; }
                 }
             }
-        }
-        if (c == null) {
-            fehlversuch(schluessel);
-            fehlversuch(schluesselTurnier);
-            if (fehl + 1 >= VERSUCHE_MAX * 3 || anzahlVersuche(schluesselTurnier, VERSUCHE_FENSTER) > ZUGANG_TURNIER_MAX) {
-                throw new ApiFehler("zu_viele_versuche", "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.");
+            if (c == null) {
+                fehlversuch(schluessel);
+                fehlversuch(schluesselTurnier);
+                if (fehl + 1 >= VERSUCHE_MAX * 3 || anzahlVersuche(schluesselTurnier, VERSUCHE_FENSTER) > ZUGANG_TURNIER_MAX) {
+                    throw new ApiFehler("zu_viele_versuche", "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.");
+                }
+                throw new ApiFehler("falsche_zugangsdaten", "Diese Kennung passt nicht zu diesem Turnier.");
             }
-            throw new ApiFehler("falsche_zugangsdaten", "Diese Kennung passt nicht zu diesem Turnier.");
+            versucheLoeschen(schluessel);
+            String rolle = (String) c.get("rolle");
+            boolean helfer = "spieler".equals(rolle) && wahr(c.get("helfer"));
+            String token = neuesToken(false, t.id, rolle, (String) c.get("name"), (String) c.get("bezug"), helfer);
+            Map<String, Object> aus = Json.obj("token", token, "rolle", rolle, "name", c.get("name"),
+                "identitaet", kennungsIdentitaet(t, c));
+            if ("spieler".equals(rolle)) {
+                aus.put("spieler", c.get("bezug"));
+                if (helfer) aus.put("helfer", true);
+            }
+            if ("helfer".equals(rolle)) aus.put("aufgaben", aufgabenLesen(c.get("aufgaben")));
+            return aus;
         }
-        versucheLoeschen(schluessel);
-        String rolle = (String) c.get("rolle");
-        boolean helfer = "spieler".equals(rolle) && wahr(c.get("helfer"));
-        String token = neuesToken(false, t.id, rolle, (String) c.get("name"), (String) c.get("bezug"), helfer);
-        Map<String, Object> aus = Json.obj("token", token, "rolle", rolle, "name", c.get("name"));
-        if ("spieler".equals(rolle)) {
-            aus.put("spieler", c.get("bezug"));
-            if (helfer) aus.put("helfer", true);
-        }
-        if ("helfer".equals(rolle)) aus.put("aufgaben", aufgabenLesen(c.get("aufgaben")));
-        return aus;
     }
 
     private Map<String, Object> abholen(Anf a) {
@@ -1817,6 +1842,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             Map<String, Object> c = codeSuchen(t, z[0], z[1]);
             if (c == null) throw new ApiFehler("nicht_gefunden", "Code nicht gefunden.");
             c.put("code", freierCode(t));
+            c.remove("identitaet");
             c.put("gesperrt", false);
             speicher.codesSpeichern(t);
             sitzungenEntfernen(t.id, z[0], z[1]);

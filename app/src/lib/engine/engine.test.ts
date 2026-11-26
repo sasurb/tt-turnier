@@ -1,4 +1,4 @@
-import { sitzungsbindung } from './sitzungsbindung';
+import { identitaetsbindung, sitzungsbindung } from './sitzungsbindung';
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { ART } from '@shared/protokoll';
@@ -252,6 +252,68 @@ describe('Online-Abgleich zwischen zwei Geräten', () => {
 });
 
 describe('IndexedDB-Speicher', () => {
+  it.each(['kennung', 'konto'])('F-030: %s wechselt das Token und behält nur die eigenen Offline-Einträge', async (art) => {
+    const server = new TestServer();
+    const speicher = Object.assign(new SpeicherIndexedDb('identitaet-' + neueId()), { sitzungsbereiche: true });
+    const identitaet = identitaetsbindung(art + ':leitung:123');
+    const fremdeIdentitaet = identitaetsbindung('kennung:helfer:123');
+    const tab = (token: string, bindung: string) => new TurnierSitzung({
+      speicher, turnier: 't', modus: 'online', geraet: 'g', token: () => token, bindungFuer: () => bindung,
+      api: new Api('http://test.invalid/', server.abruf), autor: { rolle: 'leitung', name: 'Anna' },
+    });
+
+    server.offline = true;
+    const alt = tab('tok-a', identitaet);
+    const e = await alt.eintragen(ART.testNotiz, { text: 'Wartet' });
+    const fremd = tab('tok-b', fremdeIdentitaet);
+    expect(await fremd.ereignisse()).toEqual([]);
+    server.offline = false;
+    await fremd.abgleich!.durchlauf();
+    expect(server.ereignisse).toEqual([]);
+    expect(await fremd.fremdeAusstehende()).toMatchObject([{ daten: e.daten }]);
+
+    const neu = tab('tok-b', identitaet);
+    expect(await neu.ereignisse()).toMatchObject([{ id: e.id, status: 'ausstehend' }]);
+    await neu.abgleich!.durchlauf();
+    expect(server.ereignisse).toMatchObject([{ id: e.id }]);
+    expect(await fremd.fremdeAusstehende()).toEqual([]);
+  });
+
+  it('F-030: Übernahme passt zum Spielerbezug und bleibt in zwei Tabs atomar', async () => {
+    const server = new TestServer();
+    const speicher = Object.assign(new SpeicherIndexedDb('altbestand-' + neueId()), { sitzungsbereiche: true });
+    const basis = { art: ART.testNotiz, daten: {}, geraet: 'g', empfangen: null, seq: null, zeit: '2026-01-01' } as const;
+    await speicher.hinzufuegen({ ...basis, id: 'vor-update-eins', turnier: 't', status: 'ausstehend', autor: { rolle: 'spieler', name: 'Anna', spieler: 'a' } });
+    await speicher.hinzufuegen({ ...basis, id: 'vor-update-zwei', turnier: 't', status: 'ausstehend', autor: { rolle: 'spieler', name: 'Anna', spieler: 'b' } });
+    const tab = () => new TurnierSitzung({
+      speicher, turnier: 't', modus: 'online', geraet: 'g', token: () => 'tok-a',
+      bindungFuer: () => identitaetsbindung('kennung:spieler:a'),
+      altbestandPasst: (e) => e.autor?.rolle === 'spieler' && e.autor.spieler === 'a',
+      api: new Api('http://test.invalid/', server.abruf), autor: { rolle: 'spieler', name: 'Anna', spieler: 'a' },
+    });
+    const a = tab();
+    await Promise.all([a.abgleich!.durchlauf(), tab().abgleich!.durchlauf()]);
+    expect(server.ereignisse).toMatchObject([{ id: 'vor-update-eins' }]);
+    const fremde = await a.fremdeAusstehende();
+    expect(fremde.map((e) => e.id)).toEqual(['vor-update-zwei']);
+    await a.fremdeVerwerfen(fremde);
+    expect(await a.fremdeAusstehende()).toEqual([]);
+    expect(await a.ereignisse()).toMatchObject([{ id: 'vor-update-eins' }]);
+  });
+
+  it('F-014: Eine Antwort der früheren Datensicht wird nach einem Rechtewechsel nicht mehr gespeichert', async () => {
+    const speicher = new SpeicherIndexedDb('sichtwechsel-' + neueId());
+    const eintrag = {
+      id: 'alte-sicht', turnier: 't', status: 'bestaetigt', seq: 1, zeit: '2026-11-01',
+      art: ART.spielerAngelegt, daten: { jahrgang: 2010 }, geraet: 'g', autor: null, empfangen: null,
+    } as const;
+    let alteSichtGueltig = true;
+    const schreiben = speicher.uebernehmen([eintrag], () => alteSichtGueltig);
+    alteSichtGueltig = false;
+    await schreiben;
+    expect(await speicher.alle('t')).toEqual([]);
+  });
+
   it('speichert, ersetzt und löscht je Turnier', async () => {
     const s = new SpeicherIndexedDb('test-' + neueId());
     const basis = { art: 'x', daten: { a: 1 }, geraet: 'g', autor: null, empfangen: null } as const;

@@ -274,6 +274,8 @@ export interface TurnierInfo {
   veranstalter: string;
   /** Mit Anmeldung abgefragt (ab 0.6): Rechte dieser Anmeldung für das Turnier; null = nur lesen */
   rechte?: 'leitung' | 'helfer' | 'spieler' | null;
+  /** Stabiler Bezug für ausstehende Aktionen, nur für die eigene bestätigte Anmeldung. */
+  identitaet?: string;
   /** Ab 0.11, mit Anmeldung als Helfer: Aufgaben dieser Kennung */
   aufgaben?: Aufgabe[];
   /** Online-Server (ab 0.5): Name der Zentrale, auf der das Turnier gerade läuft – dann online nur lesbar */
@@ -534,6 +536,7 @@ export interface Sicherung {
 export interface TurnierZugangAntwort {
   token: string;
   rolle: Rolle;
+  identitaet?: string;
   /** Name, unter dem Einträge erscheinen (steht an der Kennung) */
   name?: string;
   /** Bei Spielerkennungen: ID des Spielers im Turnier */
