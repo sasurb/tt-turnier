@@ -7,14 +7,14 @@
   import { ergebnisNachricht } from '../../ergebnisnachricht';
   import Hilfe from '../Hilfe.svelte';
 
-  let { z, turnierId, token }: { z: TurnierZustand; turnierId: string; token: string } = $props();
+  let { z, turnierId, token, gesperrt }: { z: TurnierZustand; turnierId: string; token: string; gesperrt: boolean } = $props();
 
   const n = $derived(ergebnisNachricht(z));
   let laeuft = $state(false);
   let meldung = $state<{ ok: boolean; text: string } | null>(null);
 
   async function senden() {
-    if (!confirm(T.ergebnisMail.frage(n.plaetze.length))) return;
+    if (gesperrt || !confirm(T.ergebnisMail.frage(n.plaetze.length))) return;
     laeuft = true;
     meldung = null;
     try {
@@ -38,7 +38,7 @@
       <summary>{T.ergebnisMail.vorschau}</summary>
       <pre class="vorschau">{n.liste}</pre>
     </details>
-    <button onclick={senden} disabled={laeuft} data-testid="ergebnis-senden">{T.ergebnisMail.knopf}</button>
+    <button onclick={senden} disabled={laeuft || gesperrt} data-testid="ergebnis-senden">{T.ergebnisMail.knopf}</button>
   {/if}
   {#if meldung}<div class="meldung" class:ok={meldung.ok} class:fehler={!meldung.ok} role="status">{meldung.text}</div>{/if}
 </section>

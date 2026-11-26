@@ -1,4 +1,4 @@
-import { wertungVorlaeufig } from './engine/modell';
+import { vorlaeufigePlatzierungen } from './engine/modell';
 import { endstand, name, nameLang, rundeVon, spielErgebnisText } from './engine/abfragen';
 import { spielerVon, type TurnierZustand } from './engine/zustand';
 
@@ -87,9 +87,10 @@ export function endstandCsv(z: TurnierZustand): string {
   const zeilen: (string | number | null)[][] = [['Konkurrenz', 'Platz', 'Name', 'Verein']];
   for (const kid of z.konkurrenzReihe) {
     const k = z.konkurrenzen[kid]!;
+    const vorlaeufig = vorlaeufigePlatzierungen(k);
     for (const p of endstand(k)) {
       const vereine = [...new Set(spielerVon(k, p.id).map((id) => z.spieler[id]?.verein ?? '').filter(Boolean))].join(' / ');
-      zeilen.push([k.einst.name, p.bezeichnung + (wertungVorlaeufig(k) ? ' (vorläufig)' : ''), nameLang(z, p.id, k), vereine]);
+      zeilen.push([k.einst.name, p.bezeichnung + (vorlaeufig.has(p.id) ? ' (vorläufig)' : ''), nameLang(z, p.id, k), vereine]);
     }
   }
   return csv(zeilen);

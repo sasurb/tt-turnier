@@ -3,6 +3,8 @@
   import { ART, SICHERUNG_MAX_EMPFAENGER, SICHERUNG_TAKTE, UST_SAETZE, type KasseEinstellungen, type Sicherung, type SicherungTakt, type TurnierEinstellungen } from '@shared/protokoll';
   import { bicGueltig, ibanAnzeige, ibanGueltig, ibanNormal } from '../engine/girocode';
   import { T } from '../texte';
+  import { name } from '../engine/abfragen';
+  import { strittigeSpiele } from '../engine/modell';
   import { api, speicher } from '../dienste';
   import { app, fehlerText } from '../app.svelte';
   import { gehe } from '../router.svelte';
@@ -266,7 +268,11 @@
       hochladen = false;
     }
   }
+  const konflikte = $derived(Object.values(z.konkurrenzen).flatMap((k) =>
+    strittigeSpiele(k).map((s) => `${k.einst.name} · ${name(z, s.a, k)} – ${name(z, s.b, k)}`)
+  ));
   async function abschliessen() {
+    if (!abgeschlossen && konflikte.length) return;
     if (!abgeschlossen && !confirm(T.einstellungen.abschliessenFrage)) return;
     await eintragen(abgeschlossen ? ART.turnierWiedereroeffnet : ART.turnierAbgeschlossen);
   }
@@ -445,7 +451,10 @@
   <section>
     <h3>{T.einstellungen.abschliessenTitel}</h3>
     <p class="leise">{T.einstellungen.abschliessenText}</p>
-    <button class="zweit" onclick={abschliessen}>{abgeschlossen ? T.einstellungen.wiedereroeffnen : T.einstellungen.abschliessen}</button>
+    {#if konflikte.length}
+      <p class="meldung info">{T.einstellungen.strittigAbschluss}: {konflikte.join(', ')}</p>
+    {/if}
+    <button class="zweit" onclick={abschliessen} disabled={!abgeschlossen && konflikte.length > 0}>{abgeschlossen ? T.einstellungen.wiedereroeffnen : T.einstellungen.abschliessen}</button>
   </section>
   {#if lokal && app.sitzung && app.server.art === 'bereit' && !app.server.info.zentrale}
     <section data-testid="in-sparte">
@@ -454,7 +463,7 @@
     </section>
   {/if}
   {#if abgeschlossen && !lokal && token && app.server.art === 'bereit' && app.server.info.nachrichten && !app.server.info.zentrale}
-    <ErgebnisVersand {z} turnierId={id} {token} />
+    <ErgebnisVersand {z} turnierId={id} {token} gesperrt={konflikte.length > 0} />
   {/if}
 
   {#if lokal || onlineLoeschbar}

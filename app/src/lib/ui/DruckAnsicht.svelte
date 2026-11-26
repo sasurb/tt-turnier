@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { wertungVorlaeufig } from '../engine/modell';
+  import { gruppeVorlaeufig, vorlaeufigePlatzierungen, wertungVorlaeufig } from '../engine/modell';
   import { onDestroy, onMount } from 'svelte';
   import { T } from '../texte';
   import { linkZu, ersetze } from '../router.svelte';
@@ -541,7 +541,7 @@
             {@const t = tabelle(k, g.nr)}
             {@const m = t.zeilen.map((r) => r.id)}
             <section class="block gruppe">
-              <h2>{z.name} · {k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if}{k.gruppen.length > 1 ? ` · ${gruppeTitel(k, g.nr)}` : ''}</h2>
+              <h2>{z.name} · {k.einst.name}{#if gruppeVorlaeufig(k, g.nr)} · {T.druck.vorlaeufig}{/if}{k.gruppen.length > 1 ? ` · ${gruppeTitel(k, g.nr)}` : ''}</h2>
               <table class="kreuz">
                 <thead>
                   <tr>
@@ -623,6 +623,7 @@
       {#each konkurrenzen as k (k.id)}
         {@const v = zeige(k)}
         {@const es = v.tabellen ? endstand(k) : []}
+        {@const vorlaeufig = vorlaeufigePlatzierungen(k)}
         <section class="block">
           <h2>{k.einst.name} <span class="klein">({T.druck.teilnehmerZahl(k.meldungen.length)})</span></h2>
           {#if !k.gestartet.gruppen && !k.gestartet.ko}
@@ -631,7 +632,7 @@
             {#if es.length}
               <h3>{T.druck.endstand}</h3>
               <ol class="endstand">
-                {#each es as p (p.id)}<li><span class="pl">{p.bezeichnung}.</span> <strong>{nameLang(z, p.id, k)}</strong> <span class="klein">{verein(k, p.id)}</span></li>{/each}
+                {#each es as p (p.id)}<li><span class="pl">{p.bezeichnung}.</span> <strong>{nameLang(z, p.id, k)}</strong>{#if vorlaeufig.has(p.id)} · {T.druck.vorlaeufig}{/if} <span class="klein">{verein(k, p.id)}</span></li>{/each}
               </ol>
             {/if}
             {#if v.tabellen && istRundenModus(k.einst.modus)}
@@ -648,7 +649,7 @@
             {:else if v.tabellen}
               {#each k.gruppen as g (g.nr)}
                 {@const t = tabelle(k, g.nr)}
-                <h3>{k.gruppen.length > 1 ? gruppeTitel(k, g.nr) : T.konk.modi.jgj}</h3>
+                <h3>{k.gruppen.length > 1 ? gruppeTitel(k, g.nr) : T.konk.modi.jgj}{#if gruppeVorlaeufig(k, g.nr)} · {T.druck.vorlaeufig}{/if}</h3>
                 <table class="liste">
                   <tbody>
                     {#each t.zeilen as r (r.id)}<tr class:raus={r.zurueckgezogen}><td class="z">{r.platz}</td><td>{name(z, r.id, k)} <span class="klein">{verein(k, r.id)}</span></td><td class="z">{r.siege}:{r.niederlagen}</td><td class="z">{r.saetzeG}:{r.saetzeV}</td></tr>{/each}
@@ -700,6 +701,7 @@
     {:else if aktiv === 'aushang'}
       <section class="aushang">
         <h1>{z.name}</h1>
+        {#if konkurrenzen.some(wertungVorlaeufig)}<p>{T.druck.vorlaeufig}</p>{/if}
         <p class="unter">{[turnierzeitraum, z.ort].filter(Boolean).join(' · ')}</p>
         {#if lokal}
           <p class="leer">{T.druck.aushangLokal}</p>
@@ -728,7 +730,7 @@
             <p class="name">{nameLang(z, u.id, u.k)}</p>
             {#if verein(u.k, u.id)}<p class="verein">{verein(u.k, u.id)}</p>{/if}
             <p class="text">{T.druck.urkundeText(u.k.einst.name + (u.zusatz ? ` (${u.zusatz})` : ''))}</p>
-            <p class="platz">{u.platz}</p>
+            <p class="platz">{u.platz}{#if vorlaeufigePlatzierungen(u.k).has(u.id)} · {T.druck.vorlaeufig}{/if}</p>
             <div class="fuss">
               <span>{[z.ort, turnierzeitraum].filter(Boolean).join(', ')}</span>
               <span class="linie">{e.unterschrift || T.druck.turnierleitung}</span>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { strittigerStand, wertungVorlaeufig } from '../engine/modell';
+  import { gruppeVorlaeufig, strittigerStand, vorlaeufigePlatzierungen, wertungVorlaeufig } from '../engine/modell';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { T } from '../texte';
   import { linkZu } from '../router.svelte';
@@ -366,12 +366,12 @@
         </div>
       {:else if aktuell.art === 'gruppen'}
         {@const k = aktuell.k}
-        <h2 class="seitentitel">{k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if}{aktuell.von > 1 ? ` (${aktuell.teil}/${aktuell.von})` : ''}</h2>
+        <h2 class="seitentitel">{k.einst.name}{aktuell.von > 1 ? ` (${aktuell.teil}/${aktuell.von})` : ''}</h2>
         <div class="gruppen-raster" class:eine={aktuell.nrs.length === 1}>
           {#each aktuell.nrs as nr (nr)}
             {@const t = tabelle(k, nr)}
             <section class="block">
-              <h3>{k.gruppen.length > 1 ? gruppeTitel(k, nr) : T.konk.modi.jgj}</h3>
+              <h3>{k.gruppen.length > 1 ? gruppeTitel(k, nr) : T.konk.modi.jgj}{#if gruppeVorlaeufig(k, nr)} · {T.druck.vorlaeufig}{/if}</h3>
               <table>
                 <thead><tr><th class="z">{T.tab.platz}</th><th>{T.tab.spieler}</th><th class="z">{T.tab.sn}</th><th class="z">{T.tab.saetze}</th></tr></thead>
                 <tbody>
@@ -434,17 +434,18 @@
         </div>
       {:else if aktuell.art === 'plaetze'}
         {@const k = aktuell.k}
-        <h2 class="seitentitel">{k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if} · {T.tab.platzierungen}</h2>
+        {@const vorlaeufig = vorlaeufigePlatzierungen(k)}
+        <h2 class="seitentitel">{k.einst.name} · {T.tab.platzierungen}</h2>
         <section class="block">
           <ol class="plaetze">
             {#each platzierungen(k).slice(0, 8) as x (x.id)}
-              <li><span class="pl">{x.bezeichnung}</span> <span class="name">{name(z, x.id, k)}</span> {#if verein(x.id)}<span class="verein-inline">{verein(x.id)}</span>{/if}</li>
+              <li><span class="pl">{x.bezeichnung}</span> <span class="name">{name(z, x.id, k)}</span>{#if vorlaeufig.has(x.id)} · {T.druck.vorlaeufig}{/if} {#if verein(x.id)}<span class="verein-inline">{verein(x.id)}</span>{/if}</li>
             {/each}
           </ol>
           {#if trostPlaetze(k).length}
             <h3>{T.konk.trostPlatzierungen}</h3>
             <ol class="plaetze">
-              {#each trostPlaetze(k).slice(0, 4) as x (x.id)}<li><span class="pl">{x.bezeichnung}</span> <span class="name">{name(z, x.id, k)}</span></li>{/each}
+              {#each trostPlaetze(k).slice(0, 4) as x (x.id)}<li><span class="pl">{x.bezeichnung}</span> <span class="name">{name(z, x.id, k)}</span>{#if vorlaeufig.has(x.id)} · {T.druck.vorlaeufig}{/if}</li>{/each}
             </ol>
           {/if}
         </section>

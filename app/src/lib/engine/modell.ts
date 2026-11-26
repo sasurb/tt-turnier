@@ -599,7 +599,44 @@ export function strittigerStand(stand: ErgebnisStand | null): boolean {
   return stand === 'angefochten' || stand === 'konflikt';
 }
 
+export function strittigeSpiele(k: KonkurrenzZustand): Spiel[] {
+  return Object.values(k.spiele).filter((s) => !s.gestrichen && (
+    strittigerStand(s.stand) ||
+    Object.values(k.begegnungen[s.id]?.teile ?? {}).some((t) => strittigerStand(t.stand))
+  ));
+}
+
 export function wertungVorlaeufig(k: KonkurrenzZustand): boolean {
-  return Object.values(k.spiele).some((s) => !s.gestrichen && strittigerStand(s.stand)) ||
-    Object.values(k.begegnungen).some((b) => Object.values(b.teile).some((t) => strittigerStand(t.stand)));
+  return strittigeSpiele(k).length > 0;
+}
+
+export function gruppeVorlaeufig(k: KonkurrenzZustand, nr: number): boolean {
+  return strittigeSpiele(k).some((s) => s.gruppe === nr);
+}
+
+/** Teilnehmer mit Platzierungen aus strittigen Spielen beziehungsweise deren Folgespielen. */
+export function vorlaeufigePlatzierungen(k: KonkurrenzZustand): Set<string> {
+  const strittig = strittigeSpiele(k);
+  if (!strittig.length) return new Set();
+  if (istSchweizerArt(k.einst.modus) || k.einst.modus === 'kaiser') return new Set(k.meldungen);
+
+  const gruppen = new Set(strittig.map((s) => s.gruppe).filter((nr) => nr !== null));
+  const betroffen = new Set(k.gruppen.filter((g) => gruppen.has(g.nr)).flatMap((g) => g.mitglieder));
+  const koSpiele = Object.values(k.spiele).filter((s) => s.phase === 'ko');
+  const offen = new Set(strittig.filter((s) => s.phase === 'ko').map((s) => s.id));
+  // Nach Vorrundenstreit können bereits übernommene Teilnehmer aus der Gruppe betroffen sein.
+  for (const s of koSpiele) {
+    if ((s.quelleA && 'platz' in s.quelleA && s.a && betroffen.has(s.a)) ||
+        (s.quelleB && 'platz' in s.quelleB && s.b && betroffen.has(s.b))) offen.add(s.id);
+  }
+  // Quellen statt Rundennummern verfolgen, da Trost- und Verliererbaum eigene Runden haben.
+  for (const id of offen) {
+    const s = k.spiele[id];
+    if (s?.a) betroffen.add(s.a);
+    if (s?.b) betroffen.add(s.b);
+    for (const folge of koSpiele) {
+      if ([folge.quelleA, folge.quelleB].some((q) => q && 'spiel' in q && q.spiel === id)) offen.add(folge.id);
+    }
+  }
+  return betroffen;
 }

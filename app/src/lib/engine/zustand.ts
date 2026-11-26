@@ -44,6 +44,7 @@ import {
   gruppenName,
   mitKo,
   standardEinstellungen,
+  wertungVorlaeufig,
   type Angabe,
   type Veroeffentlichung,
   type Ergebnis,
@@ -957,6 +958,11 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       break;
     }
     case ART.turnierAbgeschlossen:
+      if (!nurLeitung()) break;
+      if (Object.values(z.konkurrenzen).some(wertungVorlaeufig)) {
+        warnen('Vor dem Abschluss alle strittigen Spiele entscheiden.');
+        break;
+      }
       z.abgeschlossen = true;
       break;
     case ART.turnierWiedereroeffnet:

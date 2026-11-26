@@ -30,8 +30,9 @@ import {
 import { gruppenAuslosen, koAuslosen, setzplaetze, treffRunde } from './auslosung';
 import { ergebnisText, ergebnisWerten, satzAusVerliererpunkten } from './ergebnis';
 import { PLATZ3_ID, koSpielId, rundenName } from './ko';
-import { istKurzname, klasseVon, kurzname, paarName, standardEinstellungen, ttrBereichName, type ErgebnisEingabe, type KonkurrenzEinstellungen, type TurnierSpieler } from './modell';
+import { istKurzname, klasseVon, kurzname, paarName, standardEinstellungen, ttrBereichName, vorlaeufigePlatzierungen, type ErgebnisEingabe, type KonkurrenzEinstellungen, type TurnierSpieler } from './modell';
 import { rundenplan } from './rundenplan';
+import { Baukasten } from './test/baukasten';
 import type { LokalesEreignis } from './typen';
 import { uebersichtText } from './uebersicht';
 import { zufallAus } from './zufall';
@@ -332,13 +333,35 @@ describe('Ergebnis eintragen, bestätigen, anfechten', () => {
     expect(t.z.konkurrenzen.k!.spiele[spiel]!.stand).toBe('bestaetigt');
   });
 
+  it('F-031: Ein strittiges K.-o.-Finale macht nur Platz 1 und 2 vorläufig', () => {
+    const t = new Baukasten();
+    for (const id of ['a', 'b', 'c', 'd']) t.spieler(id);
+    t.konkurrenz('ko', { modus: 'ko' }, ['a', 'b', 'c', 'd']);
+    t.auslosen('ko');
+    t.starten('ko', 'ko');
+    const halbfinale = Object.values(t.z.konkurrenzen.ko!.spiele).filter((s) => s.runde === 1 && s.status === 'offen');
+    expect(halbfinale).toHaveLength(2);
+    for (const s of halbfinale) t.ergebnis('ko', s.id, s3(5, 5, 5));
+    const finale = Object.values(t.z.konkurrenzen.ko!.spiele).find((s) => s.runde === 2 && s.status === 'offen')!;
+    const ersterEintrag = t.ergebnis('ko', finale.id, s3(5, 5, 5), spielerAutor(finale.a!));
+    t.ergebnis('ko', finale.id, s3(-5, -5, -5), spielerAutor(finale.b!));
+    expect(t.z.konkurrenzen.ko!.spiele[finale.id]?.stand).toBe('konflikt');
+    expect(vorlaeufigePlatzierungen(t.z.konkurrenzen.ko!)).toEqual(new Set([finale.a, finale.b]));
+    t.e(ART.spielEntschieden, { konkurrenz: 'ko', spiel: finale.id, ereignis: ersterEintrag });
+    expect(vorlaeufigePlatzierungen(t.z.konkurrenzen.ko!).size).toBe(0);
+  });
+
   it('abweichender Eintrag des Gegners → Konflikt, Leitung entscheidet', () => {
     const { t, spiel } = zwei();
     t.gruppenspiel('k', 'a', 'b', s3(5, 5, 5), spielerAutor('a'));
     const e2 = t.gruppenspiel('k', 'b', 'a', s3(5, 5, 5), spielerAutor('b'));
     expect(t.z.konkurrenzen.k!.spiele[spiel]!.stand).toBe('konflikt');
     expect(pruefliste(t.z).length).toBe(1);
+    t.e(ART.turnierAbgeschlossen, {});
+    expect(t.z.abgeschlossen).toBe(false);
     t.e(ART.spielEntschieden, { konkurrenz: 'k', spiel, ereignis: e2 });
+    t.e(ART.turnierAbgeschlossen, {});
+    expect(t.z.abgeschlossen).toBe(true);
     const s = t.z.konkurrenzen.k!.spiele[spiel]!;
     expect(s.stand).toBe('bestaetigt');
     expect(s.b === 'b' ? s.gewinner : s.gewinner === 'a' ? 'b' : 'a').toBe(s.b === 'b' ? 'b' : 'a');

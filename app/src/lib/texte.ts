@@ -540,6 +540,7 @@ export const T = {
     lokalErklaerung:
       'Dieses Turnier liegt nur auf diesem Gerät. Geht das Gerät verloren oder wird der Browser-Speicher gelöscht, sind die Daten weg. Die App erinnert dich im gewählten Abstand, eine Sicherung zu teilen oder herunterzuladen – nur wenn sich etwas geändert hat.',
     abschliessenTitel: 'Turnier abschließen',
+    strittigAbschluss: 'Abschluss und Ergebnisversand sind bis zur Entscheidung offener Streitfälle gesperrt',
     abschliessenText: 'Markiert das Turnier als beendet. Online geht dabei eine letzte Sicherung per Mail raus.',
     abschliessen: 'Turnier abschließen',
     abschliessenFrage: 'Turnier jetzt abschließen?',
@@ -1145,6 +1146,7 @@ export const T = {
     anpassen: 'Schätzung anpassen',
   },
   druck: {
+    vorlaeufig: 'Vorläufig',
     spielberichte: 'Spielberichte (Mannschaften)',
     spielbericht: 'Spielbericht',
     keineBegegnungen: 'Keine Begegnungen mit feststehenden Mannschaften.',
