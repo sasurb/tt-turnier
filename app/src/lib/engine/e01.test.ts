@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { ART } from '@shared/protokoll';
 import { T } from '../texte';
 import { Api } from './api';
@@ -94,4 +94,95 @@ it('F-014: gespeicherte Serverdaten und Lesestände sind pro Sitzung getrennt', 
   await speicher.loeschen('t');
   expect(await privat.ereignisse()).toEqual([]);
   expect(await gast.ereignisse()).toEqual([]);
+});
+
+it('F-004: Abholen läuft nach Retry-After ohne weiteren eigenen Eintrag im normalen Takt', async () => {
+  vi.useFakeTimers();
+  const server = new TestServer();
+  const speicher = new SpeicherImArbeitsspeicher();
+  const abholungen: number[] = [];
+  const session = new TurnierSitzung({
+    turnier: 't', modus: 'online', geraet: 'g', speicher, intervallMs: 2000,
+    autor: { rolle: 'leitung', name: 'A' }, token: () => 'tok-a',
+    api: new Api('http://test.invalid/', async (url, init) => {
+      if (init.method === 'POST') {
+        return new Response('Problem', { status: 429, headers: { 'Retry-After': '5' } });
+      }
+      abholungen.push(Date.now());
+      return server.abruf(url, init);
+    }),
+  });
+  try {
+    const e = await session.eintragen(ART.testNotiz, {});
+    const anfang = Date.now();
+    session.start();
+    await vi.advanceTimersByTimeAsync(0);
+    // Ein anderes Fenster hat den wartenden Eintrag inzwischen entfernt.
+    await speicher.entfernen('t', [e.id]);
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(abholungen.map((zeit) => zeit - anfang)).toEqual([0, 4000, 5000, 7000, 9000]);
+  } finally {
+    session.stop();
+    vi.useRealTimers();
+  }
+});
+
+it.each([false, true])('F-004: Netzabbruch (Serverannahme: %s), Neuladen und Wiederholung', async (angenommen) => {
+  const server = new TestServer();
+  const speicher = new SpeicherImArbeitsspeicher();
+  let abbrechen = true;
+  const api = new Api('http://test.invalid/', async (url, init) => {
+    if (init.method === 'POST' && abbrechen) {
+      if (angenommen) await server.abruf(url, init);
+      throw new TypeError('Failed to fetch');
+    }
+    return server.abruf(url, init);
+  });
+  const neuOeffnen = () => new TurnierSitzung({
+    turnier: 't', modus: 'online', geraet: 'g', speicher,
+    autor: { rolle: 'leitung', name: 'A' }, token: () => 'tok-a', api,
+  });
+  const erste = neuOeffnen();
+  const e = await erste.eintragen(ART.testNotiz, { text: 'einmalig' });
+  await erste.abgleich!.durchlauf();
+  expect(erste.status?.verbindung).toBe('offline');
+  expect(server.ereignisse).toHaveLength(angenommen ? 1 : 0);
+
+  const geladen = neuOeffnen();
+  expect(await geladen.ereignisse()).toMatchObject([{ id: e.id, status: 'ausstehend' }]);
+  abbrechen = false;
+  await Promise.all([geladen.abgleich!.durchlauf(), neuOeffnen().abgleich!.durchlauf()]);
+  expect(await geladen.ereignisse()).toMatchObject([{ id: e.id, status: 'bestaetigt' }]);
+  expect(server.ereignisse).toHaveLength(1);
+});
+
+it('F-004: Nach einer Zeitüberschreitung bleibt der Eintrag ausstehend', async () => {
+  vi.useFakeTimers();
+  const server = new TestServer();
+  let antwortet = false;
+  const api = new Api('http://test.invalid/', (url, init) => {
+    if (antwortet || init.method !== 'POST') return server.abruf(url, init);
+    return new Promise<Response>((_, ablehnen) => {
+      init.signal!.addEventListener('abort', () => ablehnen(init.signal!.reason), { once: true });
+    });
+  }, 250);
+  const session = new TurnierSitzung({
+    turnier: 't', modus: 'online', geraet: 'g', speicher: new SpeicherImArbeitsspeicher(),
+    autor: { rolle: 'leitung', name: 'A' }, token: () => 'tok-a', api,
+  });
+  try {
+    const e = await session.eintragen(ART.testNotiz, { text: 'Timeout' });
+    const versuch = session.abgleich!.durchlauf();
+    await vi.advanceTimersByTimeAsync(250);
+    await versuch;
+    expect(session.status?.verbindung).toBe('offline');
+    expect(await session.ereignisse()).toMatchObject([{ id: e.id, status: 'ausstehend' }]);
+
+    antwortet = true;
+    await session.abgleich!.durchlauf();
+    expect(session.status?.verbindung).toBe('verbunden');
+    expect(await session.ereignisse()).toMatchObject([{ id: e.id, status: 'bestaetigt' }]);
+  } finally {
+    vi.useRealTimers();
+  }
 });

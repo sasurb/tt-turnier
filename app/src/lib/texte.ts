@@ -1809,6 +1809,12 @@ export const T = {
     jetzt: 'Jetzt an den Tisch!',
     schliessen: 'OK',
   },
+  abgleichStatus: {
+    lokal: 'Lokal gespeichert',
+    ausstehend: 'Ausstehend',
+    bestaetigt: 'Synchronisiert',
+    abgelehnt: 'Abgelehnt',
+  },
   abgelehnt: {
     titel: (n: number) => (n === 1 ? '1 Eintrag wurde vom Server abgelehnt' : `${n} Einträge wurden vom Server abgelehnt`),
     text: 'Abgelehnte Einträge zählen nicht und werden nicht erneut gesendet. Die übrigen Einträge sind angekommen.',

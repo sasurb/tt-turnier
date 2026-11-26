@@ -921,8 +921,7 @@
                       <div class="leise">
                         {#if e.seq !== null && e.status === 'bestaetigt'}#{e.seq} · {/if}
                         {zeit(e.zeit)} · {T.turnier.von} {e.autor?.name ?? '–'}{e.autor && e.autor.rolle !== 'leitung' ? ` (${e.autor.rolle === 'spieler' && e.autor.helfer ? T.zugang.spielerHelfer : T.rollen[e.autor.rolle]})` : ''}
-                        {#if e.status === 'ausstehend'}<span class="marke">{T.turnier.ausstehend}</span>{/if}
-                        {#if e.status === 'abgelehnt'}<span class="marke">{T.abgelehnt.titel(1)}</span>{/if}
+                        <span class="marke">{T.abgleichStatus[e.status]}</span>
                       </div>
                     </div>
                     {#if leitung && darfSchreiben && rueckgaengigBar(e)}

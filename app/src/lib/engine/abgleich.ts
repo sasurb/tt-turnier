@@ -87,7 +87,8 @@ export class Abgleich {
 
   private planen() {
     if (!this.aktiv) return;
-    this.timer = setTimeout(() => void this.anstossen(), this.abstand);
+    const bisPauseEnde = this.sendePauseBis > 0 ? Math.max(0, this.sendePauseBis - Date.now()) : this.abstand;
+    this.timer = setTimeout(() => void this.anstossen(), Math.min(this.abstand, bisPauseEnde));
   }
 
   /** Ein vollständiger Durchlauf: Senden, dann Abholen. Öffentlich für Tests. */
@@ -97,6 +98,10 @@ export class Abgleich {
     const speicher = this.o.speicherFuer?.(token) ?? this.o.speicher;
     let neueDaten = false;
     const basis = this.o.intervallMs ?? 2000;
+    if (this.sendePauseBis > 0 && Date.now() >= this.sendePauseBis) {
+      this.sendePauseBis = 0;
+      this.abstand = basis;
+    }
     try {
       let verbindung: Verbindung = 'verbunden';
       let meldung: string | null = null;
