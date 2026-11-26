@@ -5,7 +5,7 @@
   import { name, vorgabeVon } from '../../engine/abfragen';
   import { istRundenModus } from '../../engine/runden';
   import { ergebnisText, ergebnisWerten, gewinnSaetze, satzAusVerliererpunkten } from '../../engine/ergebnis';
-  import { einstFuer, festeSaetzeVon, type ErgebnisEingabe, type ErgebnisEintrag, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
+  import { einstFuer, festeSaetzeVon, type Ergebnis, type ErgebnisEingabe, type ErgebnisEintrag, type KonkurrenzZustand, type Seite, type Spiel } from '../../engine/modell';
   import type { TurnierZustand } from '../../engine/zustand';
 
   let {
@@ -53,12 +53,17 @@
   const bestOf = $derived(einstFuer(k, spiel).bestOf);
   const gewinn = $derived(gewinnSaetze(bestOf));
   const vorgabe = $derived(namen ? null : vorgabeVon(z, k, spiel));
+  function formatiertesErgebnis(e: Ergebnis): string {
+    const sieger = e.gewinner ? (namen?.[e.gewinner === 'a' ? 0 : 1] ?? name(z, spiel[e.gewinner], k)) : undefined;
+    return ergebnisText(e, 'a', sieger);
+  }
   const nameA = $derived((namen ? namen[0] : name(z, spiel.a)) + (meineSeite === 'a' ? ` (${T.erg.du})` : ''));
   const nameB = $derived((namen ? namen[1] : name(z, spiel.b)) + (meineSeite === 'b' ? ` (${T.erg.du})` : ''));
   const kannEintragen = $derived(darf && (spiel.status === 'offen' || spiel.status === 'gespielt') && !spiel.gestrichen && !spiel.gesperrt && !(spiel.kampflosDurchRueckzug && !spiel.eintrag));
 
   // Formular
-  type Zeile = { gewinner: Seite | null; verlierer: string };
+  type Zeile = { gewinner: Seite | null; verlierer: string; a?: string; b?: string };
+  let manuell = $state(false);
   // svelte-ignore state_referenced_locally
   const vorlage = spiel.eintrag?.eingabe;
   let art = $state<'normal' | 'kampflos' | 'aufgabe'>(vorlage?.kampflos ? 'kampflos' : vorlage?.aufgabe ? 'aufgabe' : 'normal');
@@ -77,12 +82,36 @@
   function saetzeAusZeilen(): [number, number][] {
     const l: [number, number][] = [];
     for (const z of zeilen) {
+      if (manuell) {
+        if (!z.a || !z.b) break;
+        l.push([Number(z.a), Number(z.b)]);
+        continue;
+      }
       if (!z.gewinner || z.verlierer === '') break;
       const v = Number(z.verlierer);
       if (!Number.isInteger(v) || v < 0) break;
       l.push(satzAusVerliererpunkten(z.gewinner, v));
     }
     return l;
+  }
+
+  function eingabeWechseln() {
+    for (const z of zeilen) {
+      if (manuell) {
+        if (z.a && z.b && Number(z.a) !== Number(z.b)) {
+          z.gewinner = Number(z.a) > Number(z.b) ? 'a' : 'b';
+          z.verlierer = String(Math.min(Number(z.a), Number(z.b)));
+        } else {
+          z.gewinner = null;
+          z.verlierer = '';
+        }
+      } else if (z.gewinner && z.verlierer !== '') {
+        const [a, b] = satzAusVerliererpunkten(z.gewinner, Number(z.verlierer));
+        z.a = String(a);
+        z.b = String(b);
+      }
+    }
+    manuell = !manuell;
   }
 
   const eingabe = $derived.by((): ErgebnisEingabe => {
@@ -105,7 +134,7 @@
   });
   $effect(() => {
     if (art !== 'normal' && art !== 'aufgabe') return;
-    const voll = zeilen.every((z) => z.gewinner && z.verlierer !== '');
+    const voll = zeilen.every((z) => manuell ? !!z.a && !!z.b : z.gewinner && z.verlierer !== '');
     const entschieden = feste ? saetzeAusZeilen().length >= feste : satzStand[0] >= gewinn || satzStand[1] >= gewinn;
     if (voll && !entschieden && zeilen.length < (feste ?? bestOf)) zeilen.push({ gewinner: null, verlierer: '' });
     // überflüssige leere Zeilen nach der Entscheidung entfernen
@@ -160,7 +189,7 @@
     return new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
   }
   function vonText(x: ErgebnisEintrag) {
-    return T.erg.von(x.von?.name ?? '–', zeit(x.zeit));
+    return T.erg.von(x.von?.name, zeit(x.zeit));
   }
 
   let dialog: HTMLDialogElement | undefined = $state();
@@ -183,12 +212,12 @@
 
   {#if spiel.ergebnis}
     <div class="aktuell">
-      <strong class="gross">{ergebnisText(spiel.ergebnis)}</strong>
+      <strong class="gross">{formatiertesErgebnis(spiel.ergebnis)}</strong>
       {#if spiel.stand}<span class="marke stand-{spiel.stand}">{T.spiele[spiel.stand]}</span>{/if}
       {#if spiel.kampflosDurchRueckzug}<span class="marke">{T.spiele.kampflosRueckzug}</span>{/if}
       {#if spiel.gestrichen}<span class="marke">{T.spiele.gestrichen}</span>{/if}
       {#if spiel.eintrag}<div class="leise">{vonText(spiel.eintrag)}</div>{/if}
-      {#if spiel.angefochtenVon}<div class="leise">{T.erg.angefochtenVon(spiel.angefochtenVon.name)}</div>{/if}
+      {#if spiel.angefochtenVon?.name}<div class="leise">{T.erg.angefochtenVon(spiel.angefochtenVon.name)}</div>{/if}
     </div>
   {/if}
 
@@ -197,14 +226,14 @@
     <ul class="liste">
       {#each spiel.alternativen as alt (alt.ereignis)}
         <li class="reihe zwischen">
-          <span><strong>{ergebnisText(alt.ergebnis)}</strong><br /><span class="leise">{vonText(alt)}</span></span>
+          <span><strong>{formatiertesErgebnis(alt.ergebnis)}</strong><br /><span class="leise">{vonText(alt)}</span></span>
           <button class="klein" disabled={sendet} onclick={() => senden(ART.spielEntschieden, { ereignis: alt.ereignis })}>{T.erg.entscheiden}</button>
         </li>
       {/each}
     </ul>
   {:else if entscheidet && spiel.stand === 'angefochten' && spiel.eintrag}
     <p>{T.erg.entscheidenText}</p>
-    <button class="breit" disabled={sendet} onclick={() => senden(ART.spielEntschieden, { ereignis: spiel.eintrag!.ereignis })}>{T.erg.entscheiden}: {ergebnisText(spiel.eintrag.ergebnis)}</button>
+    <button class="breit" disabled={sendet} onclick={() => senden(ART.spielEntschieden, { ereignis: spiel.eintrag!.ereignis })}>{T.erg.entscheiden}: {formatiertesErgebnis(spiel.eintrag.ergebnis)}</button>
   {/if}
 
   {#if gegnerHatEingetragen && spiel.stand === 'eingetragen' && !formOffen}
@@ -221,7 +250,7 @@
       </div>
     </div>
   {:else if meineSeite && spiel.eintrag?.amtlich && spiel.stand === 'bestaetigt'}
-    <p class="meldung info">{T.erg.leitungHat}</p>
+    <p class="meldung info">{T.erg.amtlicherEintrag(spiel.eintrag.von)} Stimmt etwas nicht, sprich bitte die Leitung an.</p>
   {:else if !darf && rolle === 'spieler'}
     <p class="meldung info">{T.erg.nurEigene}</p>
   {:else if !darf && rolle === 'helfer'}
@@ -260,21 +289,25 @@
             </div>
           </fieldset>
         {:else}
-          <p class="leise">{T.erg.verliererHilfe}</p>
+          <button type="button" class="zweit" aria-pressed={manuell} onclick={eingabeWechseln}>Beide Ballpunktzahlen eingeben</button>
+          <p class="leise">{manuell ? 'Trage für jeden Satz die Ballpunkte beider Seiten ein.' : T.erg.verliererHilfe}</p>
           {#if feste}<p class="leise" data-testid="feste-hinweis">{T.erg.festText(feste)}</p>{/if}
           {#each zeilen as zeile, i (i)}
             <div class="satz" data-testid="satz-{i + 1}">
               <span class="satz-nr">{T.erg.satz(i + 1)}</span>
+              {#if manuell}
+                <label>{nameA}<input class="punkte" inputmode="numeric" pattern="[0-9]*" bind:value={zeile.a} /></label>
+                <label>{nameB}<input class="punkte" inputmode="numeric" pattern="[0-9]*" bind:value={zeile.b} /></label>
+              {:else}
               <div class="seiten" role="radiogroup" aria-label="{T.erg.satzGewinner} {i + 1}">
-                <button type="button" role="radio" class="chip" class:aktiv={zeile.gewinner === 'a'} aria-checked={zeile.gewinner === 'a'} onclick={() => (zeile.gewinner = 'a')}>{name(z, spiel.a)}</button>
-                <button type="button" role="radio" class="chip" class:aktiv={zeile.gewinner === 'b'} aria-checked={zeile.gewinner === 'b'} onclick={() => (zeile.gewinner = 'b')}>{name(z, spiel.b)}</button>
+                <button type="button" role="radio" class="chip" class:aktiv={zeile.gewinner === 'a'} aria-checked={zeile.gewinner === 'a'} onclick={() => (zeile.gewinner = 'a')}>{nameA}</button>
+                <button type="button" role="radio" class="chip" class:aktiv={zeile.gewinner === 'b'} aria-checked={zeile.gewinner === 'b'} onclick={() => (zeile.gewinner = 'b')}>{nameB}</button>
               </div>
               <input
                 class="punkte"
                 type="text"
                 inputmode="numeric"
                 pattern="[0-9]*"
-                maxlength="2"
                 aria-label="{T.erg.verliererPunkte} {T.erg.satz(i + 1)}"
                 placeholder={T.erg.verliererPunkte}
                 bind:value={zeile.verlierer}
@@ -283,6 +316,7 @@
               {#if zeile.gewinner && zeile.verlierer !== ''}
                 {@const s = satzAusVerliererpunkten(zeile.gewinner, Number(zeile.verlierer))}
                 <span class="satz-erg">{s[0]}:{s[1]}</span>
+              {/if}
               {/if}
               {#if zeilen.length > 1 && i === zeilen.length - 1}
                 <button type="button" class="zweit klein" aria-label={T.erg.satzEntfernen} onclick={() => (zeilen = zeilen.slice(0, -1))}>✕</button>
@@ -304,7 +338,7 @@
 
       <div class="vorschau" aria-live="polite">
         {#if wertung.ok}
-          <strong>{ergebnisText(wertung.ergebnis)}</strong> – {wertung.ergebnis.gewinner === null ? T.erg.unentschieden : T.erg.gewinnt(wertung.ergebnis.gewinner === 'a' ? name(z, spiel.a) : name(z, spiel.b))}
+          <strong>{formatiertesErgebnis(wertung.ergebnis)}</strong> – {wertung.ergebnis.gewinner === null ? T.erg.unentschieden : T.erg.gewinnt(wertung.ergebnis.gewinner === 'a' ? name(z, spiel.a) : name(z, spiel.b))}
         {:else}
           <span class="leise">{wertung.fehler}</span>
         {/if}

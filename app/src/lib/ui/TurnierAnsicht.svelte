@@ -8,18 +8,19 @@
   import { app, fehlerText } from '../app.svelte';
   import { ApiFehler } from '../engine/api';
   import { TurnierSitzung } from '../engine/turnier';
+  import { SitzungsSpeicher } from '../engine/speicher';
+  import { identitaetsbindung, sitzungsbindung } from '../engine/sitzungsbindung';
   import type { AbgleichStatus } from '../engine/abgleich';
   import type { LokalesEreignis } from '../engine/typen';
-  import { berechnen, type TurnierZustand } from '../engine/zustand';
-  import { name as spName } from '../engine/abfragen';
-  import { ergebnisText } from '../engine/ergebnis';
+  import { berechnen, fristgebundeneAktion, nachTurnierende, type TurnierZustand } from '../engine/zustand';
+  import { spielErgebnisText, name as spName } from '../engine/abfragen';
   import type { Spiel } from '../engine/modell';
   import { uebersichtText } from '../engine/uebersicht';
-  import { anzeigeName, geraetId, gemerktesTurnier, turnierAbmelden, turnierMerken, type GemerktesTurnier } from '../einstellungen';
+  import { anzeigeName, kontoSitzung, geraetId, gemerktesTurnier, turnierAbmelden, turnierMerken, type GemerktesTurnier } from '../einstellungen';
   import { codeAnzeige } from '../code';
   import { appBasis } from '../zentrale.svelte';
   import { nativ } from '../nativ';
-  import { erinnerungFaellig, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben, sicherungErstellen } from '../sicherung';
+  import { dateiAusgeben, erinnerungFaellig, lokaleSicherung, setzeLokaleSicherung, sicherungAusgeben, sicherungErstellen } from '../sicherung';
   import { etwasVerdeckt } from '../engine/abfragen';
   import { MAX_JE_RUECKNAHME, rueckgaengigBar, rueckgaengigPruefen } from '../engine/verlauf';
   import { aktuelleAktion } from '../aktion';
@@ -54,6 +55,7 @@
   const lokal = $derived(id.startsWith('l'));
   let eintrag = $state<GemerktesTurnier | null>(null);
   let sitzung: TurnierSitzung | null = null;
+  let wechsel = $state(false);
   let fehler = $state('');
   let laedt = $state(true);
   let zustand = $state<TurnierZustand | null>(null);
@@ -74,16 +76,22 @@
    * prüft das beim Öffnen; nach „Abmelden“ fällt es sofort weg, weil das Konto-Token nie am
    * Turnier gespeichert wird.
    */
-  let kontoRechte = $state<Rolle | null>(null);
-  let rechteFuer = ''; // Token, für das kontoRechte gilt
+  let bestaetigteKontoRechte = $state<Rolle | null>(null);
+  let kontoIdentitaet = $state<string | null>(null);
+  let rechteFuer = $state('');
+  let zerstoert = false;
+  const kontoRechte = $derived(app.sitzung?.token === rechteFuer ? bestaetigteKontoRechte : null);
   const kontoToken = $derived(kontoRechte && app.sitzung ? app.sitzung.token : null);
   /** Turnierinfo vom Server holen; mit Konto-Token auch die Rechte dieses Kontos */
   async function infoLaden() {
     const s = app.sitzung;
-    const kennung = gemerktesTurnier(id)?.token ?? null;
+    const kennung = eintrag?.token ?? null;
+    let ersteAbfrage = true;
     try {
       // Mit Kennung: prüfen, ob sie noch gilt (gesperrt/neu ausgegeben → Gerät wird Zuschauer)
       const a = await api.turnier(id, kennung ?? s?.token ?? null);
+      ersteAbfrage = false;
+      if (kennung !== (eintrag?.token ?? null) || zerstoert || wechsel || s !== app.sitzung) return;
       // Name und Datum kennt bei Online-Turnieren der Server (ohne Ereignis turnier.angelegt)
       if (eintrag && (a.turnier.name !== eintrag.name || a.turnier.datum !== eintrag.datum)) {
         turnierMerken({ ...eintrag, name: a.turnier.name, datum: a.turnier.datum });
@@ -98,31 +106,53 @@
           turnierAbmelden(id);
           eintrag = gemerktesTurnier(id) ?? null;
           zugangFehler = T.zugang.kennungUngueltig;
-        } else if (a.turnier.rechte === 'helfer' && a.turnier.aufgaben && eintrag && JSON.stringify(a.turnier.aufgaben) !== JSON.stringify(eintrag.aufgaben)) {
+        } else {
+          const aktuell = a.turnier.identitaet
+            ? { bezug: a.turnier.identitaet, tokenHash: sitzungsbindung(kennung)! }
+            : null;
+          if (eintrag && (eintrag.kennungIdentitaet?.bezug !== aktuell?.bezug || eintrag.kennungIdentitaet?.tokenHash !== aktuell?.tokenHash)) {
+            turnierMerken({ ...eintrag, kennungIdentitaet: aktuell });
+            eintrag = gemerktesTurnier(id) ?? null;
+          }
+        }
+        if (a.turnier.rechte === 'helfer' && a.turnier.aufgaben && eintrag && JSON.stringify(a.turnier.aufgaben) !== JSON.stringify(eintrag.aufgaben)) {
           // Aufgaben hat die Leitung geändert: gelten sofort
           turnierMerken({ ...eintrag, aufgaben: a.turnier.aufgaben });
           eintrag = gemerktesTurnier(id) ?? null;
+          const identitaet = a.turnier.identitaet;
+          if (identitaet) await new SitzungsSpeicher(speicher, identitaetsbindung(identitaet)).bestaetigteVerwerfen(id);
         }
         if (s) {
           const k = await api.turnier(id, s.token);
-          kontoRechte = k.turnier.rechte ?? null;
-        } else kontoRechte = null;
+          if (zerstoert || wechsel || s !== app.sitzung) return;
+          bestaetigteKontoRechte = k.turnier.rechte ?? null;
+          kontoIdentitaet = k.turnier.identitaet ?? null;
+        } else {
+          bestaetigteKontoRechte = null;
+          kontoIdentitaet = null;
+        }
       } else {
-        kontoRechte = s ? (a.turnier.rechte ?? null) : null;
+        bestaetigteKontoRechte = s ? (a.turnier.rechte ?? null) : null;
+        kontoIdentitaet = s ? (a.turnier.identitaet ?? null) : null;
       }
       rechteFuer = s?.token ?? '';
       // Für den Offline-Betrieb merken (nur Anzeige – der Server prüft jeden Eintrag beim Nachtragen)
       const g = gemerktesTurnier(id);
-      if (g && s && (g.kontoRolle !== kontoRechte || g.kontoId !== s.konto.id)) turnierMerken({ ...g, kontoRolle: kontoRechte, kontoId: s.konto.id });
+      if (g && s && (g.kontoRolle !== bestaetigteKontoRechte || g.kontoId !== s.konto.id || g.kontoIdentitaet !== kontoIdentitaet)) {
+        turnierMerken({ ...g, kontoRolle: bestaetigteKontoRechte, kontoId: s.konto.id, kontoIdentitaet });
+      }
     } catch (x) {
-      if (kennung && x instanceof ApiFehler && x.code === 'nicht_angemeldet') {
+      if (zerstoert || wechsel || s !== app.sitzung) return;
+      if (kennung && kennung !== (gemerktesTurnier(id)?.token ?? null)) return;
+      if (ersteAbfrage && kennung && x instanceof ApiFehler && x.code === 'nicht_angemeldet') {
         turnierAbmelden(id);
         eintrag = gemerktesTurnier(id) ?? null;
         zugangFehler = T.zugang.kennungUngueltig;
       }
       // Kein Netz: zuletzt bestätigte Rechte dieses Kontos weiter nutzen (Einträge warten auf das Netz)
       const g = gemerktesTurnier(id);
-      kontoRechte = x instanceof ApiFehler && x.istNetzwerk && s && g?.kontoId === s.konto.id ? (g.kontoRolle ?? null) : null;
+      bestaetigteKontoRechte = x instanceof ApiFehler && x.istNetzwerk && s && g?.kontoId === s.konto.id ? (g.kontoRolle ?? null) : null;
+      kontoIdentitaet = bestaetigteKontoRechte ? (g?.kontoIdentitaet ?? null) : null;
       rechteFuer = s?.token ?? '';
     }
   }
@@ -130,7 +160,8 @@
     const s = app.sitzung;
     if (lokal || laedt) return;
     if (!s) {
-      kontoRechte = null;
+      bestaetigteKontoRechte = null;
+      kontoIdentitaet = null;
       rechteFuer = '';
       return;
     }
@@ -154,6 +185,11 @@
   const anmeldungMoeglich = $derived(!lokal && app.server.art === 'bereit' && !!app.server.info.anmeldung && !app.server.info.zentrale);
   /** Token, mit dem dieses Gerät sendet: Kennung vor Konto */
   const schreibToken = $derived(eintrag?.token ?? kontoToken);
+  function identitaetFuer(token: string): string | null {
+    const kennung = eintrag?.kennungIdentitaet;
+    if (token === eintrag?.token && kennung?.tokenHash === sitzungsbindung(token)) return kennung.bezug;
+    return token === kontoToken ? kontoIdentitaet : null;
+  }
   const darfSchreiben = $derived(lokal || !!schreibToken);
   const name = $derived(zustand?.name || eintrag?.name || '');
   const link = $derived(`${appBasis()}#/t/${id}`);
@@ -189,6 +225,8 @@
           : ['tabellen', 'spiele', ...(mitTischen ? ['tische' as const] : [])],
   );
   /** Reiterleiste am Handy: aktiven Reiter in die Mitte rollen (Schatten an den Rändern zeigen „hier geht es weiter“) */
+  let mehrOffen = $state(false);
+  const hauptReiter = new Set(['meine', 'spiele', 'tische', 'tabellen']);
   let reiterNav = $state<HTMLElement | null>(null);
   $effect(() => {
     void aktiv;
@@ -231,14 +269,12 @@
   /** Frühere Adressen …/anmeldung (bis 0.12) und …/spieler (bis 0.13): heute Reiter „Teilnehmer“ */
   const reiterNeu = $derived(reiter === 'anmeldung' || reiter === 'spieler' ? 'teilnehmer' : reiter);
   const aktiv = $derived<Reiter>(spielLink ? (rolle === 'spieler' ? 'meine' : 'spiele') : reiterNeu && reiterListe.includes(reiterNeu as Reiter) ? (reiterNeu as Reiter) : standardReiter);
-  let spielLinkGeoeffnet = '';
   $effect(() => {
     const l = spielLink;
-    if (!l || laedt || !zustand) return;
-    const schluessel = `${l.k}/${l.s}`;
-    if (spielLinkGeoeffnet === schluessel) return;
-    spielLinkGeoeffnet = schluessel;
-    if (zustand.konkurrenzen[l.k]?.spiele[l.s]) offen = { k: l.k, s: l.s };
+    if (!l || laedt || wechsel || !zustand?.konkurrenzen[l.k]?.spiele[l.s]) return;
+    offen = { k: l.k, s: l.s };
+    // Erst nach dem Öffnen auf den Reiter wechseln, auch wenn das Spiel erst beim Abgleich kommt.
+    ersetze(`t/${id}/${rolle === 'spieler' ? 'meine' : 'spiele'}`);
   });
 
   /** Online-Turniere ohne „turnier.angelegt“: Name und Datum vom Server (gemerkt am Gerät) */
@@ -248,8 +284,10 @@
     return z;
   }
   async function aktualisieren() {
-    if (!sitzung) return;
-    ereignisse = await sitzung.ereignisse();
+    if (!sitzung || wechsel) return;
+    const liste = await sitzung.ereignisse();
+    if (wechsel) return;
+    ereignisse = liste;
     zustand = mitKopf(berechnen(ereignisse));
     status = sitzung.status ? { ...sitzung.status } : null;
   }
@@ -265,15 +303,29 @@
   }
 
   function beiSichtbarkeit() {
+    if (identitaetGewechselt()) return;
     if (document.visibilityState === 'visible') void sitzung?.abgleich?.anstossen();
   }
+  function identitaetGewechselt() {
+    if (!lokal && !laedt && ((gemerktesTurnier(id)?.token ?? null) !== (eintrag?.token ?? null) ||
+        (kontoSitzung()?.token ?? null) !== (app.sitzung?.token ?? null))) {
+      wechsel = true;
+      sitzung?.stop();
+      offen = null;
+      zustand = null;
+      ereignisse = [];
+      fehler = 'Die Anmeldung wurde in einem anderen Fenster geändert. Bitte lade diese Ansicht neu.';
+    }
+    return wechsel;
+  }
   function beiOnline() {
+    if (identitaetGewechselt()) return;
     void sitzung?.abgleich?.anstossen();
   }
   const uhr = setInterval(() => (jetzt = Date.now()), 60_000);
 
   function autor() {
-    const g = gemerktesTurnier(id);
+    const g = eintrag;
     if (lokal) return { rolle: 'leitung' as Rolle, name: g?.wer || anzeigeName() || 'Leitung' };
     if (g?.token) {
       return {
@@ -291,8 +343,16 @@
     zugangFehler = '';
     try {
       const a = await api.turnierZugang(id, c);
-      turnierMerken({ ...eintrag!, rolle: a.rolle, token: a.token, spieler: a.spieler ?? null, helfer: a.helfer ?? false, aufgaben: a.aufgaben ?? null, wer: a.name ?? null });
+      turnierMerken({ ...eintrag!, rolle: a.rolle, token: a.token, spieler: a.spieler ?? null, helfer: a.helfer ?? false, aufgaben: a.aufgaben ?? null, wer: a.name ?? null,
+        kennungIdentitaet: a.identitaet ? { bezug: a.identitaet, tokenHash: sitzungsbindung(a.token)! } : null });
+      // Helferrechte können seit dem letzten Login eingeschränkt worden sein.
+      if (a.rolle === 'helfer' && a.identitaet) {
+        await new SitzungsSpeicher(speicher, identitaetsbindung(a.identitaet)).bestaetigteVerwerfen(id);
+      }
       eintrag = gemerktesTurnier(id) ?? null;
+      ereignisse = [];
+      zustand = null;
+      await aktualisieren();
       const n = a.name ?? '';
       hinweis = a.rolle === 'spieler' && !a.helfer ? T.zugang.willkommen(n) : a.rolle === 'leitung' ? T.zugang.willkommenLeitung(n) : T.zugang.willkommenHelfer(n);
       void sitzung?.abgleich?.anstossen();
@@ -323,10 +383,15 @@
 
   function codeAbmelden() {
     if (!confirm(T.zugang.abmeldenFrage)) return;
+    if (identitaetGewechselt()) return;
     const alt = eintrag?.token;
     if (alt) void api.logout(alt).catch(() => undefined); // Sitzung auch auf dem Server beenden
     turnierAbmelden(id);
     eintrag = gemerktesTurnier(id) ?? null;
+    ereignisse = [];
+    zustand = null;
+    void aktualisieren();
+    void sitzung?.abgleich?.anstossen();
     ersetze(`t/${id}/${standardReiter}`);
   }
 
@@ -354,7 +419,21 @@
         geraet: geraetId(),
         autor,
         api,
-        token: () => gemerktesTurnier(id)?.token ?? (kontoRechte && app.sitzung ? app.sitzung.token : null),
+        token: () => wechsel || zerstoert ? null : schreibToken,
+        sichtVersion: () => {
+          const g = gemerktesTurnier(id);
+          return JSON.stringify([g?.token ?? null, g?.aufgaben ?? null, g?.helfer ?? false, kontoSitzung()?.token ?? null]);
+        },
+        bindungFuer: (token) => {
+          const identitaet = identitaetFuer(token);
+          return identitaet ? identitaetsbindung(identitaet) : null;
+        },
+        alterLesestandErlaubt: (token) => token === kontoToken || (token === eintrag?.token && eintrag.rolle === 'leitung'),
+        altbestandPasst: (e, token) => {
+          const autor = e.autor;
+          return !!autor?.spieler && autor.rolle === 'spieler' &&
+            identitaetFuer(token)?.startsWith(`kennung:spieler:${autor.spieler}:`) === true;
+        },
         beiAenderung: () => void aktualisieren(),
         // Kennung gesperrt/neu ausgegeben oder Konto ohne Rechte: sofort Zuschauer, Bestand bleibt vollständig
         beiRechteVerlust: () => {
@@ -363,26 +442,25 @@
             eintrag = gemerktesTurnier(id) ?? null;
             zugangFehler = T.zugang.kennungUngueltig;
           } else {
-            kontoRechte = null;
+            const g = gemerktesTurnier(id);
+            if (g && g.kontoId === app.sitzung?.konto.id) {
+              turnierMerken({ ...g, kontoRolle: null, kontoIdentitaet: null });
+            }
+            kontoIdentitaet = null;
+            bestaetigteKontoRechte = null;
           }
         },
       });
+      if (!lokal) await infoLaden(); // Der Speicherbereich hängt von den bestätigten Kontorechten ab.
       await aktualisieren();
-      if (!lokal) await infoLaden(); // Rechte des Kontos vor der Reiterwahl kennen
       sitzung.start();
       if (code && !lokal) await codeVerwenden(code);
       // Reiter festhalten, damit die Seite beim Eintragen nicht springt
       if (!code && !reiter) ersetze(`t/${id}/${standardReiter}`);
-      // Spiel-Link: Adresse auf den Reiter setzen, damit „Zurück“ und Neuladen nicht erneut öffnen
-      if (reiter === 'spiel' && weitere.length === 2) {
-        const [k, s] = weitere;
-        if (zustand?.konkurrenzen[k!]?.spiele[s!]) offen = { k: k!, s: s! };
-        spielLinkGeoeffnet = `${k}/${s}`;
-        ersetze(`t/${id}/${rolle === 'spieler' ? 'meine' : 'spiele'}`);
-      }
       void einstellungenLaden();
       document.addEventListener('visibilitychange', beiSichtbarkeit);
       addEventListener('online', beiOnline);
+      addEventListener('storage', identitaetGewechselt);
     } catch (x) {
       fehler = fehlerText(x, T.app.fehlerAllgemein);
     } finally {
@@ -391,12 +469,14 @@
   });
 
   onDestroy(() => {
+    zerstoert = true;
     sitzung?.stop();
     clearInterval(uhr);
     clearTimeout(uebersichtTimer);
     clearTimeout(aktionTimer);
     document.removeEventListener('visibilitychange', beiSichtbarkeit);
     removeEventListener('online', beiOnline);
+    removeEventListener('storage', identitaetGewechselt);
   });
 
   /**
@@ -406,8 +486,22 @@
    */
   let aktion = $state<{ ids: string[]; text: string; gruppe: string | null } | null>(null);
   let aktionTimer: ReturnType<typeof setTimeout> | undefined;
+  const fristAnzeige = new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', dateStyle: 'short', timeStyle: 'short' });
+  function neueZeit(zeit: string | null): string {
+    const datum = zeit ? new Date(zeit) : null;
+    return datum && Number.isFinite(datum.getTime()) ? fristAnzeige.format(datum) : 'unbekannt';
+  }
+  function spaeteBallpunkte(wert: unknown): string {
+    if (!Array.isArray(wert)) return '';
+    return wert.map((zahl) => Number.isSafeInteger(zahl) ? String(zahl) : '?').join(':');
+  }
   async function eintragen(art: string, daten: Record<string, unknown>, opt: { still?: boolean; id?: string } = {}) {
+    if (identitaetGewechselt()) throw new Error(fehler);
     if (!sitzung) throw new Error(T.app.fehlerAllgemein);
+    if (fristgebundeneAktion(art) && nachTurnierende(zustand?.enddatum ?? null, new Date().toISOString())) {
+      hinweis = 'Das Turnier ist beendet. Für neue Spiele bitte das Enddatum verlängern.';
+      throw new Error(hinweis);
+    }
     const e = await sitzung.eintragen(art, daten, opt.id);
     if (leitung && !opt.still && rueckgaengigBar(e)) {
       const gruppe = aktuelleAktion();
@@ -499,6 +593,40 @@
     const t = setInterval(() => void anmeldungenPruefen(), 120_000);
     return () => clearInterval(t);
   });
+
+  let fremde = $state.raw<LokalesEreignis[]>([]);
+  let fremdeLaeuft = false;
+  const fremdeAutoren = $derived([...new Set(fremde.map((e) =>
+    e.autor ? `${T.rollen[e.autor.rolle]} · ${e.autor.name}` : T.fremdeEintraege.unbekannt
+  ))]);
+  async function fremdeLaden() {
+    if (!sitzung || fremdeLaeuft || wechsel) return;
+    fremdeLaeuft = true;
+    try {
+      fremde = await sitzung.fremdeAusstehende();
+    } finally {
+      fremdeLaeuft = false;
+    }
+  }
+  $effect(() => {
+    void schreibToken;
+    if (laedt || lokal || wechsel) return;
+    untrack(() => void fremdeLaden().catch(() => undefined));
+    const timer = setInterval(() => void fremdeLaden().catch(() => undefined), 15_000);
+    return () => clearInterval(timer);
+  });
+  async function fremdeSichern() {
+    const aktuell = await sitzung?.fremdeAusstehende();
+    if (!aktuell?.length) return;
+    const eintraege = aktuell.map(({ id: eid, turnier, art, daten, zeit, geraet, autor }) =>
+      ({ id: turnier === id ? eid : eid.slice(turnier.length + 1), art, daten, zeit, geraet, autor }));
+    await dateiAusgeben(`TT-Turnier-${id}-ausstehend.json`, JSON.stringify({ turnier: id, eintraege }, null, 2), 'application/json', false);
+  }
+  async function fremdeVerwerfen() {
+    if (!confirm(T.fremdeEintraege.bestaetigen)) return;
+    await sitzung?.fremdeVerwerfen(fremde);
+    await fremdeLaden();
+  }
 
   /* ---------- Vom Server abgelehnte Einträge ---------- */
   const abgelehnt = $derived(ereignisse.filter((e) => e.status === 'abgelehnt'));
@@ -600,8 +728,8 @@
 
   async function sicherungBauen() {
     // Nur aus dem vollständigen Bestand sichern (nie aus der gefilterten Zuschauer-Sicht)
-    const sicht = lokal ? null : await speicher.sicht(id);
-    if (sicht && sicht !== 'voll') throw new Error(T.einstellungen.sicherungUnvollstaendig);
+    const sicht = lokal ? null : await sitzung?.sicht();
+    if (!lokal && sicht?.split('|')[0] !== 'voll') throw new Error(T.einstellungen.sicherungUnvollstaendig);
     const liste = sitzung ? await sitzung.ereignisse() : ereignisse;
     return sicherungErstellen({ id, name, datum: zustand?.datum ?? eintrag?.datum ?? null, modus: lokal ? 'lokal' : 'online' }, liste);
   }
@@ -650,7 +778,7 @@
       case ART.spielErgebnis: {
         const s = z && typeof d.spiel === 'string' ? z.konkurrenzen[String(d.konkurrenz)]?.spiele[d.spiel] : undefined;
         const namen = z ? `${spName(z, String(d.a ?? ''))} – ${spName(z, String(d.b ?? ''))}` : '';
-        const erg = s?.eintrag?.ereignis === e.id && s.ergebnis ? ` ${ergebnisText(s.ergebnis)}` : '';
+        const erg = s?.eintrag?.ereignis === e.id && s.ergebnis ? ` ${spielErgebnisText(zustand!, s, s.ergebnis)}` : '';
         return `${art}: ${namen}${erg}${k ? ` (${k})` : ''}`;
       }
       default:
@@ -670,11 +798,29 @@
   <p class="leise">{T.app.laden}</p>
 {:else if fehler}
   <div class="meldung fehler" role="alert">{fehler}</div>
+  {#if wechsel}<button onclick={() => location.reload()}>Neu laden</button>{/if}
   <a class="knopf zweit" href={linkZu('')}>{T.app.zurueck}</a>
 {:else}
   {#if hinweis}<div class="meldung ok" role="status">{hinweis}</div>{/if}
   {#if sperre?.zentrale}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.gesperrtOnline(sperre.zentrale)}</div>{/if}
   {#if sperre?.abgegeben}<div class="meldung info" role="status" data-testid="sperre">{T.zentrale.abgegebenHinweis}</div>{/if}
+  {#if schreibToken && fremde.length}
+    <section class="meldung info" role="status" data-testid="fremde-ausstehende">
+      <strong>{T.fremdeEintraege.titel(fremde.length)}</strong>
+      <Hilfe text={T.fremdeEintraege.hilfe} />
+      <p>{fremdeAutoren.join(', ')}</p>
+      <div class="reihe">
+        <button class="zweit" onclick={fremdeSichern}>{T.fremdeEintraege.sichern}</button>
+        <button class="zweit" onclick={fremdeVerwerfen}>{T.fremdeEintraege.verwerfen}</button>
+      </div>
+      <details>
+        <summary>{T.fremdeEintraege.anmelden}</summary>
+        <Mitmachen anmelden={mitCodeAnmelden} fehler={zugangFehler} />
+        <a href={linkZu('anmelden')}>{T.kopf.anmelden}</a>
+      </details>
+    </section>
+  {/if}
+
   {#if abgelehnt.length}
     <div class="meldung fehler abgelehnt" role="alert" data-testid="abgelehnt">
       <div class="wachsen">
@@ -738,12 +884,16 @@
     </details>
   {/if}
 
-  <nav class="reiter" aria-label="Bereiche" bind:this={reiterNav}>
+  <nav class="reiter" class:mehrOffen aria-label="Bereiche" bind:this={reiterNav}>
     {#each reiterListe as r (r)}
-      <a href={linkZu(`t/${id}/${r}`)} class:aktiv={aktiv === r} aria-current={aktiv === r ? 'page' : undefined}
+      <a href={linkZu(`t/${id}/${r}`)} class:nebenbereich={!hauptReiter.has(r)} class:aktiv={aktiv === r} onclick={() => (mehrOffen = false)} aria-current={aktiv === r ? 'page' : undefined}
         >{T.reiter[r]}{#if r === 'teilnehmer' && anmeldungNeu > 0}<span class="zaehler" data-testid="reiter-neu" aria-label={T.anm.neuHinweis(anmeldungNeu)}>{anmeldungNeu}</span>{/if}</a
       >
     {/each}
+    {#if reiterListe.some((r) => !hauptReiter.has(r))}
+      <button class="mehr" aria-expanded={mehrOffen} onclick={() => (mehrOffen = !mehrOffen)}>Mehr</button>
+    {/if}
+    {#if rolle === 'zuschauer'}<a href={linkZu(`live/${id}`)}>Live</a>{/if}
   </nav>
 
   {#if zustand}
@@ -762,7 +912,30 @@
       {#if !leitung && rolle !== 'spieler' && zustand.spielerReihe.length}
         <MitteilungKarte z={zustand} turnierId={id} ich={null} bind:einstellung={mitteilung} zugeklappt />
       {/if}
-      <SpieleListe z={zustand} leitung={leitung || helferRecht} {ich} mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
+      {#if leitung && zustand.spaeteErgebnisse.length}
+        <section class="karte" aria-label="Verspätet synchronisierte Ergebnisse">
+          <h2>Verspätet synchronisierte Ergebnisse</h2>
+          {#each zustand.spaeteErgebnisse as meldung (meldung.id)}
+            {@const daten = meldung.daten as { konkurrenz?: string; spiel?: string; a?: string; b?: string; ergebnis?: { saetze?: number[][]; stand?: number[]; aufgabe?: string; laufend?: number[]; kampflos?: string } }}
+            {@const eingabe = daten.ergebnis}
+            <div class="meldung info">
+              <strong>{spName(zustand, daten.a ?? null, zustand.konkurrenzen[daten.konkurrenz ?? ''])} gegen {spName(zustand, daten.b ?? null, zustand.konkurrenzen[daten.konkurrenz ?? ''])}</strong>
+              <p>{zustand.konkurrenzen[daten.konkurrenz ?? '']?.einst.name} · {daten.spiel}</p>
+              <p>{(Array.isArray(eingabe?.saetze) ? eingabe.saetze.map(spaeteBallpunkte).join(', ') : spaeteBallpunkte(eingabe?.stand))}
+                {#if eingabe?.aufgabe} · Aufgabe, Seite {eingabe.aufgabe === 'a' ? 'A' : 'B'} {spaeteBallpunkte(eingabe.laufend)}{/if}
+                {#if eingabe?.kampflos} · Kampflos, Seite {eingabe.kampflos === 'a' ? 'A' : 'B'} verliert{/if}
+              </p>
+              <p>{meldung.autor?.name} · Erfasst {neueZeit(meldung.zeit)} · Eingegangen {neueZeit(meldung.empfangen)}</p>
+              {#each zustand.warnungen.filter((warnung) => warnung.ereignis === meldung.id).slice(-1) as warnung}
+                <p role="alert">{warnung.text}</p>
+              {/each}
+              <button onclick={() => eintragen(ART.spielSpaetGeprueft, { ereignis: meldung.id, uebernehmen: true })}>Übernehmen</button>
+              <button class="zweit" onclick={() => eintragen(ART.spielSpaetGeprueft, { ereignis: meldung.id, uebernehmen: false })}>Ablehnen</button>
+            </div>
+          {/each}
+        </section>
+      {/if}
+      <SpieleListe z={zustand} leitung={leitung || helferRecht} stufeEintragen={leitung ? eintragen : undefined} tischLink={mitTischen && (leitung || darfAufgabe('aufruf')) ? `t/${id}/tische` : null} {ich} mitSchiri={rolle !== 'zuschauer'} {oeffnen} />
     {:else if aktiv === 'tabellen'}
       {#if leitung && verdeckt}
         <div class="meldung info reihe" role="status">
@@ -853,8 +1026,7 @@
                       <div class="leise">
                         {#if e.seq !== null && e.status === 'bestaetigt'}#{e.seq} · {/if}
                         {zeit(e.zeit)} · {T.turnier.von} {e.autor?.name ?? '–'}{e.autor && e.autor.rolle !== 'leitung' ? ` (${e.autor.rolle === 'spieler' && e.autor.helfer ? T.zugang.spielerHelfer : T.rollen[e.autor.rolle]})` : ''}
-                        {#if e.status === 'ausstehend'}<span class="marke">{T.turnier.ausstehend}</span>{/if}
-                        {#if e.status === 'abgelehnt'}<span class="marke">{T.abgelehnt.titel(1)}</span>{/if}
+                        <span class="marke">{T.abgleichStatus[e.status]}</span>
                       </div>
                     </div>
                     {#if leitung && darfSchreiben && rueckgaengigBar(e)}
@@ -977,4 +1149,10 @@
   .aktion .zweit { background: transparent; color: var(--flaeche); border-color: color-mix(in srgb, var(--flaeche) 50%, transparent); }
   .live-link, .live-zeile { display: flex; gap: 6px; flex-wrap: wrap; }
   .live-link a, .live-zeile a { display: inline-flex; align-items: center; min-height: 44px; }
+  .reiter .mehr { display: none; }
+  @media (max-width: 600px) {
+    .reiter { flex-wrap: wrap; }
+    .reiter .mehr { display: inline-block; min-width: 44px; min-height: 44px; }
+    .reiter:not(.mehrOffen) .nebenbereich:not(.aktiv) { display: none; }
+  }
 </style>

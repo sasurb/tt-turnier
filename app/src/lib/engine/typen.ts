@@ -17,6 +17,8 @@ export interface LokalesEreignis extends NeuesEreignis {
   autor: Autor | null;
   /** Reihenfolge eigener Einträge auf diesem Gerät (siehe naechsteReihe); fehlt bei Server-Ereignissen. */
   reihe?: number;
+  /** Bindung einer noch nicht bestätigten Online-Aktion. */
+  sitzung?: string | null;
   /** Grund der Ablehnung durch den Server (Status „abgelehnt“) */
   fehler?: string;
 }

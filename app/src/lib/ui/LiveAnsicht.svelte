@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gruppeVorlaeufig, strittigerStand, vorlaeufigePlatzierungen, wertungVorlaeufig } from '../engine/modell';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { T } from '../texte';
   import { linkZu } from '../router.svelte';
@@ -7,17 +8,19 @@
   import type { Rolle } from '@shared/protokoll';
   import { TurnierSitzung } from '../engine/turnier';
   import { berechnen, zurueckgezogen, type TurnierZustand } from '../engine/zustand';
-  import { alleSpiele, anstehendeSpiele, name, oeffentlich, platzierungen, rundeVon, sichtbar, tabelle, tische, trostPlaetze } from '../engine/abfragen';
+  import { spielErgebnisText, alleSpiele, anstehendeSpiele, name, oeffentlich, platzierungen, rundeVon, sichtbar, tabelle, tische, trostPlaetze } from '../engine/abfragen';
   import { baumRunden, koRunden, rundenName } from '../engine/ko';
   import { gruppeTitel, istSchweizerArt, mitKo, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
   import { istRundenModus, kaiserTabelle, letzteRunde, rundenZahl, schweizerTabelle } from '../engine/runden';
-  import { ergebnisText } from '../engine/ergebnis';
   import { geraetId, gemerktesTurnier } from '../einstellungen';
   import { codeAnzeige } from '../code';
   import { appBasis } from '../zentrale.svelte';
   import { Ansager, ansageText, aufrufeVon, neueAufrufe, type Aufruf } from '../ansage';
   import { liveEinstellungen, setzeLiveEinstellungen, type LiveEinstellungen } from '../live';
   import QrCode from './turnier/QrCode.svelte';
+  import TischFlaeche from './turnier/TischFlaeche.svelte';
+  import { tischAnzeige, zuletztText, type TischAnzeige } from '../engine/tischanzeige';
+  import type { TischStand } from '../engine/abfragen';
 
   /**
    * Live-Anzeige für Beamer und Fernseher: zeigt, was Zuschauer sehen dürfen (verdeckte Stände bleiben
@@ -188,16 +191,27 @@
   }
 
   /* ---------- Ablauf ---------- */
-  const laufend = $derived(z ? tische(z) : []);
-  const naechste = $derived(z ? anstehendeSpiele(z, jetzt).slice(0, 8) : []);
+  const laufend = $derived(z ? tische(z).filter((t) => !e.nurKonkurrenz || !t.spiel || t.spiel.konkurrenz === e.nurKonkurrenz) : []);
+  const naechste = $derived(z ? anstehendeSpiele(z, jetzt).filter((a) => !e.nurKonkurrenz || a.spiel.konkurrenz === e.nurKonkurrenz).slice(0, 8) : []);
   const ergebnisse = $derived(
     z
       ? alleSpiele(z)
-          .filter((s) => s.eintrag && s.ergebnis && s.status === 'gespielt' && !s.gestrichen)
+          .filter((s) => (!e.nurKonkurrenz || s.konkurrenz === e.nurKonkurrenz) && s.eintrag && s.ergebnis && s.status === 'gespielt' && !s.gestrichen)
           .sort((a, b) => (a.eintrag!.zeit < b.eintrag!.zeit ? 1 : -1))
           .slice(0, 8)
       : [],
   );
+  /** Tisch für die Anzeige; bei Konkurrenzfilter kein „zuletzt“ aus einer anderen Konkurrenz (F-029) */
+  function liveAnzeige(t: TischStand): TischAnzeige {
+    const a = tischAnzeige(z!, t, jetzt);
+    if (a.zuletzt && e.nurKonkurrenz && a.zuletzt.konkurrenz !== e.nurKonkurrenz) return { ...a, zuletzt: null, a: null, b: null, hinweis: null, minuten: null };
+    return a;
+  }
+  function liveLabel(a: TischAnzeige): string {
+    if (a.spiel) return T.tische.tischLabel(a.nr, name(z!, a.spiel.a), name(z!, a.spiel.b));
+    if (a.zuletzt) return T.tische.tischZuletztLabel(a.nr, zuletztText(z!, a.zuletzt));
+    return T.tische.tischFreiLabel(a.nr);
+  }
   function ort(s: Spiel) {
     const k = z!.konkurrenzen[s.konkurrenz]!;
     return `${k.einst.name} · ${rundeVon(k, s)}`;
@@ -320,14 +334,10 @@
             {#if laufend.some((t) => t.spiel)}
               <ul class="tisch-raster">
                 {#each laufend.filter((t) => t.spiel || !t.gesperrt) as t (t.nr)}
+                  {@const a = liveAnzeige(t)}
                   <li class="tisch" class:leer={!t.spiel} class:neu={t.spiel && frischAufgerufen(t.spiel)}>
-                    <span class="nr">{t.nr}</span>
-                    {#if t.spiel}
-                      <span class="paar"><span>{name(z, t.spiel.a)}</span><span class="gegen">–</span><span>{name(z, t.spiel.b)}</span></span>
-                      <span class="ort">{ort(t.spiel)} · {T.tische.seit(minuten(t.spiel.aufgerufen))}</span>
-                    {:else}
-                      <span class="paar frei">{T.tische.frei}</span>
-                    {/if}
+                    <TischFlaeche anzeige={a} label={liveLabel(a)} />
+                    {#if a.ort || a.zuletzt}<span class="ort">{a.ort ?? `${T.tische.zuletzt}: ${ort(a.zuletzt!)}`}{#if a.hinweis} · <strong class:strittig={a.hinweis === 'strittig'}>{a.hinweis === 'strittig' ? T.tische.strittig : T.tische.zuBestaetigen}</strong>{/if}{#if a.teilspiel} · {T.tische.teilspiel(a.teilspiel.nr, a.teilspiel.art === 'doppel')}{/if}</span>{/if}
                   </li>
                 {/each}
               </ul>
@@ -354,7 +364,7 @@
                 {#each ergebnisse as s (s.konkurrenz + s.id)}
                   <li>
                     <span class="paar-klein"><span class:sieger={s.gewinner === 'a'}>{name(z, s.a)}</span> – <span class:sieger={s.gewinner === 'b'}>{name(z, s.b)}</span></span>
-                    <span class="erg">{ergebnisText(s.ergebnis!)}</span>
+                    <span class="erg">{spielErgebnisText(z, s, s.ergebnis!)}{#if strittigerStand(s.stand)} · {T.spiele[s.stand!]} (vorläufig){/if}</span>
                     <span class="ort">{ort(s)}</span>
                   </li>
                 {/each}
@@ -371,7 +381,7 @@
           {#each aktuell.nrs as nr (nr)}
             {@const t = tabelle(k, nr)}
             <section class="block">
-              <h3>{k.gruppen.length > 1 ? gruppeTitel(k, nr) : T.konk.modi.jgj}</h3>
+              <h3>{k.gruppen.length > 1 ? gruppeTitel(k, nr) : T.konk.modi.jgj}{#if gruppeVorlaeufig(k, nr)} · {T.druck.vorlaeufig}{/if}</h3>
               <table>
                 <thead><tr><th class="z">{T.tab.platz}</th><th>{T.tab.spieler}</th><th class="z">{T.tab.sn}</th><th class="z">{T.tab.saetze}</th></tr></thead>
                 <tbody>
@@ -391,7 +401,7 @@
       {:else if aktuell.art === 'rangliste'}
         {@const k = aktuell.k}
         {@const zur = zurueckgezogen(k)}
-        <h2 class="seitentitel">{k.einst.name} · {T.tab.rundeStand(letzteRunde(k), rundenZahl(k))}</h2>
+        <h2 class="seitentitel">{k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if} · {T.tab.rundeStand(letzteRunde(k), rundenZahl(k))}</h2>
         <section class="block">
           <table>
             {#if istSchweizerArt(k.einst.modus)}
@@ -413,7 +423,7 @@
         </section>
       {:else if aktuell.art === 'baum'}
         {@const k = aktuell.k}
-        <h2 class="seitentitel">{k.einst.name} · {aktuell.baum === 'haupt' ? (k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko) : T.konk.baeume[aktuell.baum]}</h2>
+        <h2 class="seitentitel">{k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if} · {aktuell.baum === 'haupt' ? (k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko) : T.konk.baeume[aktuell.baum]}</h2>
         <div class="baum">
           {#each baumSpalten(k, aktuell.baum) as sp, i (i)}
             <div class="runde">
@@ -434,17 +444,18 @@
         </div>
       {:else if aktuell.art === 'plaetze'}
         {@const k = aktuell.k}
+        {@const vorlaeufig = vorlaeufigePlatzierungen(k)}
         <h2 class="seitentitel">{k.einst.name} · {T.tab.platzierungen}</h2>
         <section class="block">
           <ol class="plaetze">
             {#each platzierungen(k).slice(0, 8) as x (x.id)}
-              <li><span class="pl">{x.bezeichnung}</span> <span class="name">{name(z, x.id, k)}</span> {#if verein(x.id)}<span class="verein-inline">{verein(x.id)}</span>{/if}</li>
+              <li><span class="pl">{x.bezeichnung}</span> <span class="name">{name(z, x.id, k)}</span>{#if vorlaeufig.has(x.id)} · {T.druck.vorlaeufig}{/if} {#if verein(x.id)}<span class="verein-inline">{verein(x.id)}</span>{/if}</li>
             {/each}
           </ol>
           {#if trostPlaetze(k).length}
             <h3>{T.konk.trostPlatzierungen}</h3>
             <ol class="plaetze">
-              {#each trostPlaetze(k).slice(0, 4) as x (x.id)}<li><span class="pl">{x.bezeichnung}</span> <span class="name">{name(z, x.id, k)}</span></li>{/each}
+              {#each trostPlaetze(k).slice(0, 4) as x (x.id)}<li><span class="pl">{x.bezeichnung}</span> <span class="name">{name(z, x.id, k)}</span>{#if vorlaeufig.has(x.id)} · {T.druck.vorlaeufig}{/if}</li>{/each}
             </ol>
           {/if}
         </section>
@@ -556,13 +567,11 @@
   .ablauf { display: grid; grid-template-columns: 1.5fr 1fr; grid-template-rows: auto 1fr; gap: 0.9em; }
   .tische-block { grid-row: span 2; }
   .tisch-raster { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(16em, 1fr)); gap: 0.5em; }
-  .tisch { display: grid; grid-template-columns: 2.4em 1fr; grid-template-rows: auto auto; column-gap: 0.6em; align-items: center; padding: 0.5em 0.7em; border-radius: 0.5em; background: var(--l-grund); border: 2px solid var(--l-linie); }
+  .tisch { display: block; padding: 0.3em 0.5em 0.4em; border-radius: 0.5em; background: var(--l-grund); border: 2px solid var(--l-linie); min-width: 0; }
+  .tisch .ort strong { color: var(--l-text); }
+  .tisch .ort strong.strittig { color: #b3261e; }
   .tisch.neu { background: var(--l-neu); border-color: #e0a800; animation: blinken 1.2s ease-in-out 3; }
-  .tisch.leer { opacity: 0.55; }
-  .tisch .nr { grid-row: span 2; font-size: 1.8em; font-weight: 800; text-align: center; color: var(--l-akzent); }
-  .paar { font-weight: 700; display: flex; flex-wrap: wrap; gap: 0 0.35em; overflow-wrap: anywhere; }
-  .paar.frei { font-weight: 400; color: var(--l-leise); }
-  .gegen { color: var(--l-leise); }
+  .tisch.leer { border-style: dashed; }
   .ort { display: block; color: var(--l-leise); font-size: 0.78em; }
   .zeilen { list-style: none; margin: 0; padding: 0; }
   .zeilen li { padding: 0.35em 0; border-top: 1px solid var(--l-linie); display: flex; flex-wrap: wrap; gap: 0 0.6em; align-items: baseline; }

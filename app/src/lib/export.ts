@@ -1,5 +1,5 @@
-import { endstand, name, nameLang, rundeVon } from './engine/abfragen';
-import { ergebnisText } from './engine/ergebnis';
+import { vorlaeufigePlatzierungen } from './engine/modell';
+import { endstand, name, nameLang, rundeVon, spielErgebnisText } from './engine/abfragen';
 import { spielerVon, type TurnierZustand } from './engine/zustand';
 
 /**
@@ -73,7 +73,7 @@ export function spieleCsv(z: TurnierZustand): string {
         e?.saetze ? e.saetze.map(([a, b]) => `${a}:${b}`).join(' ') : '',
         s.gewinner ? nameLang(z, s.gewinner === 'a' ? s.a : s.b, k) : '',
         art + (s.gestrichen ? ' (gestrichen)' : ''),
-        s.stand === 'angefochten' ? 'angefochten' : s.stand === 'konflikt' ? 'Konflikt' : s.stand === 'eingetragen' ? 'unbestätigt' : '',
+        s.stand === 'angefochten' ? 'angefochten (vorläufig)' : s.stand === 'konflikt' ? 'Konflikt (vorläufig)' : s.stand === 'eingetragen' ? 'unbestätigt' : '',
         s.tisch,
         s.eintrag ? new Date(s.eintrag.zeit).toLocaleString('de-DE') : '',
       ]);
@@ -87,9 +87,10 @@ export function endstandCsv(z: TurnierZustand): string {
   const zeilen: (string | number | null)[][] = [['Konkurrenz', 'Platz', 'Name', 'Verein']];
   for (const kid of z.konkurrenzReihe) {
     const k = z.konkurrenzen[kid]!;
+    const vorlaeufig = vorlaeufigePlatzierungen(k);
     for (const p of endstand(k)) {
       const vereine = [...new Set(spielerVon(k, p.id).map((id) => z.spieler[id]?.verein ?? '').filter(Boolean))].join(' / ');
-      zeilen.push([k.einst.name, p.bezeichnung, nameLang(z, p.id, k), vereine]);
+      zeilen.push([k.einst.name, p.bezeichnung + (vorlaeufig.has(p.id) ? ' (vorläufig)' : ''), nameLang(z, p.id, k), vereine]);
     }
   }
   return csv(zeilen);
@@ -100,5 +101,5 @@ export function ergebnisKurz(z: TurnierZustand, kid: string, sid: string): strin
   const s = z.konkurrenzen[kid]?.spiele[sid];
   if (!s) return '';
   if (s.status === 'freilos') return 'Freilos';
-  return s.ergebnis ? ergebnisText(s.ergebnis) : `${name(z, s.a)} – ${name(z, s.b)}`;
+  return s.ergebnis ? spielErgebnisText(z, s, s.ergebnis) : `${name(z, s.a)} – ${name(z, s.b)}`;
 }

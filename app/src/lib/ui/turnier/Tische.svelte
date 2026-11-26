@@ -7,7 +7,9 @@
   import { gelernteSatzMinuten, zeitplanGedrosselt, zeitplanSofort } from '../../engine/zeitplan';
   import { spielerVon, type TurnierZustand } from '../../engine/zustand';
   import { Ansager, ansageText, aufrufeVon, aufrufGeraet, neueAufrufe, setzeAufrufGeraet, type AufrufGeraet } from '../../ansage';
+  import { tischAnzeige, zuletztText, type TischAnzeige } from '../../engine/tischanzeige';
   import Hilfe from '../Hilfe.svelte';
+  import TischFlaeche from './TischFlaeche.svelte';
 
   /**
    * Tische und Spielaufruf. Leitung und Helfer rufen Spiele an freie Tische, wählen einen
@@ -56,6 +58,88 @@
   const freieTische = $derived(liste.filter((t) => !t.spiel && !t.gesperrt).map((t) => t.nr));
   let fehler = $state('');
 
+  /* ---------- Grafische Tischübersicht (V-010) ---------- */
+  const anzeigen = $derived(liste.map((t) => tischAnzeige(z, t, jetzt)));
+  /** Tisch, dessen Funktionsauswahl offen ist */
+  let auswahl = $state<number | null>(null);
+  let auswahlDialog: HTMLDialogElement | undefined = $state();
+  const gewaehlt = $derived(auswahl === null ? null : (anzeigen.find((a) => a.nr === auswahl) ?? null));
+  $effect(() => {
+    if (gewaehlt && auswahlDialog && !auswahlDialog.open) auswahlDialog.showModal();
+  });
+  function schliessen() {
+    auswahlDialog?.close();
+    auswahl = null;
+  }
+  function tischLabel(a: TischAnzeige): string {
+    if (a.spiel) return T.tische.tischLabel(a.nr, name(z, a.spiel.a), name(z, a.spiel.b));
+    if (a.zustand === 'gesperrt') return T.tische.tischGesperrtLabel(a.nr);
+    if (a.zuletzt) return T.tische.tischZuletztLabel(a.nr, zuletztText(z, a.zuletzt));
+    return T.tische.tischFreiLabel(a.nr);
+  }
+  /**
+   * Was Antippen eines Tisches tut. Leitung/Helfer: Auswahl der Funktionen. Alle anderen: das Spiel öffnen
+   * (Spielinformationen; beim eigenen Spiel Ergebnis eintragen oder bestätigen). Rechte prüft weiterhin
+   * der Ergebnisdialog bzw. der Server – hier wird nur angeboten, was die Rolle darf.
+   */
+  function aktionFuer(a: TischAnzeige): (() => void) | null {
+    const s = a.spiel ?? a.zuletzt;
+    if (darfAufrufen && (a.zustand !== 'gesperrt' || leitung)) return () => (auswahl = a.nr);
+    if (s && a.zustand !== 'gesperrt') return () => oeffnen(s);
+    return null;
+  }
+  function leerText(a: TischAnzeige): string | null {
+    if (a.zustand === 'gesperrt') return null;
+    return darfAufrufen && naechste.length ? T.tische.aufrufTitel : '';
+  }
+
+  /* ---------- Automatisch aufgerufene Spiele merken (zum Zurücknehmen nach versehentlichem Einschalten) ---------- */
+  // svelte-ignore state_referenced_locally
+  const AUTO_SCHLUESSEL = `tt-auto-aufrufe-${turnierId}`;
+  function autoLesen(): string[] {
+    try {
+      const x = JSON.parse(localStorage.getItem(AUTO_SCHLUESSEL) ?? '[]');
+      return Array.isArray(x) ? x.filter((v): v is string => typeof v === 'string').slice(-200) : [];
+    } catch {
+      return [];
+    }
+  }
+  function autoSchreiben(liste: string[]) {
+    try {
+      if (liste.length) localStorage.setItem(AUTO_SCHLUESSEL, JSON.stringify(liste.slice(-200)));
+      else localStorage.removeItem(AUTO_SCHLUESSEL);
+    } catch {
+      /* ohne Speicher geht es auch – dann gibt es nach dem Neuladen keine Rückfrage */
+    }
+  }
+  function autoMerken(schluessel: string) {
+    const l = autoLesen();
+    if (!l.includes(schluessel)) autoSchreiben([...l, schluessel]);
+  }
+  /** Automatisch aufgerufene Spiele, die noch am Tisch stehen und kein Ergebnis haben */
+  function autoNochAmTisch(): Spiel[] {
+    const aus: Spiel[] = [];
+    for (const k of autoLesen()) {
+      const [kid, sid] = k.split('/');
+      const s = z.konkurrenzen[kid!]?.spiele[sid!];
+      if (s && s.tisch !== null && s.status === 'offen' && !s.eintrag && !s.stand) aus.push(s);
+    }
+    return aus;
+  }
+  let autoFrage = $state<Spiel[]>([]);
+  let autoHinweis = $state('');
+  function autoVergessen() {
+    autoFrage = [];
+    autoSchreiben([]);
+  }
+  async function autoZuruecknehmen() {
+    const liste = autoFrage;
+    autoFrage = [];
+    autoSchreiben([]);
+    for (const s of liste) await eintragen(ART.spielAufrufZurueck, { konkurrenz: s.konkurrenz, spiel: s.id });
+    autoHinweis = T.tische.autoZurueckGemacht(liste.length);
+  }
+
   function ort(s: Spiel) {
     const k = z.konkurrenzen[s.konkurrenz]!;
     return `${k.einst.name} · ${rundeVon(k, s)}`;
@@ -91,6 +175,13 @@
       fehler = x instanceof Error ? x.message : String(x);
     }
   }
+  async function wechseln(s: Spiel, bisher: number, ziel: number) {
+    if (!darfAufrufen || !freieTische.includes(ziel)) return;
+    await eintragen(ART.spielAufgerufen, {
+      konkurrenz: s.konkurrenz, spiel: s.id, tisch: s.tisch === bisher ? ziel : s.tisch,
+      tisch2: s.tisch2 === bisher ? ziel : s.tisch2, schiri: s.schiri,
+    });
+  }
   async function zurueck(s: Spiel) {
     await eintragen(ART.spielAufrufZurueck, { konkurrenz: s.konkurrenz, spiel: s.id });
   }
@@ -105,8 +196,20 @@
   // svelte-ignore state_referenced_locally
   let geraet = $state<AufrufGeraet>(aufrufGeraet(turnierId));
   function geraetSetzen(neu: Partial<AufrufGeraet>) {
+    const vorher = geraet.automatisch;
     geraet = { ...geraet, ...neu };
     setzeAufrufGeraet(turnierId, geraet);
+    // Automatik aus: Laufende Spiele bleiben, es kommen nur keine neuen. Versehentlich eingeschaltet? Dann
+    // lassen sich die automatisch aufgerufenen Spiele ohne Ergebnis hier wieder zurücknehmen.
+    if (vorher && neu.automatisch === false) {
+      autoHinweis = '';
+      autoFrage = autoNochAmTisch();
+      if (!autoFrage.length) autoSchreiben([]);
+    } else if (!vorher && neu.automatisch === true) {
+      autoHinweis = '';
+      autoFrage = [];
+      autoSchreiben([]);
+    }
   }
 
   const ansager = new Ansager();
@@ -162,6 +265,7 @@
       for (const p of automatischeAufrufe(zStand, t, geraet.schiriVerlierer, ich, sperre)) {
         if (tischeUnterwegs.has(p.tisch)) continue;
         unterwegs.set(`${p.spiel.konkurrenz}/${p.spiel.id}`, { tisch: p.tisch, seit: t });
+        autoMerken(`${p.spiel.konkurrenz}/${p.spiel.id}`);
         tischeUnterwegs.add(p.tisch);
         if (p.tisch2 !== null) tischeUnterwegs.add(p.tisch2);
         void eintragen(ART.spielAufgerufen, { konkurrenz: p.spiel.konkurrenz, spiel: p.spiel.id, tisch: p.tisch, ...(p.tisch2 !== null ? { tisch2: p.tisch2 } : {}), ...(p.schiri ? { schiri: { spieler: p.schiri } } : {}) }, { still: true }).catch(() => undefined);
@@ -293,44 +397,85 @@
 {/if}
 
 <section class="karte">
-  <h2>{T.tische.titel}<Hilfe text={T.tische.anzahlHilfe} /></h2>
-  <p class="leise">{darfAufrufen ? T.tische.text : T.tische.zuschauerText}</p>
+  <h2>{T.tische.titel}<Hilfe text={T.tische.tischHilfe} /></h2>
+  <p class="leise">{darfAufrufen ? T.tische.text : T.tische.tippenSpieler}</p>
   <ul class="tische" data-testid="tische">
-    {#each liste as t (t.nr)}
-      <li class="tisch" class:frei={!t.spiel && !t.gesperrt} class:gesperrt={t.gesperrt} class:ziel={ziehen?.ziel === t.nr && !t.gesperrt} data-tisch={t.nr} data-testid="tisch-{t.nr}">
+    {#each anzeigen as a (a.nr)}
+      {@const s = a.spiel}
+      {@const g = geplantFuer(a.nr)}
+      <li class="tisch" class:frei={a.zustand === 'frei'} class:gesperrt={a.zustand === 'gesperrt'} class:ziel={ziehen?.ziel === a.nr && a.zustand !== 'gesperrt'} data-tisch={a.nr} data-testid="tisch-{a.nr}">
         <div class="kopf">
-          <strong>{T.tische.tisch(t.nr)}</strong>
-          {#if t.gesperrt}<span class="marke">{T.tische.gesperrt}</span>{:else if !t.spiel}<span class="marke frei">{T.tische.frei}</span>{:else}<span class="leise">{T.tische.seit(minuten(t.spiel.aufgerufen))}</span>{/if}
+          <span class="ort">{a.ort ?? (a.zuletzt ? `${T.tische.zuletzt}: ${ort(a.zuletzt)}` : T.tische.tisch(a.nr))}</span>
+          <span class="zustaende">
+            {#if a.hinweis === 'strittig'}<span class="marke strittig">{T.tische.strittig}</span>
+            {:else if a.hinweis === 'zu_bestaetigen'}<span class="marke offen">{T.tische.zuBestaetigen}</span>{/if}
+            {#if a.zustand === 'gesperrt'}<span class="marke">{T.tische.gesperrt}</span>
+            {:else if a.zustand === 'frei'}<span class="marke frei">{T.tische.frei}</span>
+            {:else}<span class="marke laeuft">{T.tische.laeuft}</span>{/if}
+          </span>
         </div>
-        {#if t.spiel}
-          {@const s = t.spiel}
-          <div class="paarung">{name(z, s.a)} – {name(z, s.b)}</div>
-          {#if s.tisch2}<div class="leise klein">{T.tische.mitTisch(s.tisch === t.nr ? s.tisch2 : s.tisch!)}</div>{/if}
-          <div class="leise klein">{ort(s)}{mitSchiri && s.schiri ? ` · ${T.spiele.schiri(s.schiri.name)}` : ''}</div>
-          {#if darfAufrufen}
-            <div class="reihe knoepfe">
-              <button class="klein" onclick={() => oeffnen(s)}>{T.tische.ergebnis}</button>
-              <button class="zweit klein" onclick={() => zurueck(s)}>{T.tische.zurueck}</button>
-              {#if tonBereit && geraet.ansage}<button class="zweit klein" onclick={() => wiederholen(s)} aria-label={T.tische.wiederholen}>🔊</button>{/if}
-            </div>
-          {/if}
-          {@const g = geplantFuer(t.nr)}
-          {#if g}<div class="leise klein geplant">{T.tische.alsNaechstes(t.nr)}: {name(z, g.a)} – {name(z, g.b)}</div>{/if}
-        {:else if darfAufrufen}
-          {#if ziehen && !t.gesperrt}<div class="ablage">{T.tische.hierAblegen}</div>{/if}
-          <div class="reihe knoepfe">
-            {#if !t.gesperrt && naechste.length}
-              <button class="klein" onclick={() => vorbereiten(naechste[0]!.spiel, t.nr)} data-testid="tisch-belegen">{T.tische.aufrufen}</button>
-            {/if}
-            {#if leitung}
-              <button class="zweit klein" onclick={() => sperren(t.nr, !t.gesperrt)} title={T.tische.sperrenHilfe}>{t.gesperrt ? T.tische.freigeben : T.tische.sperren}</button>
-            {/if}
-          </div>
-        {/if}
+        <TischFlaeche anzeige={a} label={tischLabel(a)} aktion={aktionFuer(a)} leerText={leerText(a)} />
+        {#if s && a.teilspiel}<div class="klein">{T.tische.teilspiel(a.teilspiel.nr, a.teilspiel.art === 'doppel')}</div>{/if}
+        {#if a.andererTisch}<div class="leise klein">{T.tische.mitTisch(a.andererTisch)}</div>{/if}
+        {#if s && mitSchiri && s.schiri}<div class="leise klein">{T.spiele.schiri(s.schiri.name)}</div>{/if}
+        {#if g}<div class="leise klein geplant">{T.tische.alsNaechstes(a.nr)}: {name(z, g.a)} – {name(z, g.b)}</div>{/if}
+        {#if darfAufrufen && ziehen && a.zustand !== 'gesperrt'}<div class="ablage">{T.tische.hierAblegen}</div>{/if}
       </li>
     {/each}
   </ul>
+  {#if autoFrage.length}
+    <div class="meldung info" role="status" data-testid="auto-zurueck">
+      <p>{T.tische.autoAusFrage(autoFrage.length)}</p>
+      <div class="reihe">
+        <button class="klein" onclick={autoZuruecknehmen}>{T.tische.autoZurueck(autoFrage.length)}</button>
+        <button class="zweit klein" onclick={() => autoVergessen()}>{T.tische.autoBehalten}</button>
+      </div>
+    </div>
+  {/if}
+  {#if autoHinweis}<p class="meldung ok" role="status">{autoHinweis}</p>{/if}
 </section>
+
+{#if gewaehlt}
+  {@const a = gewaehlt}
+  {@const s = a.spiel}
+  <dialog bind:this={auswahlDialog} onclose={() => (auswahl = null)} aria-labelledby="tisch-auswahl-titel" data-testid="tisch-auswahl">
+    <div class="dkopf">
+      <div>
+        <div class="leise klein">{a.ort ?? T.tische.funktionen}</div>
+        <h2 id="tisch-auswahl-titel">{T.tische.tisch(a.nr)}{#if s}: {name(z, s.a)} – {name(z, s.b)}{/if}</h2>
+        {#if s && mitSchiri && s.schiri}<div class="leise klein">{T.spiele.schiri(s.schiri.name)}</div>{/if}
+      </div>
+      <button class="zweit klein" onclick={schliessen} aria-label={T.app.schliessen}>✕</button>
+    </div>
+    <div class="dknoepfe">
+      {#if s}
+        <button onclick={() => { const sp = s; schliessen(); oeffnen(sp); }}>{T.tische.ergebnis}</button>
+        {#if freieTische.length}
+          <label class="leise klein" for="tisch-wechsel">{T.tische.wechseln}</label>
+          <select id="tisch-wechsel" aria-label={T.tische.wechselnLabel(a.nr)} onchange={(e) => { const nr = Number(e.currentTarget.value); const sp = s, bisher = a.nr; if (nr) { schliessen(); void wechseln(sp, bisher, nr); } }}>
+            <option value="">{T.tische.wechselnAuf}</option>
+            {#each freieTische as nr (nr)}<option value={nr}>{T.tische.tisch(nr)}</option>{/each}
+          </select>
+        {/if}
+        {#if tonBereit && geraet.ansage}<button class="zweit" onclick={() => wiederholen(s)}>🔊 {T.tische.wiederholen}</button>{/if}
+        <button class="gefahr" onclick={() => { const sp = s; schliessen(); void zurueck(sp); }}>{T.tische.zurueck}</button>
+      {:else}
+        {#if a.zustand === 'frei' && naechste.length}
+          {@const n = naechste[0]!.spiel}
+          <button onclick={() => { const sp = n, nr = a.nr; schliessen(); vorbereiten(sp, nr); }} data-testid="tisch-belegen">{T.tische.naechstesAufrufen(`${name(z, n.a)} – ${name(z, n.b)}`)}</button>
+        {/if}
+        {#if a.zuletzt}
+          {@const l = a.zuletzt}
+          <button class="zweit" onclick={() => { const sp = l; schliessen(); oeffnen(sp); }}>{T.tische.letztesAnsehen}</button>
+        {/if}
+        {#if leitung}
+          <button class="zweit" onclick={() => { const nr = a.nr, sperre = a.zustand !== 'gesperrt'; schliessen(); void sperren(nr, sperre); }} title={T.tische.sperrenHilfe}>{a.zustand === 'gesperrt' ? T.tische.freigeben : T.tische.sperren}</button>
+        {/if}
+        {#if a.zustand !== 'frei' ? !leitung : !naechste.length && !a.zuletzt && !leitung}<p class="leise">{T.tische.keineFunktion}</p>{/if}
+      {/if}
+    </div>
+  </dialog>
+{/if}
 
 {#if aufruf}
   <form class="karte aufruf" onsubmit={aufrufen} data-testid="aufruf">
@@ -498,17 +643,27 @@
   .haken input { width: 22px; height: 22px; min-height: 0; flex: none; }
   .haken span { display: inline-flex; align-items: center; }
   .eingerueckt { margin-left: 32px; }
-  .tische { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 10px; }
-  .tisch { border: 1px solid var(--linie); border-left: 5px solid var(--gruen); border-radius: 10px; padding: 10px 12px; background: var(--flaeche); min-width: 0; }
-  .tisch.frei { border-left-color: var(--blau); }
-  .tisch.gesperrt { border-left-color: var(--linie); opacity: 0.7; }
+  .tische { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); gap: 10px; }
+  .tisch { border: 1px solid var(--linie); border-radius: 10px; padding: 8px 10px; background: var(--flaeche); min-width: 0; }
   .kopf { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .kopf strong { font-size: 1.15rem; }
   .marke.frei { color: var(--blau); border-color: var(--blau); }
-  .paarung { font-weight: 600; margin-top: 4px; overflow-wrap: anywhere; }
+  .ort { min-width: 0; font-size: 0.85rem; color: var(--leise); overflow-wrap: anywhere; }
+  .zustaende { display: flex; gap: 4px; flex: none; }
+  .marke.laeuft { color: var(--gruen); border-color: var(--gruen); }
+  .marke.offen { color: var(--orange-text); border-color: var(--orange); }
+  .marke.strittig { color: var(--rot); border-color: var(--rot); }
+  dialog { width: min(30rem, calc(100vw - 24px)); max-height: 100dvh; border: 0; border-radius: var(--radius); padding: var(--abstand); background: var(--flaeche); color: var(--text); box-shadow: 0 10px 40px rgb(0 0 0 / 30%); }
+  dialog::backdrop { background: rgb(0 0 0 / 45%); }
+  @media (max-width: 600px) {
+    dialog { margin: auto 0 0; width: 100vw; max-width: 100vw; border-radius: var(--radius) var(--radius) 0 0; padding-bottom: calc(var(--abstand) + env(safe-area-inset-bottom)); }
+  }
+  .dkopf { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+  .dkopf h2 { margin: 0; overflow-wrap: anywhere; }
+  .dknoepfe { display: flex; flex-direction: column; gap: 8px; }
+  .dknoepfe button { width: 100%; justify-content: flex-start; }
+  .dknoepfe select { min-height: 48px; }
+  .dknoepfe label { margin: 4px 0 -4px; }
   .klein { font-size: 0.9rem; }
-  .knoepfe { margin-top: 8px; }
-  .knoepfe button { min-height: 44px; }
   .naechstes { display: flex; gap: 10px; align-items: center; }
   .naechstes button { min-height: 44px; }
   .naechstes.gezogen { opacity: 0.5; }

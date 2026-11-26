@@ -42,11 +42,12 @@
       let einmalToken: string | null = null;
       if (ziel === 'online' && app.sitzung) {
         const sp = spartenZumAnlegen().find((x) => x.id === aktiveSparteId()) ?? spartenZumAnlegen()[0];
-        const a = await api.turnierAnlegen(app.sitzung.token, { name: s.turnier.name, datum: s.turnier.datum, ...(sp ? { sparte: sp.id } : {}) });
+        const konto = app.sitzung;
+        const a = await api.turnierAnlegen(konto.token, { name: s.turnier.name, datum: s.turnier.datum, ...(sp ? { sparte: sp.id } : {}) });
         einmalToken = a.token;
         id = a.turnier.id;
         turnierMerken({ id, name: a.turnier.name, datum: a.turnier.datum, modus: 'online', rolle: 'zuschauer', token: null, konto: true });
-        sitzung = new TurnierSitzung({ speicher, turnier: id, modus: 'online', geraet: geraetId(), autor: { rolle: 'leitung', name }, api, token: () => a.token });
+        sitzung = new TurnierSitzung({ speicher, turnier: id, modus: 'online', geraet: geraetId(), autor: { rolle: 'leitung', name }, api, token: () => konto.token });
       } else {
         id = lokaleTurnierId();
         sitzung = new TurnierSitzung({ speicher, turnier: id, modus: 'lokal', geraet: geraetId(), autor: { rolle: 'leitung', name } });

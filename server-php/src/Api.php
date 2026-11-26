@@ -202,6 +202,8 @@ final class Api
                 'POST logout' => $this->logout($a),
                 'GET ich' => $this->ich($a),
                 'POST passwort.aendern' => $this->passwortAendern($a),
+                'GET registrieraufgabe' => $this->registrieraufgabe($a),
+                'POST registrierlink' => $this->registrierlink($a),
                 'POST registrieren' => $this->registrieren($a),
                 'POST passwort.vergessen' => $this->passwortVergessen($a),
                 'POST passwort.zuruecksetzen' => $this->passwortZuruecksetzen($a),
@@ -348,10 +350,26 @@ final class Api
     /** Höchstens $max Vorgänge je Fenster (z. B. neue Konten je IP und Stunde); zählt diesen Vorgang mit. */
     public function begrenzen(string $schluessel, int $max, int $fenster, string $meldung): void
     {
-        if ($this->anzahlVersuche($schluessel, $fenster) >= $max) {
+        $eigene = !$this->db->inTransaktion();
+        // Die Registrierung zählt innerhalb ihrer bereits serialisierten Reservierungstransaktion.
+        // Sonst erst den einzelnen Schlüssel sperren und dann die Transaktion beginnen, damit
+        // MySQL für die Zählung die letzten bestätigten Versuche sieht.
+        $mitSperre = $eigene && $this->db->treiber === 'mysql';
+        $name = "SHA2(CONCAT(DATABASE(), '|tt-versuch|', ?), 256)";
+        if ($mitSperre && (int)($this->db->eine("SELECT GET_LOCK($name, 5) AS gesperrt", [$schluessel])['gesperrt'] ?? 0) !== 1) {
             throw new ApiFehler('zu_viele_versuche', $meldung);
         }
-        $this->fehlversuch($schluessel);
+        try {
+            if ($eigene) $this->db->anfangen();
+            if ($this->anzahlVersuche($schluessel, $fenster) >= $max) throw new ApiFehler('zu_viele_versuche', $meldung);
+            $this->fehlversuch($schluessel);
+            if ($eigene) $this->db->festschreiben();
+        } catch (\Throwable $e) {
+            if ($eigene) $this->db->zurueckrollen();
+            throw $e;
+        } finally {
+            if ($mitSperre) $this->db->eine("SELECT RELEASE_LOCK($name)", [$schluessel]);
+        }
     }
 
     /** Fangfeld für Bots: echte Nutzer sehen das Feld nicht und lassen es leer. */
@@ -907,7 +925,9 @@ final class Api
                 [$s['konto_id'], $s['konto_id'], $s['konto_id']]
             );
         }
-        return ['turniere' => array_map([self::class, 'turnierAusgabe'], $zeilen)];
+        return ['turniere' => array_map(fn(array $t): array => self::turnierAusgabe($t) + [
+            'enddatum' => $this->turnierEnddatum($t['id'], (string)($t['datum'] ?? '')),
+        ], $zeilen)];
     }
 
     /** Grenzen für neue Turniere (Admin ausgenommen): je Sparte höchstens TURNIERE_JE_KONTO, je Konto und Tag TURNIERE_JE_TAG */
@@ -984,6 +1004,12 @@ final class Api
         return ['turnier' => self::turnierAusgabe($t), 'token' => $token, 'leitung' => self::codeAusgabe($leitung)];
     }
 
+    private function kennungsIdentitaet(array $c): string
+    {
+        $merkmale = json_encode([$c['turnier_id'], $c['rolle'], $c['bezug'], $c['code'], $c['angelegt']], JSON_THROW_ON_ERROR);
+        return 'kennung:' . $c['rolle'] . ':' . $c['bezug'] . ':' . hash_hmac('sha256', $merkmale, $this->geheimnis());
+    }
+
     /** Öffentlich. Mit Anmeldung steht in `rechte`, was diese Anmeldung im Turnier darf. */
     private function turnier(Anfrage $a): array
     {
@@ -992,6 +1018,17 @@ final class Api
         if ($a->token !== null) {
             $s = $this->sitzung($a);
             $aus['rechte'] = $s === null ? null : $this->rechte($s, $t);
+            if ($s !== null && $aus['rechte'] !== null) {
+                if ($s['konto_id'] !== null) {
+                    $aus['identitaet'] = 'konto:' . $aus['rechte'] . ':' . $s['konto_id'];
+                } else {
+                    $c = $this->db->eine('SELECT c.* FROM codes c JOIN sitzungen s ON s.turnier_id = c.turnier_id
+                        AND s.rolle = c.rolle AND s.bezug = c.bezug
+                        WHERE s.token_hash = ? AND c.gesperrt = 0', [hash('sha256', $a->token)]);
+                    if ($c !== null) $aus['identitaet'] = $this->kennungsIdentitaet($c);
+                    else $aus['rechte'] = null;
+                }
+            }
             if ($aus['rechte'] === 'helfer') {
                 $aus['aufgaben'] = $this->aufgabenDerSitzung($s);
             }
@@ -1024,9 +1061,24 @@ final class Api
             $this->warten(min(2_000_000, 250_000 * ($fehl - self::ZUGANG_VERZOEGERN_AB + 1)));
         }
         $code = preg_replace('/\s+/', '', (string)($a->rumpf['code'] ?? ''));
-        $c = preg_match('/^[0-9]{8}$/', $code)
-            ? $this->db->eine('SELECT * FROM codes WHERE turnier_id = ? AND code = ? AND gesperrt = 0', [$t['id'], $code])
-            : null;
+        $c = null;
+        $token = null;
+        if (preg_match('/^[0-9]{8}$/', $code)) {
+            $this->db->anfangen();
+            try {
+                $sperre = $this->db->treiber === 'mysql' ? ' FOR UPDATE' : '';
+                $c = $this->db->eine('SELECT * FROM codes WHERE turnier_id = ? AND code = ? AND gesperrt = 0' . $sperre, [$t['id'], $code]);
+                if ($c !== null) {
+                    $rolle = (string)$c['rolle'];
+                    $helfer = $rolle === 'spieler' && (int)$c['helfer'] === 1;
+                    $token = $this->neuesToken(null, (string)$t['id'], $rolle, (string)$c['name'], (string)$c['bezug'], $helfer);
+                }
+                $this->db->festschreiben();
+            } catch (\Throwable $x) {
+                $this->db->zurueckrollen();
+                throw $x;
+            }
+        }
         if ($c === null) {
             $this->fehlversuch($schluessel);
             $this->fehlversuch($schluesselTurnier);
@@ -1036,10 +1088,8 @@ final class Api
             throw new ApiFehler('falsche_zugangsdaten', 'Diese Kennung passt nicht zu diesem Turnier.');
         }
         $this->versucheLoeschen($schluessel);
-        $rolle = (string)$c['rolle'];
-        $helfer = $rolle === 'spieler' && (int)$c['helfer'] === 1;
-        $token = $this->neuesToken(null, (string)$t['id'], $rolle, (string)$c['name'], (string)$c['bezug'], $helfer);
-        $antwort = ['token' => $token, 'rolle' => $rolle, 'name' => (string)$c['name']];
+        $antwort = ['token' => $token, 'rolle' => $rolle, 'name' => (string)$c['name'],
+            'identitaet' => $this->kennungsIdentitaet($c)];
         if ($rolle === 'spieler') {
             $antwort['spieler'] = (string)$c['bezug'];
             if ($helfer) {
@@ -1605,7 +1655,7 @@ final class Api
             throw new ApiFehler('nicht_angemeldet', 'Zum Eintragen bitte anmelden.');
         }
         $darf = ($s['turnier_id'] === $t['id'] && in_array($s['rolle'], ['leitung', 'helfer', 'spieler'], true))
-            || ($s['konto_id'] !== null && $s['konto_id'] === (int)$t['konto_id']);
+            || ($s['konto_id'] !== null && ($s['konto_id'] === (int)$t['konto_id'] || $this->sparten->kontoLeitet($s, $t, false)));
         if (!$darf) {
             throw new ApiFehler('keine_berechtigung', 'Keine Berechtigung für dieses Turnier.');
         }
@@ -1665,7 +1715,7 @@ final class Api
                     }
                 }
                 try {
-                    $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug, $helfer, $aufgaben);
+                    $seq = $this->einEreignis($t['id'], $e, $rolle, $s['name'], $bezug, $helfer, $aufgaben, (string)($t['datum'] ?? ''));
                 } catch (ApiFehler $f) {
                     if ($f->code_ !== 'ungueltig') {
                         throw $f;
@@ -1733,7 +1783,7 @@ final class Api
     }
 
     /** @param list<string>|null $aufgaben Helfer: Aufgaben der Kennung (im Autor gespeichert) */
-    private function einEreignis(string $turnierId, mixed $e, string $rolle, string $name, ?string $bezug = null, bool $helfer = false, ?array $aufgaben = null): int
+    private function einEreignis(string $turnierId, mixed $e, string $rolle, string $name, ?string $bezug = null, bool $helfer = false, ?array $aufgaben = null, ?string $startdatum = null): int
     {
         if ($e instanceof \stdClass) {
             $e = get_object_vars($e);
@@ -1773,6 +1823,26 @@ final class Api
         if ($vorhanden !== null) {
             return (int)$vorhanden['seq'];
         }
+        if ($startdatum !== null) {
+            if ($art === 'turnier.daten' && property_exists($daten, 'enddatum') && $daten->enddatum !== null
+                && !self::enddatumGueltig($daten->enddatum, $startdatum)) {
+                throw new ApiFehler('ungueltig', 'Das Enddatum muss gültig sein und darf nicht vor dem Startdatum liegen.');
+            }
+            if (in_array($art, ['spiel.ergebnis', 'spiel.aufgerufen', 'phase.gestartet'], true)) {
+                $ende = $this->turnierEnddatum($turnierId, $startdatum);
+                if ($ende !== null) {
+                    $berlin = new \DateTimeZone('Europe/Berlin');
+                    $eingang = (new \DateTimeImmutable('@' . $this->jetzt()))->setTimezone($berlin)->format('Y-m-d');
+                    if ($eingang > $ende) {
+                        $erfasst = (new \DateTimeImmutable('@' . strtotime($zeit)))->setTimezone($berlin)->format('Y-m-d');
+                        if ($art !== 'spiel.ergebnis' || $erfasst > $ende) {
+                            throw new ApiFehler('ungueltig', 'Das Turnier ist beendet. Für neue Spiele bitte das Enddatum verlängern.');
+                        }
+                        $art = 'spiel.ergebnis_spaet';
+                    }
+                }
+            }
+        }
         $this->db->ausfuehren(
             'INSERT INTO ereignisse (turnier_id, event_id, art, daten, zeit, geraet, autor_rolle, autor_name, empfangen, autor_bezug, autor_helfer, autor_aufgaben)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1782,17 +1852,104 @@ final class Api
         return (int)$this->db->pdo->lastInsertId();
     }
 
+    private static function enddatumGueltig(mixed $datum, string $startdatum): bool
+    {
+        if (!is_string($datum) || !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $datum) || $datum < $startdatum) {
+            return false;
+        }
+        [$jahr, $monat, $tag] = array_map('intval', explode('-', $datum));
+        return checkdate($monat, $tag, $jahr);
+    }
+
+    private function turnierEnddatum(string $id, string $startdatum): ?string
+    {
+        $zeilen = $this->db->alle(
+            "SELECT daten FROM ereignisse WHERE turnier_id = ? AND art = 'turnier.daten' AND autor_rolle = 'leitung' AND daten LIKE ? ORDER BY seq DESC",
+            [$id, '%"enddatum"%']
+        );
+        foreach ($zeilen as $zeile) {
+            $daten = json_decode($zeile['daten'], true);
+            if (array_key_exists('enddatum', $daten) && ($daten['enddatum'] === null || self::enddatumGueltig($daten['enddatum'], $startdatum))) {
+                return $daten['enddatum'];
+            }
+        }
+        return null;
+    }
+
     /* ---------------- Konto selbst verwalten ---------------- */
+
+    private function registrierBits(): int
+    {
+        return max(12, min(20, (int)($this->config['registrieraufgabe_bits'] ?? 17)));
+    }
+
+    private function registrierSignatur(string $wert, string $ip, int $bits): string
+    {
+        return hash_hmac('sha256', $wert . '|' . $ip . '|' . $bits, $this->geheimnis());
+    }
+
+    private function registrieraufgabe(Anfrage $a): array
+    {
+        $wert = $this->jetzt() . '.' . bin2hex(random_bytes(16));
+        $bits = $this->registrierBits();
+        return ['aufgabe' => $wert . '.' . $this->registrierSignatur($wert, $a->ip, $bits), 'bits' => $bits];
+    }
+
+    private function registrierlink(Anfrage $a): array
+    {
+        if (!$this->eingerichtet() || !$this->mailBereit()) {
+            throw new ApiFehler('nicht_eingerichtet', 'Für die Registrierung muss der Mailversand eingerichtet sein.');
+        }
+        $this->fangfeld($a);
+        $email = $this->email($a);
+        $aufgabe = $a->rumpf['aufgabe'] ?? null;
+        $nonce = $a->rumpf['nonce'] ?? null;
+        $bits = $this->registrierBits();
+        if (!is_string($aufgabe) || !preg_match('/^(\d{10})\.([a-f0-9]{32})\.([a-f0-9]{64})$/D', $aufgabe, $m)
+            || (int)$m[1] < $this->jetzt() - 600 || (int)$m[1] > $this->jetzt()
+            || !hash_equals($this->registrierSignatur($m[1] . '.' . $m[2], $a->ip, $bits), $m[3])
+            || !is_int($nonce) || $nonce < 0 || (hexdec(substr(hash('sha256', $aufgabe . ':' . $nonce), 0, 6)) >> (24 - $bits)) !== 0) {
+            throw new ApiFehler('ungueltig', 'Bitte die Registrierung erneut starten.');
+        }
+        $einladung = array_key_exists('einladung', $a->rumpf) ? $a->rumpf['einladung'] : '';
+        if (!is_string($einladung)) throw new ApiFehler('ungueltig', 'Ungültige Einladung.');
+        if ($einladung !== '') {
+            $this->sparten->einladungFuerRegistrierung(new Anfrage('POST', '', [], ['schluessel' => $einladung], null, $a->ip), $email);
+        }
+        $adresse = hash_hmac('sha256', strtolower($email), $this->geheimnis());
+        $jetzt = $this->jetzt();
+        $token = bin2hex(random_bytes(32));
+        $this->db->anfangen();
+        try {
+            // SQLite hält bereits die Schreibsperre; unter MySQL serialisiert eine bestehende Zeile die seltenen Mailreservierungen.
+            if ($this->db->treiber === 'mysql') $this->db->eine("SELECT wert FROM meta WHERE schluessel = 'schema' FOR UPDATE");
+            if ($this->db->eine('SELECT schluessel_hash FROM registrierlinks WHERE aufgabe_hash = ?', [hash('sha256', $aufgabe)]) !== null) {
+                throw new ApiFehler('ungueltig', 'Bitte eine neue Registrierung starten.');
+            }
+            $last = $this->db->eine('SELECT MAX(gesendet) AS letzte, COUNT(*) AS anzahl FROM registrierlinks WHERE adresse_hash = ? AND gesendet > ?', [$adresse, $jetzt - self::TAG]);
+            if ((int)$last['anzahl'] >= 3 || ($last['letzte'] !== null && (int)$last['letzte'] > $jetzt - 900)) {
+                throw new ApiFehler('zu_viele_versuche', 'Ein Link wurde bereits angefordert. Neuversand nach 15 Minuten, höchstens dreimal in 24 Stunden.');
+            }
+            $this->begrenzen('registrierlink|' . $a->ip, 15, 3600, 'Bitte später erneut versuchen.');
+            $this->db->ausfuehren('INSERT INTO registrierlinks (schluessel_hash, adresse_hash, einladung_hash, aufgabe_hash, gesendet) VALUES (?, ?, ?, ?, ?)',
+                [hash('sha256', $token), $adresse, hash('sha256', $einladung), hash('sha256', $aufgabe), $jetzt]);
+            $this->db->festschreiben();
+        } catch (\Throwable $e) {
+            $this->db->zurueckrollen();
+            throw $e;
+        }
+        $link = $this->appUrl() . '#/aktivieren/' . $token . ($einladung === '' ? '' : '/' . rawurlencode($einladung));
+        if (!$this->mail($email, 'E-Mail-Adresse bestätigen', "Über diesen Link schließt du deine Registrierung ab. Er gilt 24 Stunden.\n\n" . $link)) {
+            throw new ApiFehler('serverfehler', 'Die E-Mail konnte nicht versendet werden. Bitte später erneut versuchen.');
+        }
+        return ['ok' => true];
+    }
 
     private function registrieren(Anfrage $a): array
     {
         if (!$this->eingerichtet()) {
             throw new ApiFehler('nicht_eingerichtet', 'Der Server ist noch nicht eingerichtet.');
         }
-        $schluessel = 'registrieren|' . $a->ip;
-        // 5 je Stunde und Anschluss; nur Testumgebungen setzen in config.php einen höheren Wert (alle Tests laufen über 127.0.0.1)
-        $max = max(1, (int)($this->config['registrieren_je_stunde'] ?? 5));
-        $this->begrenzen($schluessel, $max, 3600, 'Von diesem Anschluss wurden gerade viele Konten angelegt. Bitte später erneut versuchen.');
         $this->fangfeld($a);
         $name = $this->text($a, 'name', 2, 120);
         $email = $this->email($a);
@@ -1805,12 +1962,40 @@ final class Api
             throw new ApiFehler('ungueltig', 'Bitte den Nutzungsbedingungen (mit Vereinbarung zur Auftragsverarbeitung) zustimmen.');
         }
         // Mit Einladung: Konto tritt der Sparte/dem Turnier/dem Ausschuss bei; sonst neue Sparte mit Verein
-        $einladung = is_string($a->rumpf['einladung'] ?? null) ? $this->sparten->einladungFuerRegistrierung(
-            new Anfrage('POST', '', [], ['schluessel' => $a->rumpf['einladung']], null, $a->ip), $email) : null;
+        $einladungSchluessel = array_key_exists('einladung', $a->rumpf) ? $a->rumpf['einladung'] : '';
+        if (!is_string($einladungSchluessel)) {
+            throw new ApiFehler('ungueltig', 'Ungültige Einladung.');
+        }
+        $einladung = $einladungSchluessel !== '' ? $this->sparten->einladungFuerRegistrierung(
+            new Anfrage('POST', '', [], ['schluessel' => $einladungSchluessel], null, $a->ip), $email) : null;
         $verein = $einladung === null ? (is_string($a->rumpf['verein'] ?? null) && trim($a->rumpf['verein']) !== '' ? $this->text($a, 'verein', 2, 160) : $name) : '';
         $sparteName = $einladung === null ? (is_string($a->rumpf['sparte'] ?? null) && trim($a->rumpf['sparte']) !== '' ? $this->text($a, 'sparte', 2, 120) : 'Tischtennis') : '';
-        $this->db->anfangen();
+        $nachweis = $a->rumpf['nachweis'] ?? '';
+        $ungueltig = 'Bitte die Registrierung über den gültigen Link aus deiner E-Mail abschließen.';
+        if (!is_string($nachweis) || !preg_match('/^[a-f0-9]{64}$/D', $nachweis)) {
+            throw new ApiFehler('ungueltig', $ungueltig);
+        }
+        $bedingung = 'verbraucht = 0 AND schluessel_hash = ? AND adresse_hash = ? AND einladung_hash = ? AND gesendet > ?';
+        $parameter = [hash('sha256', $nachweis), hash_hmac('sha256', strtolower($email), $this->geheimnis()), hash('sha256', $einladungSchluessel), $this->jetzt() - self::TAG];
+        if (!$this->db->eine("SELECT 1 FROM registrierlinks WHERE $bedingung", $parameter)) {
+            throw new ApiFehler('ungueltig', $ungueltig);
+        }
+        $schluessel = 'registrieren|' . $a->ip;
+        // 5 je Stunde und Anschluss; nur Testumgebungen setzen in config.php einen höheren Wert (alle Tests laufen über 127.0.0.1)
+        $max = max(1, (int)($this->config['registrieren_je_stunde'] ?? 5));
+        // Auch parallele Registrierungen desselben Anschlusses sehen den zuletzt
+        // bestätigten Zählerstand. SQLite serialisiert die Schreibtransaktion selbst.
+        $sperre = "SHA2(CONCAT(DATABASE(), '|tt-versuch|', ?), 256)";
+        $mysql = $this->db->treiber === 'mysql';
+        if ($mysql && (int)($this->db->eine("SELECT GET_LOCK($sperre, 5) AS ok", [$schluessel])['ok'] ?? 0) !== 1) {
+            throw new ApiFehler('zu_viele_versuche', 'Bitte die Registrierung später erneut versuchen.');
+        }
         try {
+            $this->db->anfangen();
+            if ($this->db->ausfuehren("UPDATE registrierlinks SET verbraucht = 1 WHERE $bedingung", $parameter) !== 1) {
+                throw new ApiFehler('ungueltig', $ungueltig);
+            }
+            $this->begrenzen($schluessel, $max, 3600, 'Von diesem Anschluss wurden gerade viele Konten angelegt. Bitte später erneut versuchen.');
             $this->db->ausfuehren(
                 'INSERT INTO konten (name, email, passwort_hash, rolle, gesperrt, angelegt, aktiv, bedingungen) VALUES (?, ?, ?, ?, 0, ?, ?, ?)',
                 [$name, $email, password_hash($pw, PASSWORD_DEFAULT), 'veranstalter', $this->jetzt(), $this->jetzt(), self::BEDINGUNGEN_FASSUNG]
@@ -1831,6 +2016,8 @@ final class Api
         } catch (\Throwable $e) {
             $this->db->zurueckrollen();
             throw $e;
+        } finally {
+            if ($mysql) $this->db->eine("SELECT RELEASE_LOCK($sperre)", [$schluessel]);
         }
         $antwort = $this->anmeldungAusgeben((int)$k['id']);
 
@@ -1897,11 +2084,23 @@ final class Api
             throw new ApiFehler('gesperrt', 'Dieses Konto ist gesperrt. Bitte an den Administrator wenden.');
         }
         $neu = $this->passwortFeld($a, 'neu');
-        $this->db->ausfuehren('UPDATE konten SET passwort_hash = ? WHERE id = ?', [password_hash($neu, PASSWORD_DEFAULT), $kontoId]);
-        $this->db->ausfuehren('DELETE FROM rueckstellungen WHERE konto_id = ?', [$kontoId]);
-        $this->db->ausfuehren('DELETE FROM sitzungen WHERE konto_id = ?', [$kontoId]);
-        $this->versucheLoeschen($bremse);
-        return $this->anmeldungAusgeben($kontoId);
+        $hash = password_hash($neu, PASSWORD_DEFAULT);
+        $this->db->anfangen();
+        try {
+            if ($this->db->ausfuehren('DELETE FROM rueckstellungen WHERE schluessel_hash = ? AND ablauf >= ?', [hash('sha256', $schluessel), $this->jetzt()]) !== 1) {
+                throw new ApiFehler('falsche_zugangsdaten', 'Der Link ist abgelaufen oder wurde schon benutzt.');
+            }
+            $this->db->ausfuehren('UPDATE konten SET passwort_hash = ? WHERE id = ?', [$hash, $kontoId]);
+            $this->db->ausfuehren('DELETE FROM rueckstellungen WHERE konto_id = ?', [$kontoId]);
+            $this->db->ausfuehren('DELETE FROM sitzungen WHERE konto_id = ?', [$kontoId]);
+            $this->versucheLoeschen($bremse);
+            $antwort = $this->anmeldungAusgeben($kontoId);
+            $this->db->festschreiben();
+            return $antwort;
+        } catch (\Throwable $e) {
+            $this->db->zurueckrollen();
+            throw $e;
+        }
     }
 
     private function kontoLoeschen(Anfrage $a): array
@@ -2281,6 +2480,10 @@ final class Api
             }
             if ($datum === null && $this->db->eine('SELECT id FROM anmeldungen WHERE turnier_id = ? LIMIT 1', [$t['id']]) !== null) {
                 throw new ApiFehler('konflikt', 'Es gibt Online-Anmeldungen – das Datum bleibt gesetzt (die Löschfrist richtet sich danach).');
+            }
+            $ende = $this->turnierEnddatum((string)$t['id'], (string)($t['datum'] ?? ''));
+            if ($datum !== null && $ende !== null && $datum > $ende) {
+                throw new ApiFehler('ungueltig', 'Das Startdatum darf nicht nach dem Enddatum liegen.');
             }
             $this->db->ausfuehren('UPDATE turniere SET datum = ? WHERE id = ?', [$datum, $t['id']]);
         }
@@ -2935,8 +3138,15 @@ final class Api
         self::nichtAufZentrale($t);
         [$rolle, $bezug] = $this->codeZiel($a);
         $this->codeLaden($t, $rolle, $bezug);
-        $this->db->ausfuehren('UPDATE codes SET code = ?, gesperrt = 0 WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$this->freierCode($t), $t['id'], $rolle, $bezug]);
-        $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        $this->db->anfangen();
+        try {
+            $this->db->ausfuehren('UPDATE codes SET code = ?, gesperrt = 0 WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$this->freierCode($t), $t['id'], $rolle, $bezug]);
+            $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+            $this->db->festschreiben();
+        } catch (\Throwable $x) {
+            $this->db->zurueckrollen();
+            throw $x;
+        }
         return ['code' => self::codeAusgabe($this->codeLaden($t, $rolle, $bezug))];
     }
 
@@ -2951,9 +3161,16 @@ final class Api
         if ($gesperrt) {
             $this->letzteLeitungPruefen($t, $rolle, $bezug);
         }
-        $this->db->ausfuehren('UPDATE codes SET gesperrt = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$gesperrt ? 1 : 0, $t['id'], $rolle, $bezug]);
-        if ($gesperrt) {
-            $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        $this->db->anfangen();
+        try {
+            $this->db->ausfuehren('UPDATE codes SET gesperrt = ? WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$gesperrt ? 1 : 0, $t['id'], $rolle, $bezug]);
+            if ($gesperrt) {
+                $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+            }
+            $this->db->festschreiben();
+        } catch (\Throwable $x) {
+            $this->db->zurueckrollen();
+            throw $x;
         }
         return ['code' => self::codeAusgabe($this->codeLaden($t, $rolle, $bezug))];
     }
@@ -2965,8 +3182,15 @@ final class Api
         self::nichtAufZentrale($t);
         [$rolle, $bezug] = $this->codeZiel($a);
         $this->letzteLeitungPruefen($t, $rolle, $bezug);
-        $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
-        $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+        $this->db->anfangen();
+        try {
+            $this->db->ausfuehren('DELETE FROM codes WHERE turnier_id = ? AND rolle = ? AND bezug = ?', [$t['id'], $rolle, $bezug]);
+            $this->codeSitzungenBeenden((string)$t['id'], $rolle, $bezug);
+            $this->db->festschreiben();
+        } catch (\Throwable $x) {
+            $this->db->zurueckrollen();
+            throw $x;
+        }
         $this->nachrichten->kennungEntfernt((string)$t['id'], $rolle, $bezug);
         return ['ok' => true];
     }
@@ -3310,6 +3534,7 @@ final class Api
             }
             $this->db->ausfuehren('DELETE FROM sitzungen WHERE ablauf < ?', [$jetzt]);
             $this->db->ausfuehren('DELETE FROM rueckstellungen WHERE ablauf < ?', [$jetzt]);
+            $this->db->ausfuehren('DELETE FROM registrierlinks WHERE gesendet < ?', [$jetzt - 30 * self::TAG]);
             $this->db->ausfuehren('DELETE FROM versuche WHERE zeit < ?', [$jetzt - self::TAG]);
             $this->anmeldung->aufraeumen();
             $this->sparten->aufraeumen();

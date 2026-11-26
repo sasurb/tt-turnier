@@ -268,11 +268,14 @@ export interface TurnierInfo {
   sparte?: number | null;
   name: string;
   datum: string | null;
+  enddatum?: string | null;
   angelegt: string;
   /** Name des Kontos, dem das Turnier gehört (Turnierleitung) */
   veranstalter: string;
   /** Mit Anmeldung abgefragt (ab 0.6): Rechte dieser Anmeldung für das Turnier; null = nur lesen */
   rechte?: 'leitung' | 'helfer' | 'spieler' | null;
+  /** Stabiler Bezug für ausstehende Aktionen, nur für die eigene bestätigte Anmeldung. */
+  identitaet?: string;
   /** Ab 0.11, mit Anmeldung als Helfer: Aufgaben dieser Kennung */
   aufgaben?: Aufgabe[];
   /** Online-Server (ab 0.5): Name der Zentrale, auf der das Turnier gerade läuft – dann online nur lesbar */
@@ -369,6 +372,7 @@ export interface LoginAntwort {
  * Link, gleiche E-Mail-Adresse) tritt es der Sparte, dem Turnier bzw. dem Ausschuss bei.
  */
 export interface RegistrierenAnfrage {
+  nachweis: string;
   name: string;
   email: string;
   passwort: string;
@@ -532,6 +536,7 @@ export interface Sicherung {
 export interface TurnierZugangAntwort {
   token: string;
   rolle: Rolle;
+  identitaet?: string;
   /** Name, unter dem Einträge erscheinen (steht an der Kennung) */
   name?: string;
   /** Bei Spielerkennungen: ID des Spielers im Turnier */
@@ -768,6 +773,8 @@ export const ART = {
   spielBestaetigt: 'spiel.bestaetigt',
   spielAngefochten: 'spiel.angefochten',
   /** Leitung entscheidet einen Konflikt / eine Anfechtung zugunsten eines Eintrags */
+  spielErgebnisSpaet: 'spiel.ergebnis_spaet',
+  spielSpaetGeprueft: 'spiel.spaet_geprueft',
   spielEntschieden: 'spiel.entschieden',
   spielZurueckgesetzt: 'spiel.zurueckgesetzt',
   /** Spielaufruf: Tisch und Schiedsrichter (Daten: { konkurrenz, spiel, tisch, schiri?: { name, spieler? } }) – Leitung und Helfer */

@@ -1,3 +1,5 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import type {
   Aufgabe,
   AnmeldeStatus,
@@ -69,6 +71,7 @@ export class ApiFehler extends Error {
     public readonly code: FehlerCode | 'netzwerk',
     meldung: string,
     public readonly status = 0,
+    public readonly pauseMs = 0,
   ) {
     super(meldung);
   }
@@ -122,16 +125,15 @@ export class Api {
     } finally {
       clearTimeout(timer);
     }
-    let daten: unknown = null;
-    try {
-      daten = await antwort.json();
-    } catch {
-      throw new ApiFehler(antwort.ok ? 'serverfehler' : 'netzwerk', 'Antwort des Servers ist kein JSON.', antwort.status);
-    }
+    const daten = await antwort.json().catch(() => null);
     if (!antwort.ok) {
-      const f = daten as { fehler?: FehlerCode; meldung?: string };
-      throw new ApiFehler(f.fehler ?? 'serverfehler', f.meldung ?? `Fehler ${antwort.status}`, antwort.status);
+      const f = daten as { fehler?: FehlerCode; meldung?: string } | null;
+      const nach = antwort.headers.get('retry-after') ?? '';
+      const pause = /^\d+$/.test(nach) ? Number(nach) * 1000 : Date.parse(nach) - Date.now();
+      const code = antwort.status === 429 ? 'zu_viele_versuche' : antwort.status === 413 ? 'zu_gross' : f?.fehler ?? 'serverfehler';
+      throw new ApiFehler(code, f?.meldung ?? `Fehler ${antwort.status}`, antwort.status, Number.isFinite(pause) ? Math.max(0, pause) : 0);
     }
+    if (daten === null) throw new ApiFehler('serverfehler', 'Antwort des Servers ist kein JSON.', antwort.status);
     return daten as T;
   }
 
@@ -151,6 +153,20 @@ export class Api {
   }
   ich(token: string) {
     return this.rufe<IchAntwort>('GET', 'ich', { token });
+  }
+  async registrierlink(email: string, einladung: string | null, website: string) {
+    const { aufgabe, bits = 12 } = await this.rufe<{ aufgabe: string; bits?: number }>('GET', 'registrieraufgabe');
+    if (!Number.isInteger(bits) || bits < 12 || bits > 20) {
+      throw new ApiFehler('ungueltig', 'Die Rechenaufgabe für die Registrierung ist ungültig.');
+    }
+    let nonce = 0;
+    for (;;) {
+      const hash = sha256(utf8ToBytes(aufgabe + ':' + nonce));
+      const praefix = (hash[0]! << 16) | (hash[1]! << 8) | hash[2]!;
+      if ((praefix >>> (24 - bits)) === 0) break;
+      if (++nonce % 256 === 0) await new Promise((fertig) => setTimeout(fertig, 0));
+    }
+    return this.rufe<{ ok: true }>('POST', 'registrierlink', { rumpf: { email, einladung: einladung ?? '', website, aufgabe, nonce } });
   }
   registrieren(a: RegistrierenAnfrage) {
     return this.rufe<LoginAntwort>('POST', 'registrieren', { rumpf: a });

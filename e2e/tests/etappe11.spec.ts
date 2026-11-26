@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { reiterOeffnen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 
@@ -41,7 +42,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await anmelden(page);
   await page.getByTestId('neues-turnier').click();
   await page.getByLabel('Name des Turniers').fill(`Herbstcup ${geraet}`);
-  await page.getByLabel('Datum').fill('2027-10-02');
+  await page.getByLabel('Startdatum', { exact: true }).fill('2027-10-02');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
@@ -53,7 +54,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await expect(page.getByTestId('abschnitt-angaben')).toHaveCount(0);
 
   // Angaben im Turnier: erster Punkt unter Konkurrenzen
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   const erste = page.locator('main .karte').first();
   await expect(erste).toHaveAttribute('data-testid', 'abschnitt-angaben');
   await page.getByLabel('Name', { exact: true }).fill('Herren');
@@ -64,7 +65,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await bild(page, 'e11-konkurrenzen-angaben');
 
   // Spielerformular: nach dem Anlegen leer, mit Häkchen bleibt der Verein stehen, Vereine als Vorschlag
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   await page.getByRole('group', { name: /Gleich melden für/ }).getByRole('checkbox', { name: 'Herren' }).check();
   await page.getByLabel(/Weitere Spieler vom gleichen Verein/).check();
@@ -99,7 +100,7 @@ test('Kasse & Check-in offline, Spieler-Rubrik, Angaben unter Konkurrenzen, Spie
   await bild(page, 'e11-spieler-rubrik');
 
   // Kasse & Check-in: App einmal online laden (Service Worker speichert sie), dann ohne Netz kassieren
-  await nav(page).getByRole('link', { name: 'Kasse & Check-in' }).click();
+  await reiterOeffnen(page, 'Kasse & Check-in');
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) await new Promise((ok) => navigator.serviceWorker.addEventListener('controllerchange', ok, { once: true }));
@@ -175,7 +176,7 @@ test('Mannschaftsturnier: Spielsystem, Mannschaften melden, Aufstellung, Teilspi
   }
 
   // Konkurrenz „Mannschaft“ mit Corbillon-Cup
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Teams');
   await page.getByRole('radio', { name: 'Mannschaft', exact: true }).check();
   await expect(page.getByRole('radio', { name: /^Schweizer System/ })).toHaveCount(0);

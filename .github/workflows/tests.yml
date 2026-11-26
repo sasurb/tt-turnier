@@ -111,7 +111,7 @@ jobs:
           coverage: none
       - run: npm ci
         working-directory: app
-      - run: npm ci && npx playwright install --with-deps chromium
+      - run: npm ci && npx playwright install --with-deps chromium webkit
         working-directory: e2e
       - name: Abläufe im Browser prüfen
         working-directory: e2e

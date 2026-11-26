@@ -22,6 +22,7 @@
   import { turnierKennungEingabe, wunschKennungGueltig } from '../code';
 
   let name = $state('');
+  let enddatum = $state('');
   let datum = $state(new Date().toISOString().slice(0, 10));
   let leiter = $state(anzeigeName());
   let ort = $state('');
@@ -73,6 +74,11 @@
   });
 
   function nameOk(): boolean {
+    if (enddatum && datum && enddatum < datum) {
+      fehler = 'Das Enddatum liegt vor dem Startdatum.';
+      schritt = 0;
+      return false;
+    }
     if (name.trim().length < 2) {
       fehler = T.neu.nameZuKurz;
       schritt = 0;
@@ -152,7 +158,8 @@
       let sitzung: TurnierSitzung;
       if (modus === 'online' && app.sitzung) {
         const sp = mitSparten ? (sparteId ?? anlegbar[0]?.id ?? null) : null;
-        const a = await api.turnierAnlegen(app.sitzung.token, {
+        const konto = app.sitzung;
+        const a = await api.turnierAnlegen(konto.token, {
           name: name.trim(),
           datum: datum || null,
           ...(mitSparten ? { loeschenNach, ...(sp ? { sparte: sp } : {}), ...(kennungArt === 'wunsch' ? { kennung: turnierKennungEingabe(wunsch) } : {}) } : {}),
@@ -161,9 +168,9 @@
         if (sp) setzeAktiveSparte(sp);
         // Rechte kommen vom Konto; das Konto-Token wird nicht am Turnier gespeichert
         turnierMerken({ id, name: a.turnier.name, datum: a.turnier.datum, modus: 'online', rolle: 'zuschauer', token: null, konto: true });
-        const token = app.sitzung.token;
+        const token = konto.token;
         // Einträge landen im Gerätespeicher und gehen mit dem Abgleich der Turnieransicht an den Server
-        sitzung = new TurnierSitzung({ speicher, turnier: id, modus: 'online', geraet: geraetId(), api, token: () => token, autor: { rolle: 'leitung', name: app.sitzung.konto.name } });
+        sitzung = new TurnierSitzung({ speicher, turnier: id, modus: 'online', geraet: geraetId(), api, token: () => token, autor: { rolle: 'leitung', name: konto.konto.name } });
       } else {
         id = lokaleTurnierId();
         setzeAnzeigeName(leiter);
@@ -171,6 +178,7 @@
         await sitzung.eintragen(ART.turnierAngelegt, { name: name.trim(), datum: datum || null });
         turnierMerken({ id, name: name.trim(), datum: datum || null, modus: 'lokal', rolle: 'leitung', token: null });
       }
+      if (enddatum) await sitzung.eintragen(ART.turnierDaten, { enddatum });
       // Jugendturnier (Frage 7A, 16A): eigener Eintrag – die Server lesen „jugend“ und „namen“ aus turnier.daten
       if (jugend) await sitzung.eintragen(ART.turnierDaten, { jugend: true, namen: 'kurz' });
       if (mitAssistent) {
@@ -185,6 +193,7 @@
         const t = parseInt(tische, 10);
         if (ort.trim() || (Number.isFinite(t) && t > 0)) await sitzung.eintragen(ART.turnierDaten, { ort: ort.trim(), tische: Number.isFinite(t) && t > 0 && t <= 200 ? t : null });
       }
+      if (modus === 'online') app.hinweis = [app.hinweis, `Turnierkennung: ${id}`].filter(Boolean).join(' · ');
       gehe(`t/${id}${mitAssistent ? `/${danach === 'zugaenge' && modus !== 'online' ? 'teilnehmer' : danach}` : ''}`);
     } catch (x) {
       if (!anmeldungAbgelaufen(x)) fehler = fehlerText(x, T.app.fehlerAllgemein);
@@ -211,8 +220,12 @@
       <p class="leise">{T.assistent.angabenText}</p>
       <label for="n">{T.neu.name}</label>
       <input id="n" bind:value={name} placeholder={T.neu.namePlatzhalter} autocomplete="off" required />
-      <label for="d">{T.neu.datum}</label>
-      <input id="d" type="date" bind:value={datum} />
+      <div class="raster">
+        <div><label for="d">{T.turnierDatum.start}</label><input id="d" type="date" bind:value={datum} /></div>
+        <div><div class="label-zeile"><label for="ed">{T.turnierDatum.ende}</label><Hilfe text={T.turnierDatum.endeHilfe} /></div>
+        <input id="ed" type="date" min={datum} bind:value={enddatum} /></div>
+      </div>
+      {#if !enddatum}<p class="leise">{T.turnierDatum.offen}</p>{/if}
       <div class="raster">
         <div><label for="ort">{T.assistent.ort}</label><input id="ort" bind:value={ort} maxlength="120" /></div>
         <div>

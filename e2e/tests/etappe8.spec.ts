@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { angabenSetzen } from './hilfen';
+import { angabenSetzen, reiterOeffnen } from './hilfen';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,7 +60,7 @@ test('Rückgängig, Nachmelden, Zeitplan, Vorplanen und Ziehen auf Tische', asyn
   }
 
   // Konkurrenz: neue Spielsysteme in der Auswahl, feste Satzzahl nur beim Schweizer/Cup-System
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByRole('radio', { name: /^Cup-System/ }).check();
   await expect(page.getByTestId('feste-saetze')).toBeVisible();
   await page.getByRole('radio', { name: /^Schweizer System/ }).check();
@@ -137,13 +137,21 @@ test('Rückgängig, Nachmelden, Zeitplan, Vorplanen und Ziehen auf Tische', asyn
     await page.mouse.up();
   }
   await expect(page.getByText('Spiel an Tisch 1 aufgerufen.')).toBeVisible();
-  await expect(ziel).toContainText('–');
-  await expect(ziel.getByRole('button', { name: 'Aufruf zurücknehmen' })).toBeVisible();
+  // V-010: Antippen des Tisches öffnet die Funktionen (Leitung)
+  const tischKnopf = ziel.getByRole('button', { name: /^Tisch 1: .+ gegen .+/ });
+  await expect(tischKnopf).toBeVisible();
+  await tischKnopf.click();
+  const auswahl = page.getByTestId('tisch-auswahl');
+  await expect(auswahl.getByRole('button', { name: 'Ergebnis eintragen' })).toBeVisible();
+  await expect(auswahl.getByRole('button', { name: 'Aufruf zurücknehmen' })).toBeVisible();
+  await layoutPruefen(page, auswahl);
+  await auswahl.getByRole('button', { name: 'Schließen' }).click();
+  await expect(auswahl).toBeHidden();
   await layoutPruefen(page, page.getByTestId('tische'));
   await bild(page, '53-tische-zeitplan');
 
   // Änderungsverlauf: Aufruf im Protokoll zurücknehmen und wiederherstellen
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await page.locator('summary', { hasText: 'Protokoll' }).click();
   const prot = page.getByTestId('protokoll');
   const erster = prot.locator('li').first();

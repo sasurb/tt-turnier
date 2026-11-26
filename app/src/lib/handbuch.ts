@@ -46,7 +46,7 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Einem Turnier beitreten',
         text: [
-          'Auf der Startseite „Turnier beitreten“ wählen, die 8-stellige Turnierkennung eingeben und danach die eigene Kennung (Spieler-, Helfer- oder Leitungskennung). Ohne eigene Kennung bist du Zuschauer.',
+          'Auf der Startseite „Turnier beitreten“ wählen, die Turnierkennung eingeben und danach die eigene Kennung (Spieler-, Helfer- oder Leitungskennung). Ohne eigene Kennung bist du Zuschauer.',
           'Schneller geht es mit dem persönlichen Link oder QR-Code, den die Turnierleitung verteilt: einmal öffnen, fertig. Das Gerät merkt sich den Zugang.',
         ],
       },
@@ -126,6 +126,8 @@ export const HANDBUCH: HandbuchKapitel[] = [
           '2. Unter „Konkurrenzen“ ganz oben festlegen, welche Angaben du führst (TTR, Klasse, Geschlecht, Jahrgang) und wie viele Tische es gibt; darunter die Konkurrenzen mit Modus, Gewinnsätzen und Wertung anlegen.',
           '3. Unter „Teilnehmer“ alle Teilnehmenden anlegen – aus dem Spielerpool, über die Online-Anmeldung oder von Hand. Mit „Gleich melden für“ landen sie direkt in den angehakten Konkurrenzen.',
           '4. Darunter, unter „Teilnehmer je Konkurrenz“, für jede Konkurrenz festlegen, wer mitspielt – nicht jeder spielt überall mit. Im Doppel bildest du dort die Paare, bei Mannschaften die Teams.',
+          'Das Startdatum und ein optionales Enddatum lassen sich unter „Einstellungen“ ändern. Das Enddatum gilt bis zum Tagesende in Europe/Berlin. Zum Verlängern speichert die Leitung ein späteres Datum.',
+          'Wer ein Konto erstellt, erhält zuerst einen Bestätigungslink per E-Mail. Über diesen Link lässt sich die Registrierung innerhalb von 24 Stunden abschließen.',
           '5. Unter „Konkurrenzen“ auslosen, Vorschau prüfen, starten. Was Spieler und Zuschauer sehen, stellst du unter „Einstellungen“ ein.',
           '6. Deinen Spielerpool für alle Turniere pflegst du im Reiter „Spielerpool“ (auch CSV-Import und -Export).',
         ],
@@ -210,6 +212,8 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Auslosen',
         text: [
+          'Nach Abschluss der Vorrunde kann die Leitung die nächste Stufe auch im Reiter „Spiele“ starten.',
+          'Rechtzeitig offline erfasste Ergebnisse, die erst nach dem Enddatum eintreffen, prüft die Turnierleitung unter „Spiele“. Offene Streitfälle machen die Wertung vorläufig.',
           'Unter „Konkurrenzen“ → Konkurrenz → „Auslosen“: Die App schlägt Gruppengröße und Setzung (nach TTR) vor. In der Vorschau kannst du Spieler tauschen, bevor du startest.',
           'Freilose gehen zuerst an Gesetzte, Setzpositionen 1 oben, 2 unten, 3 und 4 gelost.',
         ],
@@ -262,7 +266,9 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Aufrufen',
         text: [
-          'Ein Spiel auf einen freien Tisch ziehen (Griff ⠿) oder unter „Nächste Spiele“ antippen. Auf Wunsch belegt das Gerät freie Tische automatisch, berücksichtigt die Mindestpause und sagt den Aufruf an.',
+          'Ein Spiel auf einen freien Tisch ziehen (Griff ⠿) oder unter „Nächste Spiele“ antippen. Auf Wunsch belegt das Gerät freie Tische automatisch, berücksichtigt die Mindestpause und sagt den Aufruf an. Ausschalten stoppt nur neue Aufrufe; laufende Spiele bleiben. War die Automatik versehentlich an, bietet die App an, die automatisch aufgerufenen Spiele ohne Ergebnis wieder zurückzunehmen.',
+          'Jeder Tisch erscheint als Tischtennistisch mit Netz: links und rechts die beiden Seiten mit gewonnenen Sätzen (bei Mannschaften Teilspielen) und Satzergebnissen, am Netz Tischnummer und Spielzeit, darüber Konkurrenz, Runde und Zustand (läuft, frei, gesperrt, zu bestätigen, strittig). Bei Mannschaften steht darunter das laufende Teilspiel. Nach dem Ergebnis zeigt der freie Tisch noch 30 Minuten das letzte Spiel.',
+          'Tisch antippen: Turnierleitung und Helfer bekommen die Funktionen dieses Tisches – Spiel aufrufen, Ergebnis eintragen, Tisch wechseln, Ansage wiederholen, Aufruf zurücknehmen und (nur Leitung) Tisch sperren oder freigeben. Spieler und Zuschauer öffnen damit das Spiel: Spielinformationen, beim eigenen Spiel auch Ergebnis eintragen oder bestätigen. Die Live-Anzeige zeigt dieselben Tische ohne Funktionen.',
           'Wer gerade an einem Tisch spielt, wird nicht ein zweites Mal aufgerufen. Gesperrte Tische (nur Leitung) bleiben frei.',
         ],
       },

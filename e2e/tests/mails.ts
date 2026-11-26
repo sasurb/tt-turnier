@@ -35,3 +35,12 @@ export function mails(): GeleseneMail[] {
 export function letzteMail(an: string, betreff: RegExp): GeleseneMail | undefined {
   return mails().filter((m) => m.an === an && betreff.test(m.betreff)).at(-1);
 }
+
+export async function registrierlinkOeffnen(page: import('@playwright/test').Page, email: string) {
+  await page.getByLabel('E-Mail', { exact: true }).fill(email);
+  await page.getByRole('button', { name: 'Bestätigungslink anfordern' }).click();
+  await page.getByRole('status').filter({ hasText: 'Bestätigungslink' }).waitFor();
+  const link = letzteMail(email, /E-Mail-Adresse bestätigen/)?.text.match(/#\/aktivieren\/[a-f0-9]{64}(?:\/[a-zA-Z0-9_-]+)?/);
+  if (!link) throw new Error('Bestätigungslink fehlt');
+  await page.goto('./' + link[0]);
+}

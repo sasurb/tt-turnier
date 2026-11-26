@@ -18,7 +18,7 @@ function speicherErzeugen(): EreignisSpeicher {
   return new SpeicherImArbeitsspeicher();
 }
 
-export const speicher = speicherErzeugen();
+export const speicher = Object.assign(speicherErzeugen(), { sitzungsbereiche: true });
 
 /**
  * bereit mit offline = true: Der Server war auf diesem Gerät schon erreichbar, gerade gibt es aber kein Netz.

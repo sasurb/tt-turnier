@@ -10,14 +10,19 @@ import { sortieren } from './typen';
  * IndexedDB im Browser (dauerhaft, offline) und Arbeitsspeicher (Tests).
  */
 export interface EreignisSpeicher {
+  sitzungsbereiche?: boolean;
   /** Alle Ereignisse eines Turniers in Anwendungsreihenfolge. */
   alle(turnier: string): Promise<LokalesEreignis[]>;
   /** Noch nicht vom Server bestätigte Ereignisse (älteste zuerst). */
   ausstehende(turnier: string, max?: number): Promise<LokalesEreignis[]>;
+  /** Ausstehende Aktionen aus dem Altbestand und von anderen Anmeldungen desselben Turniers. */
+  fremdeAusstehende?(turnier: string, eigenerBereich: string): Promise<LokalesEreignis[]>;
+  leerenCacheEntfernen?(bereich: string): Promise<void>;
+  wartendeVerschieben?(quelle: string, ziel: string, bindung: string, passt: (e: LokalesEreignis) => boolean): Promise<void>;
   /** Neues Ereignis vom Gerät ablegen. */
   hinzufuegen(e: LokalesEreignis): Promise<void>;
   /** Ereignisse vom Server übernehmen (ersetzt gleiche IDs, auch eigene ausstehende). */
-  uebernehmen(liste: LokalesEreignis[]): Promise<void>;
+  uebernehmen(liste: LokalesEreignis[], giltNoch?: () => boolean): Promise<void>;
   /** Laufnummer, bis zu der vom Server abgeholt wurde. */
   abgeholtBis(turnier: string): Promise<number>;
   setzeAbgeholtBis(turnier: string, seq: number): Promise<void>;
@@ -29,9 +34,14 @@ export interface EreignisSpeicher {
   /** Vom Server abgelehnte eigene Einträge markieren (Status „abgelehnt“, mit Grund) */
   ablehnen(turnier: string, liste: { id: string; meldung: string }[]): Promise<void>;
   /** Einzelne Einträge dieses Geräts entfernen (z. B. abgelehnte verwerfen) */
-  entfernen(turnier: string, ids: string[]): Promise<void>;
+  entfernen(turnier: string, ids: string[], nurAusstehende?: boolean): Promise<void>;
   /** Alles zu einem Turnier löschen. */
   loeschen(turnier: string): Promise<void>;
+}
+
+function gleichtWartenderAktion(a: LokalesEreignis, b: LokalesEreignis): boolean {
+  return a.art === b.art && a.zeit === b.zeit && a.geraet === b.geraet &&
+    JSON.stringify(a.daten) === JSON.stringify(b.daten);
 }
 
 export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
@@ -45,11 +55,35 @@ export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
   async ausstehende(turnier: string, max = Infinity) {
     return (await this.alle(turnier)).filter((e) => e.status === 'ausstehend').slice(0, max);
   }
+  async fremdeAusstehende(turnier: string, eigenerBereich: string) {
+    return sortieren([...this.ereignisse.values()].filter((e) =>
+      e.status === 'ausstehend' && e.turnier !== eigenerBereich &&
+      (e.turnier === turnier || e.turnier.startsWith(turnier + '/'))
+    ));
+  }
+  async leerenCacheEntfernen(bereich: string) {
+    const eintraege = [...this.ereignisse.values()].filter((e) => e.turnier === bereich);
+    if (eintraege.some((e) => e.status !== 'bestaetigt')) return;
+    for (const e of eintraege) this.ereignisse.delete(e.id);
+    this.meta.delete(bereich);
+    this.sichten.delete(bereich);
+  }
+  async wartendeVerschieben(quelle: string, ziel: string, bindung: string, passt: (e: LokalesEreignis) => boolean) {
+    for (const [id, e] of this.ereignisse) {
+      if (e.turnier !== quelle || e.status !== 'ausstehend' || !passt(e)) continue;
+      const zielId = ziel + '/' + (id.startsWith(quelle + '/') ? id.slice(quelle.length + 1) : id);
+      const schonDa = this.ereignisse.get(zielId);
+      if (schonDa && !gleichtWartenderAktion(e, schonDa)) continue;
+      if (!schonDa) this.ereignisse.set(zielId, { ...e, id: zielId, turnier: ziel, sitzung: bindung });
+      this.ereignisse.delete(id);
+    }
+  }
   async hinzufuegen(e: LokalesEreignis) {
     if (this.ereignisse.has(e.id)) throw new Error('Ereignis-ID bereits vorhanden: ' + e.id);
     this.ereignisse.set(e.id, structuredClone(e));
   }
-  async uebernehmen(liste: LokalesEreignis[]) {
+  async uebernehmen(liste: LokalesEreignis[], giltNoch?: () => boolean) {
+    if (giltNoch && !giltNoch()) return;
     for (const e of liste) this.ereignisse.set(e.id, structuredClone(e));
   }
   async abgeholtBis(turnier: string) {
@@ -74,13 +108,17 @@ export class SpeicherImArbeitsspeicher implements EreignisSpeicher {
       if (e && e.turnier === turnier && e.status === 'ausstehend') this.ereignisse.set(id, { ...e, status: 'abgelehnt', fehler: meldung });
     }
   }
-  async entfernen(turnier: string, ids: string[]) {
-    for (const id of ids) if (this.ereignisse.get(id)?.turnier === turnier && this.ereignisse.get(id)?.status !== 'bestaetigt') this.ereignisse.delete(id);
+  async entfernen(turnier: string, ids: string[], nurAusstehende = false) {
+    for (const id of ids) {
+      const e = this.ereignisse.get(id);
+      if (e && e.turnier === turnier && e.status !== 'bestaetigt' && (!nurAusstehende || e.status === 'ausstehend')) this.ereignisse.delete(id);
+    }
   }
   async loeschen(turnier: string) {
-    for (const [id, e] of this.ereignisse) if (e.turnier === turnier) this.ereignisse.delete(id);
-    this.meta.delete(turnier);
-    this.sichten.delete(turnier);
+    for (const [id, e] of this.ereignisse) if (e.turnier === turnier || e.turnier.startsWith(turnier + '/')) this.ereignisse.delete(id);
+    for (const m of [this.meta, this.sichten]) for (const key of m.keys()) {
+      if (key === turnier || key.startsWith(turnier + '/')) m.delete(key);
+    }
   }
 }
 
@@ -130,6 +168,63 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     return (await this.alle(turnier)).filter((e) => e.status === 'ausstehend').slice(0, max);
   }
 
+  async fremdeAusstehende(turnier: string, eigenerBereich: string): Promise<LokalesEreignis[]> {
+    const db = await this.db;
+    const index = db.transaction('ereignisse', 'readonly').objectStore('ereignisse').index('turnier');
+    const bereiche = IDBKeyRange.bound(turnier + '/', turnier + '/\uffff');
+    const warten = (bereich: IDBValidKey | IDBKeyRange) => new Promise<LokalesEreignis[]>((ok, fehler) => {
+      const gefunden: LokalesEreignis[] = [];
+      const request = index.openCursor(bereich);
+      request.onerror = () => fehler(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          ok(gefunden);
+          return;
+        }
+        const e = cursor.value as LokalesEreignis;
+        if (e.turnier !== eigenerBereich && e.status === 'ausstehend') gefunden.push(e);
+        cursor.continue();
+      };
+    });
+    return sortieren((await Promise.all([warten(turnier), warten(bereiche)])).flat());
+  }
+
+  async leerenCacheEntfernen(bereich: string) {
+    const db = await this.db;
+    const tx = db.transaction(['ereignisse', 'meta'], 'readwrite');
+    const store = tx.objectStore('ereignisse');
+    const request = store.index('turnier').getAll(bereich);
+    request.onsuccess = () => {
+      const eintraege = request.result as LokalesEreignis[];
+      if (eintraege.some((e) => e.status !== 'bestaetigt')) return;
+      for (const e of eintraege) store.delete(e.id);
+      tx.objectStore('meta').delete(bereich);
+    };
+    await fertig(tx);
+  }
+
+  async wartendeVerschieben(quelle: string, ziel: string, bindung: string, passt: (e: LokalesEreignis) => boolean) {
+    const db = await this.db;
+    const tx = db.transaction('ereignisse', 'readwrite');
+    const store = tx.objectStore('ereignisse');
+    const request = store.index('turnier').getAll(quelle);
+    request.onsuccess = () => {
+      for (const e of request.result as LokalesEreignis[]) {
+        if (e.status !== 'ausstehend' || !passt(e)) continue;
+        const id = ziel + '/' + (e.id.startsWith(quelle + '/') ? e.id.slice(quelle.length + 1) : e.id);
+        const lesen = store.get(id);
+        lesen.onsuccess = () => {
+          const schonDa = lesen.result as LokalesEreignis | undefined;
+          if (schonDa && !gleichtWartenderAktion(e, schonDa)) return;
+          if (!schonDa) store.add({ ...e, id, turnier: ziel, sitzung: bindung });
+          store.delete(e.id);
+        };
+      }
+    };
+    await fertig(tx);
+  }
+
   async hinzufuegen(e: LokalesEreignis) {
     const db = await this.db;
     const tx = db.transaction('ereignisse', 'readwrite');
@@ -137,12 +232,20 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     await fertig(tx);
   }
 
-  async uebernehmen(liste: LokalesEreignis[]) {
+  async uebernehmen(liste: LokalesEreignis[], giltNoch?: () => boolean) {
     if (liste.length === 0) return;
     const db = await this.db;
     const tx = db.transaction('ereignisse', 'readwrite');
     const store = tx.objectStore('ereignisse');
-    for (const e of liste) store.put(e);
+    const schreiben = () => {
+      for (const e of liste) store.put(e);
+    };
+    if (giltNoch) {
+      // Erst bei laufender Transaktion prüfen. Eine bereits davor eingereihte Cache-Bereinigung
+      // eines anderen Tabs kann dann nicht durch eine Antwort mit alter Sicht rückgängig werden.
+      const aktiv = store.getKey(liste[0]!.id);
+      aktiv.onsuccess = () => { if (giltNoch()) schreiben(); };
+    } else schreiben();
     await fertig(tx);
   }
 
@@ -212,7 +315,7 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     await fertig(tx);
   }
 
-  async entfernen(turnier: string, ids: string[]) {
+  async entfernen(turnier: string, ids: string[], nurAusstehende = false) {
     if (ids.length === 0) return;
     const db = await this.db;
     const tx = db.transaction('ereignisse', 'readwrite');
@@ -221,7 +324,7 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
       const r = store.get(id);
       r.onsuccess = () => {
         const e = r.result as LokalesEreignis | undefined;
-        if (e && e.turnier === turnier && e.status !== 'bestaetigt') store.delete(id);
+        if (e && e.turnier === turnier && e.status !== 'bestaetigt' && (!nurAusstehende || e.status === 'ausstehend')) store.delete(id);
       };
     }
     await fertig(tx);
@@ -231,9 +334,45 @@ export class SpeicherIndexedDb implements EreignisSpeicher {
     const db = await this.db;
     const tx = db.transaction(['ereignisse', 'meta'], 'readwrite');
     const store = tx.objectStore('ereignisse');
-    const schluessel = await anfrage(store.index('turnier').getAllKeys(turnier));
+    const bereiche = IDBKeyRange.bound(turnier + '/', turnier + '/\uffff');
+    const index = store.index('turnier');
+    const [einzeln, sitzungen] = await Promise.all([anfrage(index.getAllKeys(turnier)), anfrage(index.getAllKeys(bereiche))]);
+    const schluessel = [...einzeln, ...sitzungen];
+    tx.objectStore('meta').delete(bereiche);
     for (const k of schluessel) store.delete(k);
     tx.objectStore('meta').delete(turnier);
     await fertig(tx);
   }
+}
+
+/** Separater Bestand samt Lesestand je Online-Sitzung. Die fachlichen Ereignis-IDs bleiben beim Versand unverändert. */
+export class SitzungsSpeicher implements EreignisSpeicher {
+  constructor(private basis: EreignisSpeicher, private bindung: string) {}
+
+  private bereich(turnier: string) { return turnier + '/' + this.bindung; }
+  private packen(e: LokalesEreignis): LokalesEreignis {
+    const turnier = this.bereich(e.turnier);
+    return { ...e, turnier, id: turnier + '/' + e.id };
+  }
+  private entpacken(turnier: string, e: LokalesEreignis): LokalesEreignis {
+    return { ...e, turnier, id: e.id.slice(this.bereich(turnier).length + 1) };
+  }
+  async alle(t: string) { return (await this.basis.alle(this.bereich(t))).map((e) => this.entpacken(t, e)); }
+  async ausstehende(t: string, max?: number) { return (await this.basis.ausstehende(this.bereich(t), max)).map((e) => this.entpacken(t, e)); }
+  hinzufuegen(e: LokalesEreignis) { return this.basis.hinzufuegen(this.packen(e)); }
+  uebernehmen(liste: LokalesEreignis[], giltNoch?: () => boolean) { return this.basis.uebernehmen(liste.map((e) => this.packen(e)), giltNoch); }
+  abgeholtBis(t: string) { return this.basis.abgeholtBis(this.bereich(t)); }
+  setzeAbgeholtBis(t: string, seq: number) { return this.basis.setzeAbgeholtBis(this.bereich(t), seq); }
+  sicht(t: string) { return this.basis.sicht(this.bereich(t)); }
+  setzeSicht(t: string, sicht: GespeicherteSicht) { return this.basis.setzeSicht(this.bereich(t), sicht); }
+  bestaetigteVerwerfen(t: string) { return this.basis.bestaetigteVerwerfen(this.bereich(t)); }
+  ablehnen(t: string, liste: { id: string; meldung: string }[]) {
+    const bereich = this.bereich(t);
+    return this.basis.ablehnen(bereich, liste.map((e) => ({ ...e, id: bereich + '/' + e.id })));
+  }
+  entfernen(t: string, ids: string[], nurAusstehende = false) {
+    const bereich = this.bereich(t);
+    return this.basis.entfernen(bereich, ids.map((id) => bereich + '/' + id), nurAusstehende);
+  }
+  loeschen(t: string) { return this.basis.loeschen(this.bereich(t)); }
 }

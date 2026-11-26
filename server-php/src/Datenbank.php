@@ -12,7 +12,7 @@ use PDO;
  */
 final class Datenbank
 {
-    public const SCHEMA_VERSION = 10;
+    public const SCHEMA_VERSION = 11;
 
     public readonly PDO $pdo;
     public readonly string $treiber;
@@ -211,7 +211,13 @@ final class Datenbank
             }
             $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['10', 'schema']);
         }
-        // Spätere Versionen: if ($version < 11) { … UPDATE meta … }
+        if ($version < 11) {
+            $this->pdo->exec('CREATE TABLE IF NOT EXISTS registrierlinks (
+                schluessel_hash VARCHAR(64) PRIMARY KEY, adresse_hash VARCHAR(64) NOT NULL,
+                einladung_hash VARCHAR(64) NOT NULL, aufgabe_hash VARCHAR(64) NOT NULL UNIQUE, verbraucht INTEGER NOT NULL DEFAULT 0, gesendet BIGINT NOT NULL
+            )');
+            $this->pdo->prepare('UPDATE meta SET wert = ? WHERE schluessel = ?')->execute(['11', 'schema']);
+        }
     }
 
     /**

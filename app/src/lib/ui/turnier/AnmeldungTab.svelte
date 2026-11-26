@@ -150,7 +150,8 @@
       fehler = '';
       // Konkurrenzen (Namen, Höchstzahl, Startgeld, von Hand Gemeldete) still nachziehen
       const neu = konkurrenzenFuer(a.einstellungen.konkurrenzen.map((k) => k.id));
-      if (a.einstellungen.konkurrenzen.length && JSON.stringify(neu) !== JSON.stringify(a.einstellungen.konkurrenzen) && (z.datum || !a.einstellungen.offen)) {
+      // Bei leerem oder noch unvollständigem Gerätespeicher darf die Serverbelegung nicht überschrieben werden.
+      if (neu.length > 0 && neu.length === a.einstellungen.konkurrenzen.length && JSON.stringify(neu) !== JSON.stringify(a.einstellungen.konkurrenzen) && (z.datum || !a.einstellungen.offen)) {
         void api
           .anmeldungEinstellungen(token, turnierId, { ...a.einstellungen, konkurrenzen: neu })
           .then((r) => ((einst = r.einstellungen), (liste = r.anmeldungen)))

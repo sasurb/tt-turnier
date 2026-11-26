@@ -31,6 +31,17 @@ export function sicherungErstellen(
 
 export class SicherungFehler extends Error {}
 
+function datumGueltig(tag: unknown): boolean {
+  if (typeof tag !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(tag)) return false;
+  const ms = Date.parse(tag);
+  return Number.isFinite(ms) && new Date(ms).toISOString().startsWith(tag + 'T');
+}
+
+function zeitGueltig(zeit: unknown): boolean {
+  if (typeof zeit !== 'string' || !datumGueltig(zeit.slice(0, 10))) return false;
+  return /^.{10}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(zeit) && Number.isFinite(Date.parse(zeit));
+}
+
 /** Prüft eine eingelesene Datei. Wirft SicherungFehler mit verständlicher Meldung. */
 export function sicherungLesen(text: string): Sicherung {
   let roh: unknown;
@@ -50,10 +61,14 @@ export function sicherungLesen(text: string): Sicherung {
       e &&
       typeof e.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(e.id) &&
       typeof e.art === 'string' && /^[a-z][a-z0-9_.]{1,63}$/.test(e.art) &&
-      typeof e.zeit === 'string' &&
+      zeitGueltig(e.zeit) && (e.empfangen == null || zeitGueltig(e.empfangen)) &&
       typeof e.geraet === 'string' &&
       e.daten !== null && typeof e.daten === 'object' && !Array.isArray(e.daten);
     if (!ok) throw new SicherungFehler('Die Sicherungsdatei enthält einen beschädigten Eintrag.');
+  }
+  if (!zeitGueltig(s.erstellt) || typeof s.turnier.id !== 'string' || !s.turnier.id ||
+      !['online', 'lokal'].includes(s.turnier.modus) || (s.turnier.datum !== null && !datumGueltig(s.turnier.datum))) {
+    throw new SicherungFehler('Die Sicherungsdatei enthält beschädigte Turnierdaten.');
   }
   return s as Sicherung;
 }

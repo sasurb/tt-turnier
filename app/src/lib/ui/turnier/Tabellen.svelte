@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gruppeVorlaeufig, vorlaeufigePlatzierungen, wertungVorlaeufig } from '../../engine/modell';
   import { alsEineAktion } from '../../aktion';
   import { ART } from '@shared/protokoll';
   import { T } from '../../texte';
@@ -48,8 +49,9 @@
     </div>
   {/if}
 
+  {@const vorlaeufig = vorlaeufigePlatzierungen(k)}
   <section class="karte">
-    <h2>{k.einst.name} <span class="marke">{T.konk.status[istRundenModus(k.einst.modus) && k.status === 'gruppen' ? 'runden' : k.status]}</span></h2>
+    <h2>{k.einst.name}{#if istRundenModus(k.einst.modus) && wertungVorlaeufig(k)} <span class="marke">{T.druck.vorlaeufig}</span>{/if} <span class="marke">{T.konk.status[istRundenModus(k.einst.modus) && k.status === 'gruppen' ? 'runden' : k.status]}</span></h2>
     {#if !zeige.tabellen && k.gruppen.length}
       <p class="meldung info" data-testid="verdeckt">{T.tab.verdeckt}</p>
     {/if}
@@ -63,7 +65,7 @@
       {#if k.einst.modus === 'gruppen_platz' && (g.nr === 0 || (platzGruppe && typeof k.gruppen[g.nr - 1]?.platzAb !== 'number'))}
         <h3 class="stufe">{platzGruppe ? T.konk.platzRunde : T.konk.vorrunde}</h3>
       {/if}
-      <h3>{platzGruppe || k.gruppen.length > 1 ? gruppeTitel(k, g.nr) : T.konk.modi.jgj}{#if klassen[g.nr]}<span class="marke klasse">{klassen[g.nr]}</span>{/if}<Hilfe text={ms ? T.mannschaft.systemHilfe : T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
+      <h3>{platzGruppe || k.gruppen.length > 1 ? gruppeTitel(k, g.nr) : T.konk.modi.jgj}{#if gruppeVorlaeufig(k, g.nr)} <span class="marke">{T.druck.vorlaeufig}</span>{/if}{#if klassen[g.nr]}<span class="marke klasse">{klassen[g.nr]}</span>{/if}<Hilfe text={ms ? T.mannschaft.systemHilfe : T.wertung.kurz[k.einst.wertung] + '. ' + T.wertung[k.einst.wertung]} /></h3>
       <div class="rollen">
         <table data-testid="tabelle-{gruppenName(g.nr)}">
           <thead>
@@ -126,7 +128,7 @@
         <h3>{T.konk.gesamtPlatzierung}<Hilfe text={T.konk.gesamtPlatzierungText} /></h3>
         <ol class="plaetze" data-testid="gesamtplatzierung">
           {#each gp as x (x.id)}
-            <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}</li>
+            <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}{#if vorlaeufig.has(x.id)} · {T.druck.vorlaeufig}{/if}</li>
           {/each}
         </ol>
       {/if}
@@ -146,7 +148,7 @@
         <h3>{T.tab.platzierungen}</h3>
         <ol class="plaetze">
           {#each p as x (x.id)}
-            <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}</li>
+            <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}{#if vorlaeufig.has(x.id)} · {T.druck.vorlaeufig}{/if}</li>
           {/each}
         </ol>
       {/if}
@@ -158,7 +160,7 @@
           <h3>{T.konk.trostPlatzierungen}</h3>
           <ol class="plaetze">
             {#each tp as x (x.id)}
-              <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}</li>
+              <li><span class="pl">{x.bezeichnung}</span> {name(z, x.id, k)}{#if vorlaeufig.has(x.id)} · {T.druck.vorlaeufig}{/if}</li>
             {/each}
           </ol>
         {/if}

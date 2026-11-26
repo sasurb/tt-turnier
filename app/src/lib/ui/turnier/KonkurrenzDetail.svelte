@@ -7,10 +7,11 @@
 </script>
 
 <script lang="ts">
+  import Stufenwechsel from './Stufenwechsel.svelte';
   import KonkurrenzMeldungen from './KonkurrenzMeldungen.svelte';
   import { ART, type PoolSpieler } from '@shared/protokoll';
   import { T } from '../../texte';
-  import { auslosungErstellen, endrundeErstellen, gruppenKlassen, gruppenZahlVorschlag, klassenDerMeldungen, name, qualifikanten, teilnehmerDaten } from '../../engine/abfragen';
+  import { auslosungErstellen, gruppenKlassen, gruppenZahlVorschlag, klassenDerMeldungen, name, teilnehmerDaten } from '../../engine/abfragen';
   import { setzreihe } from '../../engine/auslosung';
   import { inEndrunde, type KonkurrenzEinstellungen, type KonkurrenzZustand } from '../../engine/modell';
   import { angeboten } from '../../engine/auswahl';
@@ -21,7 +22,6 @@
     erstePhase,
     gruppenAenderungPruefen,
     koPlaetzePruefen,
-    platzGruppenBilden,
     type TurnierZustand,
   } from '../../engine/zustand';
   import Hilfe from '../Hilfe.svelte';
@@ -65,8 +65,6 @@
   const reihe = $derived(setzreihe(k.meldungen, teilnehmerDaten(z, k), k.einst, k.setzliste));
   const doppel = $derived(k.einst.art === 'doppel' || k.einst.art === 'mixed');
   const mannschaft = $derived(k.einst.art === 'mannschaft');
-  const quali = $derived(k.einst.modus === 'gruppen_ko' && k.gestartet.gruppen && !k.gestartet.ko ? qualifikanten(k) : null);
-  const platzPlan = $derived(k.einst.modus === 'gruppen_platz' && k.gestartet.gruppen && !k.gestartet.ko ? platzGruppenBilden(k) : null);
   /** Hat die laufende Stufe schon Ergebnisse? (dann lässt sich ihr Start nicht zurücknehmen) */
   const stufeMitErgebnis = $derived(
     Object.values(k.spiele).some((s) => {
@@ -75,10 +73,6 @@
       return s.phase === (k.gestartet.ko ? 'ko' : 'gruppen');
     }),
   );
-  async function platzRundeStarten() {
-    if (!platzPlan?.ok || !confirm(T.konk.startenFrage)) return;
-    await los(ART.phaseGestartet, { konkurrenz: k.id, phase: 'ko', gruppen: platzPlan.gruppen.map((g) => g.mitglieder) });
-  }
   const hatErgebnisse = $derived(Object.values(k.spiele).some((s) => s.eintrag));
   const klassenTrennung = $derived(k.einst.modus === 'gruppen_ko' && k.einst.klassenTrennung !== 'keine');
   const klassenListe = $derived(klassenTrennung ? klassenDerMeldungen(z, k) : []);
@@ -126,10 +120,6 @@
   }
   async function zuruecknehmen() {
     if (confirm(T.konk.zurueckFrage)) await los(ART.phaseZurueck, { konkurrenz: k.id, phase: k.gestartet.ko ? 'ko' : 'gruppen' });
-  }
-  async function endrundeAuslosen() {
-    const d = endrundeErstellen(z, k, neuerZufallswert());
-    if (d) await los(ART.auslosung, d);
   }
   const rundenModus = $derived(istRundenModus(k.einst.modus));
   /** Teilnehmer mit Ergebnis oder Aufruf in der laufenden Phase (lassen sich nicht mehr bewegen) */
@@ -257,37 +247,7 @@
       <p class="leise">{T.konk.zuWenige}</p>
     {/if}
   {:else}
-    {#if quali}
-      <h3>{T.konk.endrunde}</h3>
-      <p class="leise">{T.konk.endrundeText}</p>
-      {#if !quali.ok}
-        <p class="meldung info">{quali.grund}</p>
-      {:else}
-        <button class:zweit={!!k.auslosungKo} onclick={endrundeAuslosen}>{k.auslosungKo ? T.konk.neuAuslosen : T.konk.endrundeAuslosen}</button>
-        {#if k.auslosungKo}
-          <AuslosungVorschau {z} plaetze={k.auslosungKo.plaetze} tauschen={tauschenKo} />
-          <button class="breit start" onclick={() => starten('ko')}>{T.konk.endrundeStarten}</button>
-        {/if}
-      {/if}
-    {/if}
-
-    {#if platzPlan}
-      <h3>{T.konk.platzRunde}<Hilfe text={T.konk.aufsteigerPlatzHilfe} /></h3>
-      <p class="leise">{T.konk.platzRundeText}</p>
-      {#if !platzPlan.ok}
-        <p class="meldung info">{platzPlan.grund}</p>
-      {:else}
-        <h4>{T.konk.platzRundeVorschau}</h4>
-        <ul class="liste" data-testid="platz-vorschau">
-          {#each platzPlan.gruppen as g (g.platzAb)}
-            <li><strong>{g.mitglieder.length > 1 ? `Plätze ${g.platzAb}–${g.platzAb + g.mitglieder.length - 1}` : `Platz ${g.platzAb}`}:</strong> {g.mitglieder.map((id) => name(z, id, k)).join(', ')}</li>
-          {/each}
-        </ul>
-        {#if platzPlan.gruppen.some((g) => g.mitglieder.length > 8)}<p class="meldung info" data-testid="platz-gross">{T.konk.platzGross(Math.max(...platzPlan.gruppen.map((g) => g.mitglieder.length)))}</p>{/if}
-        <button class="breit start" onclick={platzRundeStarten} data-testid="platz-starten">{T.konk.platzRundeStarten}</button>
-      {/if}
-    {/if}
-
+    <Stufenwechsel {z} {k} {eintragen} />
     <KonkurrenzMeldungen {z} {k} {poolListe} {eintragen} />
 
     {#if aendernArt}
@@ -313,7 +273,6 @@
   .konk summary { font-size: 1.05rem; }
   .konk summary > span:first-child { overflow-wrap: anywhere; }
   h3 { margin-top: 18px; display: flex; align-items: center; gap: 6px; }
-  h4 { margin: 10px 0 4px; }
   .setzliste { list-style: none; padding: 0; margin: 0; }
   .setzliste li { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--linie); }
   .nr { width: 2rem; font-variant-numeric: tabular-nums; color: var(--leise); }

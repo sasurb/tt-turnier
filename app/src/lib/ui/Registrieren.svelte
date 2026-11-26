@@ -11,7 +11,7 @@
    * mit Einladung (#/registrieren/<schlüssel>) tritt das Konto der Sparte, dem Turnier bzw. dem Ausschuss bei.
    * „Mindestens 18“ und die Zustimmung zu den Nutzungsbedingungen (mit AVV) sind Pflicht.
    */
-  let { einladung = null }: { einladung?: string | null } = $props();
+  let { einladung = null, nachweis = null }: { nachweis?: string | null; einladung?: string | null } = $props();
 
   let name = $state('');
   let email = $state('');
@@ -21,6 +21,7 @@
   let volljaehrig = $state(false);
   let bedingungen = $state(false);
   let website = $state(''); // Fangfeld für Bots, für Menschen unsichtbar
+  let versendet = $state(false);
   let fehler = $state('');
   let laeuft = $state(false);
   const mitSparten = $derived(app.server.art === 'bereit' && !!app.server.info.sparten);
@@ -30,7 +31,13 @@
     fehler = '';
     laeuft = true;
     try {
+      if (!nachweis) {
+        await api.registrierlink(email.trim(), einladung, website);
+        versendet = true;
+        return;
+      }
       const a = await api.registrieren({
+        nachweis,
         name: name.trim(),
         email: email.trim(),
         passwort,
@@ -55,10 +62,13 @@
 {/if}
 
 <form class="karte" onsubmit={anlegen}>
+  {#if nachweis}
   <div class="label-zeile"><label for="rn">{T.registrieren.name}</label><Hilfe text={T.registrieren.nameHilfe} /></div>
   <input id="rn" bind:value={name} autocomplete="name" minlength="2" maxlength="120" required />
+  {/if}
   <div class="label-zeile"><label for="re">{T.registrieren.email}</label><Hilfe text={T.registrieren.emailHilfe} /></div>
   <input id="re" type="email" bind:value={email} autocomplete="email" inputmode="email" autocapitalize="off" required />
+  {#if nachweis}
   <label for="rp">{T.registrieren.passwort}</label>
   <PasswortFeld id="rp" bind:wert={passwort} neu min={8} />
 
@@ -69,11 +79,13 @@
     <input id="rs" bind:value={sparte} minlength="2" maxlength="120" required />
   {/if}
 
+  {/if}
   <div class="fang" aria-hidden="true">
     <label for="rw">Website</label>
     <input id="rw" bind:value={website} tabindex="-1" autocomplete="off" />
   </div>
 
+  {#if nachweis}
   <div class="haken-zeile">
     <label class="haken"><input type="checkbox" bind:checked={volljaehrig} required /> {T.registrieren.volljaehrig}</label>
     <Hilfe text={T.registrieren.volljaehrigHilfe} />
@@ -86,11 +98,13 @@
     <Hilfe text={T.registrieren.bedingungenHilfe} />
   </div>
 
+  {/if}
+  {#if versendet}<p role="status">Öffne den Bestätigungslink in deiner E-Mail. Er gilt 24 Stunden.</p>{/if}
   <p class="leise datenschutz">
     {T.registrieren.datenschutzVor} <a href={linkZu('datenschutz')}>{T.registrieren.datenschutzLink}</a>{T.registrieren.datenschutzNach}
   </p>
   {#if fehler}<div class="meldung fehler" role="alert">{fehler}</div>{/if}
-  <button type="submit" class="breit" disabled={laeuft || !volljaehrig || !bedingungen}>{T.registrieren.knopf}</button>
+  <button type="submit" class="breit" disabled={laeuft || (!!nachweis && (!volljaehrig || !bedingungen))}>{nachweis ? T.registrieren.knopf : 'Bestätigungslink anfordern'}</button>
 </form>
 
 <section class="karte neu">

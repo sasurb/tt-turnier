@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { gruppeVorlaeufig, vorlaeufigePlatzierungen, wertungVorlaeufig } from '../engine/modell';
   import { onDestroy, onMount } from 'svelte';
   import { T } from '../texte';
   import { linkZu, ersetze } from '../router.svelte';
@@ -7,11 +8,10 @@
   import type { Rolle } from '@shared/protokoll';
   import { TurnierSitzung } from '../engine/turnier';
   import { berechnen, spielerVon, type TurnierZustand } from '../engine/zustand';
-  import { anstehendeSpiele, endstand, name, nameLang, platzText, rundeVon, sichtbar, tabelle, trostPlaetze, vorgabeVon } from '../engine/abfragen';
+  import { spielErgebnisText, anstehendeSpiele, endstand, name, nameLang, platzText, rundeVon, sichtbar, tabelle, trostPlaetze, vorgabeVon } from '../engine/abfragen';
   import { baumRunden, koRunden, rundenName } from '../engine/ko';
   import { einstFuer, gruppeTitel, istSchweizerArt, mitKo, punkteText, type Baum, type KonkurrenzZustand, type Spiel } from '../engine/modell';
   import { istRundenModus, kaiserTabelle, letzteRunde, schweizerTabelle } from '../engine/runden';
-  import { ergebnisText } from '../engine/ergebnis';
   import { zurueckgezogen } from '../engine/zustand';
   import { geraetId, gemerktesTurnier } from '../einstellungen';
   import { codeAnzeige } from '../code';
@@ -256,6 +256,11 @@
     document.title = titel;
     return () => (document.title = T.app.titel);
   });
+  const turnierzeitraum = $derived(
+    z?.enddatum && z.enddatum !== z.datum
+      ? z.datum ? `${datum(z.datum)} – ${datum(z.enddatum)}` : T.turnierDatum.bis(datum(z.enddatum))
+      : datum(z?.datum ?? null),
+  );
 </script>
 
 {#if laedt}
@@ -351,7 +356,7 @@
         {@const offen = allesSichtbar || aufstellungenKomplett(k, s)}
         <section class="seite bericht" data-testid="spielbericht">
           <h1>{T.druck.spielbericht}</h1>
-          <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {k.einst.name} · {rundeVon(k, s)}{s.tisch ? ` · ${T.spiele.tisch(s.tisch, s.tisch2)}` : ''} · {sys.name}</p>
+          <p class="unter">{z.name}{turnierzeitraum ? ` · ${turnierzeitraum}` : ''} · {k.einst.name} · {rundeVon(k, s)}{s.tisch ? ` · ${T.spiele.tisch(s.tisch, s.tisch2)}` : ''} · {sys.name}</p>
           <div class="teams">
             {#each ['a', 'b'] as const as seite (seite)}
               {@const tid = seite === 'a' ? s.a : s.b}
@@ -404,7 +409,7 @@
     {:else if kassenArt === 'kasse' && summe}
       <section class="seite">
         <h1>{T.druck.kasseArten.kasse}</h1>
-        <p class="unter">{z.name}{z.datum ? ` · ${datum(z.datum)}` : ''} · {T.druck.standAm(new Date().toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}</p>
+        <p class="unter">{z.name}{turnierzeitraum ? ` · ${turnierzeitraum}` : ''} · {T.druck.standAm(new Date().toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }))}</p>
         <table class="kassentab">
           <thead><tr><th>{T.druck.spieler}</th><th>{T.kasse.checkin}</th><th class="z">{T.kasse.soll}</th><th class="z">{T.kasse.arten.bar}</th><th class="z">{T.kasse.arten.ueberweisung}</th><th class="z">{T.kasse.erlassen}</th><th class="z">{T.kasse.offen}</th></tr></thead>
           <tbody>
@@ -536,7 +541,7 @@
             {@const t = tabelle(k, g.nr)}
             {@const m = t.zeilen.map((r) => r.id)}
             <section class="block gruppe">
-              <h2>{z.name} · {k.einst.name}{k.gruppen.length > 1 ? ` · ${gruppeTitel(k, g.nr)}` : ''}</h2>
+              <h2>{z.name} · {k.einst.name}{#if gruppeVorlaeufig(k, g.nr)} · {T.druck.vorlaeufig}{/if}{k.gruppen.length > 1 ? ` · ${gruppeTitel(k, g.nr)}` : ''}</h2>
               <table class="kreuz">
                 <thead>
                   <tr>
@@ -563,7 +568,7 @@
               </table>
               <ol class="spielfolge">
                 {#each k.reihenfolge.map((sid) => k.spiele[sid]!).filter((s) => s.phase === 'gruppen' && s.gruppe === g.nr && s.status !== 'entfallen') as s (s.id)}
-                  <li><span>{T.druck.rundeKurz(s.runde)}</span> {name(z, s.a, k)} – {name(z, s.b, k)} <strong>{s.ergebnis ? ergebnisText(s.ergebnis) : ''}</strong>{s.gestrichen ? ` (${T.druck.gestrichen})` : ''}</li>
+                  <li><span>{T.druck.rundeKurz(s.runde)}</span> {name(z, s.a, k)} – {name(z, s.b, k)} <strong>{s.ergebnis ? spielErgebnisText(z, s, s.ergebnis) : ''}</strong>{s.gestrichen ? ` (${T.druck.gestrichen})` : ''}</li>
                 {/each}
               </ol>
             </section>
@@ -580,7 +585,7 @@
           {#each baeume(k) as b (b)}
             {#each baumTeile(k, b) as teil, ti (ti)}
               <section class="seite quer baum-seite">
-                <h2>{z.name} · {k.einst.name} · {b === 'haupt' ? (k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko) : T.konk.baeume[b]}{teil.titel ? ` · ${teil.titel}` : ''}</h2>
+                <h2>{z.name} · {k.einst.name}{#if wertungVorlaeufig(k)} · vorläufig{/if} · {b === 'haupt' ? (k.einst.modus === 'gruppen_ko' ? T.konk.endrunde : T.konk.modi.ko) : T.konk.baeume[b]}{teil.titel ? ` · ${teil.titel}` : ''}</h2>
                 <div class="baum" style:--n={Math.max(1, teil.spalten[0]?.spiele.length ?? 1)}>
                   {#each teil.spalten as sp, i (i)}
                     <div class="runde">
@@ -601,7 +606,7 @@
                 </div>
                 {#if b === 'haupt' && k.spiele['ko-p3'] && ti === baumTeile(k, b).length - 1}
                   {@const p3 = k.spiele['ko-p3']!}
-                  <p class="p3"><strong>{T.konk.platz3}:</strong> {name(z, p3.a, k)} – {name(z, p3.b, k)} {p3.ergebnis ? ergebnisText(p3.ergebnis) : ''}</p>
+                  <p class="p3"><strong>{T.konk.platz3}:</strong> {name(z, p3.a, k)} – {name(z, p3.b, k)} {p3.ergebnis ? spielErgebnisText(z, p3, p3.ergebnis) : ''}</p>
                 {/if}
               </section>
             {/each}
@@ -613,11 +618,12 @@
     {:else if aktiv === 'ergebnisse'}
       <section class="block">
         <h1>{z.name}</h1>
-        <p class="klein">{[datum(z.datum), z.ort].filter(Boolean).join(' · ')}</p>
+        <p class="klein">{[turnierzeitraum, z.ort].filter(Boolean).join(' · ')}</p>
       </section>
       {#each konkurrenzen as k (k.id)}
         {@const v = zeige(k)}
         {@const es = v.tabellen ? endstand(k) : []}
+        {@const vorlaeufig = vorlaeufigePlatzierungen(k)}
         <section class="block">
           <h2>{k.einst.name} <span class="klein">({T.druck.teilnehmerZahl(k.meldungen.length)})</span></h2>
           {#if !k.gestartet.gruppen && !k.gestartet.ko}
@@ -626,7 +632,7 @@
             {#if es.length}
               <h3>{T.druck.endstand}</h3>
               <ol class="endstand">
-                {#each es as p (p.id)}<li><span class="pl">{p.bezeichnung}.</span> <strong>{nameLang(z, p.id, k)}</strong> <span class="klein">{verein(k, p.id)}</span></li>{/each}
+                {#each es as p (p.id)}<li><span class="pl">{p.bezeichnung}.</span> <strong>{nameLang(z, p.id, k)}</strong>{#if vorlaeufig.has(p.id)} · {T.druck.vorlaeufig}{/if} <span class="klein">{verein(k, p.id)}</span></li>{/each}
               </ol>
             {/if}
             {#if v.tabellen && istRundenModus(k.einst.modus)}
@@ -643,7 +649,7 @@
             {:else if v.tabellen}
               {#each k.gruppen as g (g.nr)}
                 {@const t = tabelle(k, g.nr)}
-                <h3>{k.gruppen.length > 1 ? gruppeTitel(k, g.nr) : T.konk.modi.jgj}</h3>
+                <h3>{k.gruppen.length > 1 ? gruppeTitel(k, g.nr) : T.konk.modi.jgj}{#if gruppeVorlaeufig(k, g.nr)} · {T.druck.vorlaeufig}{/if}</h3>
                 <table class="liste">
                   <tbody>
                     {#each t.zeilen as r (r.id)}<tr class:raus={r.zurueckgezogen}><td class="z">{r.platz}</td><td>{name(z, r.id, k)} <span class="klein">{verein(k, r.id)}</span></td><td class="z">{r.siege}:{r.niederlagen}</td><td class="z">{r.saetzeG}:{r.saetzeV}</td></tr>{/each}
@@ -655,7 +661,7 @@
               <h3>{T.druck.alleSpiele}</h3>
               <ul class="spiele-liste">
                 {#each k.reihenfolge.map((sid) => k.spiele[sid]!).filter((s) => s.ergebnis && s.status === 'gespielt') as s (s.id)}
-                  <li><span class="klein">{rundeVon(k, s)}</span> {name(z, s.a, k)} – {name(z, s.b, k)} <strong>{ergebnisText(s.ergebnis!)}</strong></li>
+                  <li><span class="klein">{rundeVon(k, s)}</span> {name(z, s.a, k)} – {name(z, s.b, k)} <strong>{spielErgebnisText(z, s, s.ergebnis!)}</strong></li>
                 {/each}
               </ul>
             {/if}
@@ -695,7 +701,8 @@
     {:else if aktiv === 'aushang'}
       <section class="aushang">
         <h1>{z.name}</h1>
-        <p class="unter">{[datum(z.datum), z.ort].filter(Boolean).join(' · ')}</p>
+        {#if konkurrenzen.some(wertungVorlaeufig)}<p>{T.druck.vorlaeufig}</p>{/if}
+        <p class="unter">{[turnierzeitraum, z.ort].filter(Boolean).join(' · ')}</p>
         {#if lokal}
           <p class="leer">{T.druck.aushangLokal}</p>
         {:else}
@@ -723,9 +730,9 @@
             <p class="name">{nameLang(z, u.id, u.k)}</p>
             {#if verein(u.k, u.id)}<p class="verein">{verein(u.k, u.id)}</p>{/if}
             <p class="text">{T.druck.urkundeText(u.k.einst.name + (u.zusatz ? ` (${u.zusatz})` : ''))}</p>
-            <p class="platz">{u.platz}</p>
+            <p class="platz">{u.platz}{#if vorlaeufigePlatzierungen(u.k).has(u.id)} · {T.druck.vorlaeufig}{/if}</p>
             <div class="fuss">
-              <span>{[z.ort, datum(z.datum)].filter(Boolean).join(', ')}</span>
+              <span>{[z.ort, turnierzeitraum].filter(Boolean).join(', ')}</span>
               <span class="linie">{e.unterschrift || T.druck.turnierleitung}</span>
             </div>
           </div>

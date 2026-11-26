@@ -1,3 +1,4 @@
+import { sitzungsbindung } from './sitzungsbindung';
 import { describe, expect, it } from 'vitest';
 import { ART, type AnmeldungEintrag, type Autor } from '@shared/protokoll';
 import { Baukasten, HELFER, LEITUNG, saetze } from './test/baukasten';
@@ -298,7 +299,7 @@ describe('Etappe 9: Abgleich mit einzeln abgelehnten Einträgen', () => {
     const speicher = new SpeicherImArbeitsspeicher();
     const ag = new Abgleich({ speicher, api: new Api('http://test.invalid/api/index.php', s.abruf), turnier: 't1', token: () => 'tok' });
     const neu = (id: string, art: string): LokalesEreignis => ({
-      id, art, daten: {}, zeit: '2026-11-16T10:00:00Z', geraet: 'g-1', turnier: 't1', status: 'ausstehend', seq: null, empfangen: null, autor: HELFER, reihe: Number(id.slice(1)),
+      id, art, daten: {}, zeit: '2026-11-16T10:00:00Z', geraet: 'g-1', turnier: 't1', status: 'ausstehend', seq: null, empfangen: null, autor: HELFER, sitzung: sitzungsbindung('tok'), reihe: Number(id.slice(1)),
     });
     await speicher.hinzufuegen(neu('e1', ART.testNotiz));
     await speicher.hinzufuegen(neu('e2', ART.spielerAngelegt));

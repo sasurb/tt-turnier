@@ -128,3 +128,9 @@ describe('Sicherung', () => {
     expect(erinnerungFaellig({ takt: 15, zuletzt: null, anzahl: 0 }, 1, '2026-12-01T10:00:00Z', t0 + 16 * 60_000)).toBe(true);
   });
 });
+
+it.each(['kein Datum', '2026-02-30T12:00:00Z', '2026-11-25T26:00:00Z'])('F-027: verwirft einen ungültigen Ereigniszeitpunkt %s vor der Wiederherstellung', (zeit) => {
+  const s = sicherungErstellen({ id: 'ltest', name: 'Test', datum: null, modus: 'lokal' }, []);
+  s.ereignisse.push({ id: 'ereignis-01', art: ART.testNotiz, daten: {}, zeit, geraet: 'g', autor: null, seq: null, empfangen: null });
+  expect(() => sicherungLesen(JSON.stringify(s))).toThrow(SicherungFehler);
+});

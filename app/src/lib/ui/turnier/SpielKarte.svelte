@@ -1,7 +1,6 @@
 <script lang="ts">
   import { T } from '../../texte';
-  import { name, rundeVon, vorgabeVon } from '../../engine/abfragen';
-  import { ergebnisText } from '../../engine/ergebnis';
+  import { spielErgebnisText, name, rundeVon, vorgabeVon } from '../../engine/abfragen';
   import type { KonkurrenzZustand, Spiel } from '../../engine/modell';
   import { seiteVon, type TurnierZustand } from '../../engine/zustand';
   import { teileVon, zwischenstand } from '../../engine/mannschaft';
@@ -62,7 +61,7 @@
   </span>
   <span class="erg">
     {#if spiel.ergebnis}
-      <strong>{ergebnisText(spiel.ergebnis)}</strong>
+      <strong>{spielErgebnisText(z, spiel, spiel.ergebnis)}</strong>
     {:else if zwischen && zwischen.gespielt > 0}
       <strong data-testid="zwischenstand">{T.spiele.zwischenstand(zwischen.siegeA, zwischen.siegeB)}</strong>
     {:else}

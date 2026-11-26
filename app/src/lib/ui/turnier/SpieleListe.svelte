@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { linkZu } from '../../router.svelte';
   import { T } from '../../texte';
-  import { alleSpiele, pruefliste, spieleVon } from '../../engine/abfragen';
+  import { alleSpiele, pruefliste, spieleVon, tische } from '../../engine/abfragen';
   import { uhrzeitText, type Spiel } from '../../engine/modell';
   import { zeitplanGedrosselt, zeitplanSofort } from '../../engine/zeitplan';
   import type { TurnierZustand } from '../../engine/zustand';
+  import Stufenwechsel from './Stufenwechsel.svelte';
   import SpielKarte from './SpielKarte.svelte';
 
   let {
@@ -13,11 +15,14 @@
     nurMeine = false,
     oeffnen,
     mitSchiri = false,
-  }: { z: TurnierZustand; leitung: boolean; ich?: string | null; nurMeine?: boolean; mitSchiri?: boolean; oeffnen: (s: Spiel) => void } = $props();
+    stufeEintragen,
+    tischLink = null,
+  }: { z: TurnierZustand; leitung: boolean; tischLink?: string | null; stufeEintragen?: (art: string, daten: Record<string, unknown>) => Promise<unknown>; ich?: string | null; nurMeine?: boolean; mitSchiri?: boolean; oeffnen: (s: Spiel) => void } = $props();
 
   let filter = $state<'offen' | 'fertig' | 'alle'>('offen');
   let konkurrenz = $state('');
 
+  const frei = $derived(tischLink ? tische(z).filter((t) => !t.spiel && !t.gesperrt).length : 0);
   const basis = $derived(nurMeine && ich ? spieleVon(z, ich) : alleSpiele(z));
   const pruef = $derived(leitung && !nurMeine ? pruefliste(z) : []);
   const liste = $derived(
@@ -58,6 +63,9 @@
   }
 </script>
 
+{#if tischLink && frei}
+  <a class="knopf zweit" href={linkZu(tischLink)}>{frei === 1 ? '1 freier Tisch' : `${frei} freie Tische`}</a>
+{/if}
 {#if pruef.length}
   <section class="karte pruef">
     <h2>{T.spiele.pruefliste} <span class="leise">({pruef.length})</span></h2>
@@ -84,6 +92,11 @@
       </select>
     {/if}
   </div>
+  {#if stufeEintragen}
+    {#each z.konkurrenzReihe.filter((id) => !konkurrenz || id === konkurrenz) as id (id)}
+      <Stufenwechsel {z} k={z.konkurrenzen[id]!} eintragen={stufeEintragen} nurBereit />
+    {/each}
+  {/if}
   {#if sortiert.length === 0}
     <p class="leise">{T.spiele.leer}</p>
   {:else}

@@ -3,6 +3,8 @@
   import { ART, SICHERUNG_MAX_EMPFAENGER, SICHERUNG_TAKTE, UST_SAETZE, type KasseEinstellungen, type Sicherung, type SicherungTakt, type TurnierEinstellungen } from '@shared/protokoll';
   import { bicGueltig, ibanAnzeige, ibanGueltig, ibanNormal } from '../engine/girocode';
   import { T } from '../texte';
+  import { name } from '../engine/abfragen';
+  import { strittigeSpiele } from '../engine/modell';
   import { api, speicher } from '../dienste';
   import { app, fehlerText } from '../app.svelte';
   import { gehe } from '../router.svelte';
@@ -74,12 +76,19 @@
   let tName = $state(z.name);
   // svelte-ignore state_referenced_locally
   let tDatum = $state(z.datum ?? '');
+  // svelte-ignore state_referenced_locally
+  let tEnde = $state(z.enddatum ?? '');
   async function kopfSpeichern(e: SubmitEvent) {
     e.preventDefault();
     const datum = /^\d{4}-\d{2}-\d{2}$/.test(tDatum) ? tDatum : null;
+    if (datum && z.enddatum && datum > z.enddatum) {
+      zeige('kopf', false, T.turnierDatum.reihenfolge);
+      return;
+    }
     try {
       if (!lokal && token) await api.einstellungenSetzen(token, { turnier: id, name: tName.trim(), datum });
       await eintragen(ART.turnierUmbenannt, { name: tName.trim(), datum });
+      if ((tEnde || null) !== z.enddatum) await eintragen(ART.turnierDaten, { enddatum: tEnde || null });
       zeige('kopf', true, T.app.gespeichert);
     } catch (x) {
       zeige('kopf', false, fehlerText(x, T.app.fehlerAllgemein));
@@ -252,14 +261,18 @@
     try {
       const r = await alsOnlineTurnierHochladen(await sicherung());
       app.hinweis = T.schnell.uebernommen;
-      gehe('t/' + r.id);
+      gehe('t/' + r.id + '/spiele');
     } catch (x) {
       app.hinweis = x instanceof Error ? x.message : String(x);
     } finally {
       hochladen = false;
     }
   }
+  const konflikte = $derived(Object.values(z.konkurrenzen).flatMap((k) =>
+    strittigeSpiele(k).map((s) => `${k.einst.name} · ${name(z, s.a, k)} – ${name(z, s.b, k)}`)
+  ));
   async function abschliessen() {
+    if (!abgeschlossen && konflikte.length) return;
     if (!abgeschlossen && !confirm(T.einstellungen.abschliessenFrage)) return;
     await eintragen(abgeschlossen ? ART.turnierWiedereroeffnet : ART.turnierAbgeschlossen);
   }
@@ -282,8 +295,11 @@
     <h3>{T.einstellungen.kopfTitel}</h3>
     <form onsubmit={kopfSpeichern} class="kopf-form">
       <label>{T.neu.name}<input bind:value={tName} minlength="2" maxlength="160" required /></label>
-      <div class="label-zeile"><label for="te-datum">{T.neu.datum}</label><Hilfe text={T.einstellungen.datumHilfe} /></div>
+      <div class="label-zeile"><label for="te-datum">{T.turnierDatum.start}</label><Hilfe text={T.einstellungen.datumHilfe} /></div>
       <input id="te-datum" type="date" bind:value={tDatum} data-testid="turnier-datum" />
+      <div class="label-zeile"><label for="te-ende">{T.turnierDatum.ende}</label><Hilfe text={T.turnierDatum.endeHilfe} /></div>
+      <input id="te-ende" type="date" min={tDatum} bind:value={tEnde} />
+      {#if !tEnde}<small class="leise">{T.turnierDatum.offen}</small>{/if}
       <button type="submit" class="zweit" disabled={tName.trim().length < 2}>{T.app.speichern}</button>
     </form>
     {@render hinweis('kopf')}
@@ -435,7 +451,10 @@
   <section>
     <h3>{T.einstellungen.abschliessenTitel}</h3>
     <p class="leise">{T.einstellungen.abschliessenText}</p>
-    <button class="zweit" onclick={abschliessen}>{abgeschlossen ? T.einstellungen.wiedereroeffnen : T.einstellungen.abschliessen}</button>
+    {#if konflikte.length}
+      <p class="meldung info">{T.einstellungen.strittigAbschluss}: {konflikte.join(', ')}</p>
+    {/if}
+    <button class="zweit" onclick={abschliessen} disabled={!abgeschlossen && konflikte.length > 0}>{abgeschlossen ? T.einstellungen.wiedereroeffnen : T.einstellungen.abschliessen}</button>
   </section>
   {#if lokal && app.sitzung && app.server.art === 'bereit' && !app.server.info.zentrale}
     <section data-testid="in-sparte">
@@ -444,7 +463,7 @@
     </section>
   {/if}
   {#if abgeschlossen && !lokal && token && app.server.art === 'bereit' && app.server.info.nachrichten && !app.server.info.zentrale}
-    <ErgebnisVersand {z} turnierId={id} {token} />
+    <ErgebnisVersand {z} turnierId={id} {token} gesperrt={konflikte.length > 0} />
   {/if}
 
   {#if lokal || onlineLoeschbar}

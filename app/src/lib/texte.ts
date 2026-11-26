@@ -1,3 +1,5 @@
+import type { Autor } from '@shared/protokoll';
+
 /**
  * Alle Texte der Oberfläche an einer Stelle. Weitere Sprachen: eine zweite
  * Datei mit derselben Struktur anlegen und hier auswählen.
@@ -247,7 +249,7 @@ export const T = {
       'Du bekommst eine persönliche Leitungskennung; weitere Turnierleiter bekommen eigene.',
       'Helfer bekommen eine Helferkennung mit Aufgaben: Ergebnisse, Spielaufruf, Kasse, Oberschiedsrichter.',
       'Jeder Spieler kann eine eigene Spielerkennung (QR-Zettel) bekommen und trägt dann seine Ergebnisse selbst ein.',
-      'Zuschauer brauchen nur die 8-stellige Turnierkennung.',
+      'Zuschauer brauchen nur die Turnierkennung.',
     ] as string[],
     zugaengeLokal: 'Auf diesem Gerät trägt nur die Turnierleitung ein – Kennungen gibt es bei Turnieren auf mehreren Geräten.',
     danach: 'Danach weiter mit',
@@ -538,6 +540,7 @@ export const T = {
     lokalErklaerung:
       'Dieses Turnier liegt nur auf diesem Gerät. Geht das Gerät verloren oder wird der Browser-Speicher gelöscht, sind die Daten weg. Die App erinnert dich im gewählten Abstand, eine Sicherung zu teilen oder herunterzuladen – nur wenn sich etwas geändert hat.',
     abschliessenTitel: 'Turnier abschließen',
+    strittigAbschluss: 'Abschluss und Ergebnisversand sind bis zur Entscheidung offener Streitfälle gesperrt',
     abschliessenText: 'Markiert das Turnier als beendet. Online geht dabei eine letzte Sicherung per Mail raus.',
     abschliessen: 'Turnier abschließen',
     abschliessenFrage: 'Turnier jetzt abschließen?',
@@ -848,6 +851,10 @@ export const T = {
     platzRunde: 'Platzierungsrunde',
     platzRundeText: 'Die Gleichplatzierten der Gruppen spielen neu jeder gegen jeden. Ergebnisse der Vorrunde zählen hier nicht.',
     platzRundeStarten: 'Platzierungsrunde starten',
+    rueckzugUebergang: 'Rückzug nach der Vorrunde',
+    rueckzugUebergangHilfe: 'Beim Nachrücken wird die Qualifikation nach dem Rückzug neu berechnet. Bei „Platz frei lassen“ bleibt die ursprüngliche Zuordnung erhalten und der zurückgezogene Teilnehmer scheidet aus.',
+    nachruecken: 'Nachrücken',
+    platzFrei: 'Platz frei lassen',
     platzRundeVorschau: 'So spielen die Platzierungsgruppen',
     platzGross: (n: number) => `Achtung: Eine Platzierungsgruppe hat ${n} Teilnehmer – jeder spielt ${n - 1}-mal. Weniger Plätze je Gruppe (unter „Bearbeiten“) ergeben kleinere Platzierungsgruppen.`,
     gesamtPlatzierung: 'Gesamtplatzierung',
@@ -1014,7 +1021,7 @@ export const T = {
     satz: (n: number) => `Satz ${n}`,
     satzGewinner: 'Satz gewonnen von',
     verliererPunkte: 'Punkte des Verlierers',
-    verliererHilfe: 'Nur die Punkte des Verlierers eingeben: 9 wird 11:9, 10 wird 12:10, 14 wird 16:14.',
+    verliererHilfe: 'Tippe auf den Satzgewinner. Gib anschließend nur die Ballpunkte des Verlierers ein. Die Gewinnerpunkte werden automatisch berechnet.',
     satzEntfernen: 'Satz entfernen',
     art: {
       normal: 'Gespielt',
@@ -1035,11 +1042,15 @@ export const T = {
     zuruecksetzen: 'Ergebnis löschen',
     zuruecksetzenFrage: 'Ergebnis löschen?',
     woHinweis: 'Nach WO D 7.9 scheidet der Spieler damit aus der Gruppe aus; seine Gruppenspiele werden gestrichen.',
-    von: (name: string, zeit: string) => `eingetragen von ${name}, ${zeit}`,
+    von: (name: string | undefined, zeit: string) => name?.trim() ? `eingetragen von ${name}, ${zeit}` : zeit,
     angefochtenVon: (name: string) => `angefochten von ${name}`,
     gespeichert: 'Gespeichert.',
     nurEigene: 'Du kannst nur deine eigenen Spiele eintragen.',
-    leitungHat: 'Das Ergebnis hat die Turnierleitung eingetragen. Stimmt etwas nicht, sprich bitte die Leitung an.',
+    amtlicherEintrag: (autor: Autor | null) => {
+      if (autor?.rolle === 'helfer' || (autor?.rolle === 'spieler' && autor.helfer)) return 'Das Ergebnis wurde mit Helferrechten eingetragen.';
+      if (autor && ['leitung', 'veranstalter', 'admin'].includes(autor.rolle)) return 'Das Ergebnis hat die Turnierleitung eingetragen.';
+      return 'Das Ergebnis wurde amtlich eingetragen.';
+    },
     du: 'du',
     festText: (n: number) => `Es werden genau ${n} Sätze gespielt – Unentschieden ist möglich.`,
     unentschieden: 'Unentschieden',
@@ -1050,7 +1061,37 @@ export const T = {
     zweiterTisch: 'Zweiter Tisch',
     keinZweiter: 'nur ein Tisch',
     titel: 'Tische und Spielaufruf',
-    text: 'Hier ruft die Turnierleitung (oder ein Helfer) die nächsten Spiele an die Tische. Spieler sehen unter „Meine Spiele“, an welchem Tisch sie dran sind – und wer pfeift.',
+    text: 'Hier ruft die Turnierleitung (oder ein Helfer) die nächsten Spiele an die Tische. Tisch antippen: Ergebnis eintragen, Tisch wechseln, Aufruf zurücknehmen. Spieler sehen unter „Meine Spiele“, an welchem Tisch sie dran sind – und wer pfeift.',
+    tippenSpieler: 'Tisch antippen: Spielinformationen – beim eigenen Spiel auch das Ergebnis eintragen oder bestätigen.',
+    tischHilfe:
+      'Jeder Tisch zeigt links und rechts die beiden Seiten mit den gewonnenen Sätzen (bei Mannschaften: Teilspielen) und darunter die Satzergebnisse, am Netz die Tischnummer und die Spielzeit. Nach dem Ergebnis zeigt ein freier Tisch noch 30 Minuten das letzte Spiel. Orangefarbene Kante: Ergebnis wartet auf Bestätigung. Rote Kante: Ergebnis ist strittig, die Turnierleitung entscheidet.',
+    minuten: (n: number) => (n < 1 ? 'gerade aufgerufen' : `${n} Min.`),
+    vorMinuten: (n: number) => (n < 1 ? 'gerade beendet' : `vor ${n} Min. beendet`),
+    zuBestaetigen: 'zu bestätigen',
+    strittig: 'strittig',
+    zuletzt: 'zuletzt',
+    aufstellungFehlt: 'Aufstellung fehlt',
+    teilspiel: (nr: number, doppel: boolean) => `Teilspiel ${nr}${doppel ? ' (Doppel)' : ''} läuft`,
+    stand: (a: number, b: number) => `Stand ${a}:${b}`,
+    tischLabel: (nr: number, a: string, b: string) => `Tisch ${nr}: ${a} gegen ${b}`,
+    tischFreiLabel: (nr: number) => `Tisch ${nr}: frei`,
+    tischGesperrtLabel: (nr: number) => `Tisch ${nr}: gesperrt`,
+    tischZuletztLabel: (nr: number, text: string) => `Tisch ${nr}: frei, zuletzt ${text}`,
+    funktionen: 'Funktionen',
+    naechstesAufrufen: (wer: string) => `Nächstes Spiel aufrufen: ${wer}`,
+    andereAufrufen: 'Anderes Spiel wählen …',
+    letztesAnsehen: 'Letztes Spiel ansehen',
+    wechseln: 'Tisch wechseln',
+    wechselnAuf: 'Auf Tisch …',
+    wechselnLabel: (nr: number) => `Tisch ${nr} wechseln`,
+    keineFunktion: 'Hier gibt es gerade nichts zu tun.',
+    autoAusFrage: (n: number) =>
+      n === 1
+        ? 'Ein Spiel wurde von diesem Gerät automatisch aufgerufen und hat noch kein Ergebnis. Der Aufruf bleibt bestehen – versehentlich eingeschaltet? Dann hier zurücknehmen.'
+        : `${n} Spiele wurden von diesem Gerät automatisch aufgerufen und haben noch kein Ergebnis. Die Aufrufe bleiben bestehen – versehentlich eingeschaltet? Dann hier zurücknehmen.`,
+    autoZurueck: (n: number) => (n === 1 ? 'Aufruf zurücknehmen' : `${n} Aufrufe zurücknehmen`),
+    autoBehalten: 'Aufrufe behalten',
+    autoZurueckGemacht: (n: number) => (n === 1 ? 'Aufruf zurückgenommen.' : `${n} Aufrufe zurückgenommen.`),
     anzahl: 'Anzahl Tische',
     anzahlHilfe: 'Steht unter Einstellungen bei den Turnierangaben. Ohne Angabe zeigt die App so viele Tische, wie benutzt werden.',
     tisch: (n: number) => `Tisch ${n}`,
@@ -1135,6 +1176,7 @@ export const T = {
     anpassen: 'Schätzung anpassen',
   },
   druck: {
+    vorlaeufig: 'Vorläufig',
     spielberichte: 'Spielberichte (Mannschaften)',
     spielbericht: 'Spielbericht',
     keineBegegnungen: 'Keine Begegnungen mit feststehenden Mannschaften.',
@@ -1386,6 +1428,8 @@ export const T = {
     'spiel.bestaetigt': 'Ergebnis bestätigt',
     'spiel.angefochten': 'Ergebnis angefochten',
     'spiel.entschieden': 'Leitung hat entschieden',
+    'spiel.ergebnis_spaet': 'Offline-Meldung nach Turnierende eingegangen',
+    'spiel.spaet_geprueft': 'Verspätete Meldung geprüft',
     'spiel.zurueckgesetzt': 'Ergebnis gelöscht',
     'spiel.aufgerufen': 'Spiel aufgerufen',
     'spiel.aufruf_zurueck': 'Aufruf zurückgenommen',
@@ -1800,6 +1844,29 @@ export const T = {
     folgtSpielt: (name: string, tisch: number) => `${name}: Spiel an Tisch ${tisch}`,
     jetzt: 'Jetzt an den Tisch!',
     schliessen: 'OK',
+  },
+  turnierDatum: {
+    start: 'Startdatum',
+    bis: (datum: string) => `Bis ${datum}`,
+    ende: 'Enddatum – optional',
+    endeHilfe: 'Spielergebnisse können nur bis zum Turnierende eingegeben werden. Die Turnierleitung kann das Turnier verlängern.',
+    offen: 'Ohne Enddatum wird das Turnier mit offenem Ende angelegt',
+    reihenfolge: 'Das Startdatum darf nicht nach dem gespeicherten Enddatum liegen. Speichere zuerst ein späteres Enddatum.',
+  },
+  fremdeEintraege: {
+    titel: (n: number) => n === 1 ? 'Ein nicht gesendeter Eintrag einer früheren Anmeldung' : `${n} nicht gesendete Einträge früherer Anmeldungen`,
+    hilfe: 'Die Einträge liegen auf diesem Gerät und warten auf ihre ursprüngliche Anmeldung. Sichere sie als Datei, bevor du sie verwirfst.',
+    unbekannt: 'Unbekannter Autor',
+    anmelden: 'Mit dieser Anmeldung erneut anmelden',
+    sichern: 'Als Datei sichern',
+    verwerfen: 'Verwerfen',
+    bestaetigen: 'Diese nicht gesendeten Einträge dauerhaft von diesem Gerät löschen?',
+  },
+  abgleichStatus: {
+    lokal: 'Lokal gespeichert',
+    ausstehend: 'Ausstehend',
+    bestaetigt: 'Synchronisiert',
+    abgelehnt: 'Abgelehnt',
   },
   abgelehnt: {
     titel: (n: number) => (n === 1 ? '1 Eintrag wurde vom Server abgelehnt' : `${n} Einträge wurden vom Server abgelehnt`),

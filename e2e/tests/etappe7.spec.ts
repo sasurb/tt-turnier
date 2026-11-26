@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { angabenSetzen } from './hilfen';
+import { angabenSetzen, reiterOeffnen } from './hilfen';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 
@@ -67,7 +67,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${n} ✓`)).toBeVisible();
   }
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Offene Klasse');
   await page.getByLabel(/Jeder gegen jeden/).check();
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
@@ -84,8 +84,8 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await einst.getByTestId('pause').selectOption('3');
   await einst.getByTestId('automatisch').check();
   const tische = page.getByTestId('tische').locator('li');
-  await expect(tische.nth(0)).toContainText('–');
-  await expect(tische.nth(1)).toContainText('–');
+  await expect(tische.nth(0).getByRole('button', { name: /^Tisch 1: .+ gegen .+/ })).toBeVisible();
+  await expect(tische.nth(1).getByRole('button', { name: /^Tisch 2: .+ gegen .+/ })).toBeVisible();
   await expect(page.getByTestId('tische').getByText('frei')).toHaveCount(0);
   await layoutPruefen(page, einst);
   await bild(page, '40-tische-automatisch');
@@ -111,13 +111,14 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await beamer.getByRole('dialog').getByRole('button', { name: 'Schließen' }).click();
 
   // Neuer Aufruf erscheint groß: Aufruf an Tisch 2 zurücknehmen → Automatik ruft neu auf
-  await tische.nth(1).getByRole('button', { name: 'Aufruf zurücknehmen' }).click();
+  await tische.nth(1).getByRole('button', { name: /^Tisch 2: .+ gegen .+/ }).click();
+  await page.getByTestId('tisch-auswahl').getByRole('button', { name: 'Aufruf zurücknehmen' }).click();
   await expect(beamer.getByTestId('live-banner')).toBeVisible({ timeout: 15_000 });
   await expect(beamer.getByTestId('live-banner')).toContainText('Tisch 2');
   await bild(beamer, '43-live-aufruf');
 
   // Namen für Zuschauer: Kurzform → der Beamer zeigt nur noch „Anna A.“
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await page.getByTestId('namen-kurz').check();
   await expect(page.getByText('Gespeichert.').first()).toBeVisible();
   await expect(live).not.toContainText('Alpha', { timeout: 20_000 });
@@ -132,7 +133,7 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await zuschauer.close();
 
   // Drucken: Spielzettel der aufgerufenen Spiele mit QR-Link
-  await page.getByRole('link', { name: 'Drucken' }).click();
+  await reiterOeffnen(page, 'Drucken');
   await expect(page.getByRole('heading', { name: 'Drucken und Export' })).toBeVisible();
   await layoutPruefen(page);
   await bild(page, '44-drucken-reiter');
@@ -158,7 +159,43 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await expect(dok.getByText(tid.replace(/^(.{4})(.{4})$/, '$1 $2'))).toBeVisible();
 
   // Spiel-Link vom Zettel öffnet das Ergebnis zum Eintragen
-  await page.goto(spielLink!.replace(/^.*#/, './#'));
+  const spielRoute = spielLink!.replace(/^.*#/, './#');
+  await test.step('QR-Link nach Neuladen für Konto-Leitung, Kennungs-Leitung und Helfer', async () => {
+    await page.getByRole('link', { name: /Zurück/ }).click();
+    await reiterOeffnen(page, 'Zugänge');
+    const leitung = page.getByTestId('zugaenge-leitung');
+    await expect(leitung.getByTestId('code')).toHaveCount(1);
+
+    const helfer = page.getByTestId('zugaenge-helfer');
+    await helfer.locator('summary').click();
+    await helfer.getByLabel('Name des Helfers').fill('QR Helfer');
+    await helfer.getByRole('button', { name: 'Helfer hinzufügen' }).click();
+
+    for (const bereich of [leitung, helfer]) {
+      const code = (await bereich.getByTestId('code').innerText()).replace(/\s/g, '');
+      const kontext = await browser.newContext({ ...info.project.use, baseURL: info.project.use.baseURL });
+      try {
+        const geraet = await kontext.newPage();
+        await geraet.goto(`./#/c/${tid}/${code}`);
+        await expect(geraet.getByTestId('angemeldet-als')).toBeVisible();
+        await geraet.close();
+        const qr = await kontext.newPage();
+        await qr.goto(spielRoute);
+        await expect(qr.getByRole('dialog')).toBeVisible();
+      } finally {
+        await kontext.close();
+      }
+    }
+
+    const konto = await page.context().newPage();
+    try {
+      await konto.goto(spielRoute);
+      await expect(konto.getByRole('dialog')).toBeVisible();
+    } finally {
+      await konto.close();
+    }
+  });
+  await page.goto(spielRoute);
   await expect(page.getByRole('dialog')).toBeVisible();
   await ergebnisEintragen(page);
   await expect(page).toHaveURL(new RegExp(`#/t/${tid}/spiele`));
@@ -178,7 +215,7 @@ test('Einzelgerät: K.-o.-Baum, Urkunden und Endstand drucken, Live-Anzeige im z
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${v}son ✓`)).toBeVisible();
   }
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Pokal');
   await page.getByRole('radio', { name: /^K\.-o\.-System/ }).check();
   await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
@@ -205,7 +242,7 @@ test('Einzelgerät: K.-o.-Baum, Urkunden und Endstand drucken, Live-Anzeige im z
   await bild(beamer, '47-live-lokal');
   await beamer.close();
 
-  await page.getByRole('link', { name: 'Drucken' }).click();
+  await reiterOeffnen(page, 'Drucken');
   await page.getByTestId('vorlage-baum').click();
   const dok = page.getByTestId('druck-dokument');
   await expect(dok.locator('.baum .box')).toHaveCount(3);
@@ -221,4 +258,69 @@ test('Einzelgerät: K.-o.-Baum, Urkunden und Endstand drucken, Live-Anzeige im z
   const csv = readFileSync((await datei.path())!, 'utf8');
   expect(csv).toContain('Konkurrenz;Platz;Name;Verein');
   expect(csv.split('\r\n').filter((z) => z.startsWith('Pokal;'))).toHaveLength(4);
+});
+
+test('F-030: Ein Offline-Ergebnis bleibt bei erneuter Anmeldung mit derselben Kennung', async ({ page, browser }, info) => {
+  await page.goto('./#/anmelden');
+  await page.getByLabel('E-Mail').fill(ADMIN.email);
+  await page.getByLabel('Passwort', { exact: true }).fill(ADMIN.passwort);
+  await page.getByRole('button', { name: 'Anmelden' }).click();
+  await page.getByTestId('neues-turnier').click();
+  await page.getByLabel('Name des Turniers').fill('Offline-Ergebnis und erneute Anmeldung');
+  await page.getByRole('button', { name: 'Turnier anlegen' }).click();
+  await expect(page.getByText('Verbunden')).toBeVisible();
+  const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
+
+  await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
+  for (const vorname of ['Ada', 'Ben']) {
+    await page.getByLabel('Vorname').fill(vorname);
+    await page.getByLabel('Nachname').fill('Test');
+    await page.getByRole('button', { name: 'Hinzufügen' }).click();
+    await expect(page.getByText(`${vorname} Test ✓`)).toBeVisible();
+  }
+  await reiterOeffnen(page, 'Konkurrenzen');
+  await page.getByLabel('Name', { exact: true }).fill('Einzel');
+  await page.getByLabel(/Jeder gegen jeden/).check();
+  await page.getByRole('button', { name: 'Konkurrenz anlegen' }).click();
+  await page.getByRole('button', { name: 'Alle melden' }).click();
+  await page.getByRole('button', { name: 'Auslosen' }).click();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('starten').click();
+  await reiterOeffnen(page, 'Zugänge');
+  const kennung = (await page.getByTestId('zugaenge-leitung').getByTestId('code').innerText()).replace(/\s/g, '');
+
+  const kontext = await browser.newContext({ ...info.project.use, baseURL: info.project.use.baseURL, serviceWorkers: 'block' });
+  async function gespeicherteErgebnisse() {
+    const antwort = await page.request.get(`api/index.php?r=events&turnier=${tid}&ab=0`);
+    const daten = await antwort.json() as { ereignisse: { art: string }[] };
+    return daten.ereignisse.filter((e) => e.art === 'spiel.ergebnis').length;
+  }
+  try {
+    const link = `./#/c/${tid}/${kennung}`;
+    const route = /api\/index\.php\?r=events/;
+    await kontext.route(route, (r) => r.request().method() === 'POST' ? r.abort() : r.continue());
+    const vorher = await kontext.newPage();
+    const ersteAnmeldung = vorher.waitForResponse((r) => r.url().includes('r=turnier.zugang') && r.ok());
+    await vorher.goto(link);
+    const erstesToken = (await (await ersteAnmeldung).json()).token;
+    await expect(vorher.getByTestId('angemeldet-als')).toBeVisible();
+    await reiterOeffnen(vorher, 'Spiele');
+    await vorher.getByTestId('spiel').first().click();
+    await ergebnisEintragen(vorher);
+    expect(await gespeicherteErgebnisse()).toBe(0);
+    await vorher.close();
+
+    const danach = await kontext.newPage();
+    const anmeldung = danach.waitForResponse((r) => r.url().includes('r=turnier.zugang') && r.ok());
+    await danach.goto(link);
+    const neuesToken = (await (await anmeldung).json()).token;
+    expect(neuesToken).not.toBe(erstesToken);
+    await expect(danach.getByTestId('angemeldet-als')).toBeVisible();
+    await expect(danach.getByTestId('fremde-ausstehende')).toHaveCount(0);
+    await kontext.unroute(route);
+    await danach.evaluate(() => dispatchEvent(new Event('online')));
+    await expect.poll(gespeicherteErgebnisse).toBe(1);
+  } finally {
+    await kontext.close();
+  }
 });

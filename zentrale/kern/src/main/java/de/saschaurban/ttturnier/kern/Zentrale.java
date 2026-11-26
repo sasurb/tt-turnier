@@ -5,6 +5,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.Objects;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -659,7 +663,23 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         Map<String, Object> aus = turnierAusgabe(t);
         if (a.token != null) {
             Map<String, Object> s = sitzung(a);
-            aus.put("rechte", s == null ? null : rechte(s, t));
+            String rechte = s == null ? null : rechte(s, t);
+            aus.put("rechte", rechte);
+            if (rechte != null && wahr(s.get("konto"))) {
+                aus.put("identitaet", "konto:" + rechte + ":zentrale");
+            } else if (rechte != null) {
+                synchronized (this) {
+                    Map<String, Object> aktuell = sitzung(a);
+                    if (aktuell != null) {
+                        for (Map<String, Object> c : t.codes) {
+                            if (Objects.equals(c.get("rolle"), s.get("rolle")) && Objects.equals(c.get("bezug"), s.get("bezug")) && !wahr(c.get("gesperrt"))) {
+                                aus.put("identitaet", kennungsIdentitaet(t, c));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             if ("helfer".equals(aus.get("rechte"))) aus.put("aufgaben", aufgabenDerSitzung(s));
         }
         return Json.obj("turnier", aus);
@@ -754,7 +774,12 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         List<Speicher.Turnier> l = new ArrayList<>(turniere.values());
         l.sort((x, y) -> String.valueOf(y.kopf.get("angelegt")).compareTo(String.valueOf(x.kopf.get("angelegt"))));
         List<Object> aus = new ArrayList<>();
-        for (Speicher.Turnier t : l) aus.add(turnierAusgabe(t));
+        for (Speicher.Turnier t : l) {
+            Map<String, Object> eintrag = turnierAusgabe(t);
+            LocalDate ende = gespeichertesEnddatum(t);
+            eintrag.put("enddatum", ende == null ? null : ende.toString());
+            aus.add(eintrag);
+        }
         return Json.obj("turniere", aus);
     }
 
@@ -804,6 +829,14 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         return Json.obj("turnier", turnierAusgabe(t), "token", token, "leitung", codeAusgabe(leitung));
     }
 
+    private synchronized String kennungsIdentitaet(Speicher.Turnier t, Map<String, Object> code) {
+        if (!(code.get("identitaet") instanceof String)) {
+            code.put("identitaet", zufallsText(32));
+            speicher.codesSpeichern(t);
+        }
+        return "kennung:" + code.get("rolle") + ":" + code.get("bezug") + ":" + code.get("identitaet");
+    }
+
     private Map<String, Object> turnierZugang(Anf a) {
         Speicher.Turnier t = turnierLaden(Json.alsText(a.rumpf.get("turnier")), a);
         // Bremsen ohne Aussperren richtiger Kennungen (siehe PHP-Server): Verzögerung ab dem 5. Fehlversuch je
@@ -820,33 +853,34 @@ public final class Zentrale implements HttpServer.Bearbeiter {
         }
         String roh = Json.alsText(a.rumpf.get("code"));
         String code = roh == null ? "" : roh.replaceAll("\\s+", "");
-        Map<String, Object> c = null;
-        if (code.matches("^[0-9]{8}$")) {
-            synchronized (this) {
+        synchronized (this) {
+            Map<String, Object> c = null;
+            if (code.matches("^[0-9]{8}$")) {
                 for (Map<String, Object> x : t.codes) {
                     if (gleich(code, String.valueOf(x.get("code"))) && !wahr(x.get("gesperrt"))) { c = x; break; }
                 }
             }
-        }
-        if (c == null) {
-            fehlversuch(schluessel);
-            fehlversuch(schluesselTurnier);
-            if (fehl + 1 >= VERSUCHE_MAX * 3 || anzahlVersuche(schluesselTurnier, VERSUCHE_FENSTER) > ZUGANG_TURNIER_MAX) {
-                throw new ApiFehler("zu_viele_versuche", "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.");
+            if (c == null) {
+                fehlversuch(schluessel);
+                fehlversuch(schluesselTurnier);
+                if (fehl + 1 >= VERSUCHE_MAX * 3 || anzahlVersuche(schluesselTurnier, VERSUCHE_FENSTER) > ZUGANG_TURNIER_MAX) {
+                    throw new ApiFehler("zu_viele_versuche", "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.");
+                }
+                throw new ApiFehler("falsche_zugangsdaten", "Diese Kennung passt nicht zu diesem Turnier.");
             }
-            throw new ApiFehler("falsche_zugangsdaten", "Diese Kennung passt nicht zu diesem Turnier.");
+            versucheLoeschen(schluessel);
+            String rolle = (String) c.get("rolle");
+            boolean helfer = "spieler".equals(rolle) && wahr(c.get("helfer"));
+            String token = neuesToken(false, t.id, rolle, (String) c.get("name"), (String) c.get("bezug"), helfer);
+            Map<String, Object> aus = Json.obj("token", token, "rolle", rolle, "name", c.get("name"),
+                "identitaet", kennungsIdentitaet(t, c));
+            if ("spieler".equals(rolle)) {
+                aus.put("spieler", c.get("bezug"));
+                if (helfer) aus.put("helfer", true);
+            }
+            if ("helfer".equals(rolle)) aus.put("aufgaben", aufgabenLesen(c.get("aufgaben")));
+            return aus;
         }
-        versucheLoeschen(schluessel);
-        String rolle = (String) c.get("rolle");
-        boolean helfer = "spieler".equals(rolle) && wahr(c.get("helfer"));
-        String token = neuesToken(false, t.id, rolle, (String) c.get("name"), (String) c.get("bezug"), helfer);
-        Map<String, Object> aus = Json.obj("token", token, "rolle", rolle, "name", c.get("name"));
-        if ("spieler".equals(rolle)) {
-            aus.put("spieler", c.get("bezug"));
-            if (helfer) aus.put("helfer", true);
-        }
-        if ("helfer".equals(rolle)) aus.put("aufgaben", aufgabenLesen(c.get("aufgaben")));
-        return aus;
     }
 
     private Map<String, Object> abholen(Anf a) {
@@ -1355,6 +1389,8 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             List<Map<String, Object>> neu = new ArrayList<>();
             Map<String, Long> inDiesemAufruf = new HashMap<>();
             long seq = t.hoechsteSeq();
+            LocalDate ende = gespeichertesEnddatum(t);
+            LocalDate eingang = berlinDatum(Instant.ofEpochSecond(jetzt()));
             for (Map<String, Object> e : geprueft) {
                 String id = (String) e.get("id");
                 Integer pos = t.index.get(id);
@@ -1368,6 +1404,24 @@ public final class Zentrale implements HttpServer.Bearbeiter {
                     continue;
                 }
                 Map<String, Object> z = new LinkedHashMap<>(e);
+                String art = (String) e.get("art");
+                Map<String, Object> daten = Json.alsObjekt(e.get("daten"));
+                String meldung = null;
+                if ("turnier.daten".equals(art) && daten.containsKey("enddatum")) {
+                    LocalDate datum = enddatumLesen(daten.get("enddatum"), Objects.toString(t.kopf.get("datum"), ""));
+                    if (datum == null && daten.get("enddatum") != null) {
+                        meldung = "Das Enddatum muss gültig sein und darf nicht vor dem Startdatum liegen.";
+                    } else ende = datum;
+                }
+                if (ende != null && eingang.isAfter(ende) && Arrays.asList("spiel.ergebnis", "spiel.aufgerufen", "phase.gestartet").contains(art)) {
+                    if ("spiel.ergebnis".equals(art) && rechtzeitigErfasst((String) e.get("zeit"), ende)) {
+                        z.put("art", "spiel.ergebnis_spaet");
+                    } else meldung = "Das Turnier ist beendet. Für neue Spiele bitte das Enddatum verlängern.";
+                }
+                if (meldung != null) {
+                    abgelehnt.add(Json.obj("id", id, "fehler", "ungueltig", "meldung", meldung));
+                    continue;
+                }
                 z.put("seq", ++seq);
                 z.put("empfangen", iso(jetzt()));
                 z.put("autor", autor);
@@ -1383,6 +1437,42 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             Map<String, Object> aus = Json.obj("angenommen", angenommen, "hoechsteSeq", t.hoechsteSeq());
             if (!abgelehnt.isEmpty()) aus.put("abgelehnt", abgelehnt);
             return aus;
+        }
+    }
+
+    private static LocalDate berlinDatum(Instant zeit) {
+        return zeit.atZone(ZoneId.of("Europe/Berlin")).toLocalDate();
+    }
+
+    private static boolean rechtzeitigErfasst(String zeit, LocalDate ende) {
+        try {
+            return !berlinDatum(Instant.parse(zeit)).isAfter(ende);
+        } catch (DateTimeParseException e) {
+            return false;
+        }
+    }
+
+    private static LocalDate gespeichertesEnddatum(Speicher.Turnier t) {
+        LocalDate ende = null;
+        for (Map<String, Object> eintrag : t.ereignisse) {
+            Map<String, Object> daten = Json.alsObjekt(eintrag.get("daten"));
+            Map<String, Object> verfasser = Json.alsObjekt(eintrag.get("autor"));
+            if ("turnier.daten".equals(eintrag.get("art")) && verfasser != null && "leitung".equals(verfasser.get("rolle"))
+                && daten != null && daten.containsKey("enddatum")) {
+                LocalDate datum = enddatumLesen(daten.get("enddatum"), Objects.toString(t.kopf.get("datum"), ""));
+                if (datum != null || daten.get("enddatum") == null) ende = datum;
+            }
+        }
+        return ende;
+    }
+
+    private static LocalDate enddatumLesen(Object wert, String startdatum) {
+        if (!(wert instanceof String) || !((String) wert).matches("[0-9]{4}-[0-9]{2}-[0-9]{2}")) return null;
+        try {
+            LocalDate datum = LocalDate.parse((String) wert);
+            return datum.getYear() > 0 && datum.toString().compareTo(startdatum) >= 0 ? datum : null;
+        } catch (DateTimeParseException e) {
+            return null;
         }
     }
 
@@ -1429,6 +1519,10 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             if (a.rumpf.containsKey("datum")) {
                 Object d = a.rumpf.get("datum");
                 if (d != null && !(d instanceof String && P_DATUM.matcher((String) d).matches())) throw new ApiFehler("ungueltig", "Datum im Format JJJJ-MM-TT angeben.");
+                LocalDate ende = gespeichertesEnddatum(t);
+                if (d instanceof String && ende != null && ((String) d).compareTo(ende.toString()) > 0) {
+                    throw new ApiFehler("ungueltig", "Das Startdatum darf nicht nach dem Enddatum liegen.");
+                }
                 t.kopf.put("datum", d);
             }
             if (a.rumpf.containsKey("sicherungTakt")) {
@@ -1748,6 +1842,7 @@ public final class Zentrale implements HttpServer.Bearbeiter {
             Map<String, Object> c = codeSuchen(t, z[0], z[1]);
             if (c == null) throw new ApiFehler("nicht_gefunden", "Code nicht gefunden.");
             c.put("code", freierCode(t));
+            c.remove("identitaet");
             c.put("gesperrt", false);
             speicher.codesSpeichern(t);
             sitzungenEntfernen(t.id, z[0], z[1]);

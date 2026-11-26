@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { reiterOeffnen } from './hilfen';
 import { mkdirSync } from 'node:fs';
 import { ADMIN } from './einrichten';
 
@@ -42,13 +43,13 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await page.getByRole('button', { name: 'Anmelden' }).click();
   await page.getByTestId('neues-turnier').click();
   await page.getByLabel('Name des Turniers').fill(`Hobbycup ${geraet}`);
-  await page.getByLabel('Datum').fill('2027-12-11');
+  await page.getByLabel('Startdatum', { exact: true }).fill('2027-12-11');
   await page.getByRole('button', { name: 'Turnier anlegen' }).click();
   await expect(page.getByText('Verbunden')).toBeVisible();
   const tid = page.url().match(/#\/t\/([A-Z0-9-]+)/)![1]!;
 
   // Reines Hobby-Turnier: Jeder gegen jeden, nur Spieler ohne amtlichen TTR
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Hobby');
   await page.getByLabel(/Jeder gegen jeden/).check();
   await page.locator('summary', { hasText: 'Weitere Einstellungen' }).click();
@@ -57,7 +58,7 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await expect(page.getByTestId('konkurrenz').filter({ hasText: 'Hobby' })).toBeVisible();
 
   // Teilnehmer: Hobbyspielerin per Einstufung, Vereinsspieler mit Q-TTR
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await page.getByRole('button', { name: '+ Neuer Teilnehmer' }).click();
   await page.getByRole('group', { name: /Gleich melden für/ }).getByRole('checkbox', { name: 'Hobby' }).check();
   const verein = `TTC ${geraet}`;
@@ -98,7 +99,7 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await expect(hobby.getByText('⚠ amtlicher TTR (nur Hobby)')).toHaveCount(1);
 
   // Auslosen, starten, Hanna gewinnt gegen Kai
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   const karte = page.getByTestId('konkurrenz').filter({ hasText: 'Hobby' }).first();
   await karte.getByRole('button', { name: 'Auslosen' }).click();
   page.once('dialog', (d) => void d.accept());
@@ -115,7 +116,7 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await expect(dlg).toBeHidden();
 
   // App-Wertung: Sieg gegen Stärkeren → +30 (K = 32), amtlicher TTR bleibt
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   const wertung = page.getByTestId('abschnitt-appwertung');
   // Gibt es etwas zu übernehmen, ist der Abschnitt schon aufgeklappt
   await expect(wertung).toHaveAttribute('open', '');
@@ -129,13 +130,13 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await expect(wertung.getByTestId('appwertung-uebernehmen')).toHaveCount(0);
 
   // Spielerpool: neuer Wert, als geschätzt markiert
-  await nav(page).getByRole('link', { name: 'Spielerpool' }).click();
+  await reiterOeffnen(page, 'Spielerpool');
   await page.getByTestId('pool-liste').getByRole('searchbox').fill(verein);
   await expect(page.getByTestId('pool-liste').locator('li', { hasText: 'Hanna Hobby' })).toContainText('≈1055 · H2');
   await expect(page.getByTestId('pool-liste').locator('li', { hasText: 'Kai Klub' })).toContainText('TTR 1200');
 
   // Klassen-Vorlage „Hobby + Verein“ im Klassen-Assistenten: Konkurrenz je Stufe, nur Obergrenze
-  await nav(page).getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByRole('button', { name: /Neue Konkurrenz/ }).click();
   await page.getByTestId('klassen-assistent').click();
   await page.getByLabel('Aufteilen nach').selectOption('ttr');
@@ -151,7 +152,7 @@ test('Einstufung, Hobby-Turnier, App-Wertung und Klassen-Vorlagen', async ({ pag
   await bild(page, '85-klassen-vorlage');
 
   // Online-Anmeldung mit TTR als Pflichtangabe: Hobbyspieler stufen sich selbst ein
-  await nav(page).getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   const anm = page.getByTestId('abschnitt-anmeldungen');
   await anm.locator('summary').first().click();
   const ttrPflicht = anm.getByRole('checkbox', { name: 'TTR-Wert' });

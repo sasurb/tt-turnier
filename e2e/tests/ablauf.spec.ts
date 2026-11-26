@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
-import { angabenSetzen } from './hilfen';
+import { angabenSetzen, reiterOeffnen, reiterSichtbarMachen } from './hilfen';
 import { mkdirSync } from 'node:fs';
-import { letzteMail } from './mails';
+import { registrierlinkOeffnen, letzteMail } from './mails';
 import { ADMIN } from './einrichten';
 
 /**
@@ -17,7 +17,7 @@ async function ohneServer(page: Page) {
 async function bild(page: Page, name: string) {
   const ordner = `bilder/${test.info().project.name}`;
   mkdirSync(ordner, { recursive: true });
-  await page.screenshot({ path: `${ordner}/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `${ordner}/${name}.png`, fullPage: true, scale: 'css' });
 }
 
 test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, Konto löschen', async ({ page, browser }, info) => {
@@ -36,6 +36,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   // Konto anlegen
   await page.getByRole('link', { name: 'Konto anlegen' }).first().click();
   await expect(page.getByRole('heading', { name: 'Konto anlegen' })).toBeVisible();
+  await registrierlinkOeffnen(page, email);
   await page.getByLabel('Dein Name').fill(`TTC ${geraet}`);
   await page.getByLabel('E-Mail', { exact: true }).fill(email);
   await page.getByLabel('Passwort (mindestens 8 Zeichen)').fill(passwort);
@@ -89,7 +90,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await bild(page, '05-spieler');
 
   // Konkurrenz: Jeder gegen jeden, alle melden, auslosen, starten
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Herren');
   await page.getByLabel(/Jeder gegen jeden/).check();
   await expect(page.getByText(/Wie wird bei Gleichstand gewertet/).first()).toBeVisible();
@@ -104,7 +105,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await expect(page.getByTestId('konkurrenz').getByText('Gruppenphase')).toBeVisible();
 
   // Zugänge: Turnierkennung (8 Ziffern), Link, Leitungskennung der Leitung, Spielerkennungen
-  await page.getByRole('link', { name: 'Zugänge' }).click();
+  await reiterOeffnen(page, 'Zugänge');
   const turnierKennung = (await page.getByTestId('turnierkennung').innerText()).replace(/\s/g, '');
   expect(turnierKennung).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/);
   const link = await page.getByLabel('Link').inputValue();
@@ -143,7 +144,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await page.mouse.move(0, 0);
 
   // Einstellungen: Erklärung, Sicherung jetzt senden
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await expect(page.getByText(/Solange das Turnier auf mindestens einem Gerät geöffnet ist/)).toBeVisible();
   await expect(page.getByLabel('Empfänger (bis zu 3) 1')).toHaveValue(email);
   await page.getByLabel('Wie oft?').selectOption({ label: 'Alle 15 Minuten' });
@@ -163,7 +164,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await page.getByTestId('sicherung-bestaetigen').click();
   await expect(page.getByTestId('sicherung-link')).toContainText('bekommt ab jetzt die Sicherungen');
   await page.goto(turnierSeite);
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await expect(page.getByTestId('sicherung-unbestaetigt')).toHaveCount(0);
   await page.getByRole('button', { name: 'Jetzt per Mail sichern' }).click();
   await expect(page.getByText(/Sicherung gesendet an/)).toBeVisible();
@@ -196,7 +197,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await bild(p2, '09b-beitreten-kennung');
   await p2.getByTestId('mit-kennung').click();
   await expect(p2.getByText(/Willkommen, Co-Leitung Karl/)).toBeVisible();
-  await expect(p2.getByRole('link', { name: 'Zugänge' })).toBeVisible();
+  await expect(await reiterSichtbarMachen(p2, 'Zugänge')).toBeVisible();
   // Karl meldet sich ab und ist Zuschauer; dann kommt Anna über ihren persönlichen Link
   p2.once('dialog', (d) => void d.accept());
   await p2.getByRole('button', { name: 'Abmelden' }).click();
@@ -236,7 +237,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await bild(page, '11-tabelle');
 
   // Verdeckte Stände: Leitung verdeckt die Tabellen, Anna sieht nur den Hinweis; „Ergebnisse veröffentlichen“ hebt es auf
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await page.getByLabel('Tabellen und Platzierungen zeigen').uncheck();
   await expect(page.getByText('Gespeichert.').first()).toBeVisible();
   await p2.getByRole('link', { name: 'Tabellen' }).click();
@@ -275,7 +276,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await expect(cemDora).not.toContainText(/eingetragen|bestätigen/); // amtlich: gilt sofort, keine Bestätigung nötig
 
   // Protokoll steht ganz unten in den Einstellungen
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await page.locator('summary', { hasText: 'Protokoll' }).click();
   await expect(page.getByText(/von Anna Alpha \(Spieler\)/)).toBeVisible({
     timeout: 15_000,
@@ -314,7 +315,7 @@ test('Konto anlegen, Online-Turnier, Mitleiten, Sicherung, Passwort vergessen, K
   await bild(page, '10-meine-turniere');
   // Wieder angemeldet: eigenes Turnier ist ohne weitere Anmeldung wieder leitbar
   await page.getByRole('button', { name: `Herbstpokal ${geraet}` }).click();
-  await expect(page.getByRole('link', { name: 'Zugänge' })).toBeVisible();
+  await expect(await reiterSichtbarMachen(page, 'Zugänge')).toBeVisible();
   await expect(page.getByText('Verbunden')).toBeVisible();
   await page.goto('./');
 
@@ -357,7 +358,7 @@ test('Demo ohne Server: Turnier nur auf diesem Gerät, Sicherung herunterladen u
   await page.getByRole('button', { name: 'Hinzufügen' }).click();
   await expect(page.getByText('Lotte Lokal ✓')).toBeVisible();
 
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await expect(page.getByText(/Dieses Turnier liegt nur auf diesem Gerät/).first()).toBeVisible();
   await bild(page, '13-lokal-einstellungen');
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Sicherung herunterladen' }).click()]);
@@ -372,9 +373,9 @@ test('Demo ohne Server: Turnier nur auf diesem Gerät, Sicherung herunterladen u
   await bild(page, '14-wiederherstellen');
   await page.getByRole('button', { name: 'Wiederherstellen' }).click();
   await expect(page.getByText(/Turnier wiederhergestellt: 2 Einträge übernommen/)).toBeVisible();
-  await page.getByRole('link', { name: /^Teilnehmer/ }).click();
+  await reiterOeffnen(page, /^Teilnehmer/);
   await expect(page.getByText('Lotte Lokal')).toBeVisible();
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await page.locator('summary', { hasText: 'Protokoll' }).click();
   await expect(page.getByText(/Aus Sicherung wiederhergestellt/)).toBeVisible();
 });
@@ -401,7 +402,7 @@ test('Einzelgerät: Gruppen + K.-o. mit Ergebnissen der Leitung, Stände verdeck
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} Test ✓`)).toBeVisible();
   }
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Offen');
   await page.getByLabel('Gewinnsätze').selectOption({ label: '2 Gewinnsätze (Best of 3)' });
   await page.getByLabel('Spieler je Gruppe (höchstens)').selectOption('3');
@@ -430,7 +431,7 @@ test('Einzelgerät: Gruppen + K.-o. mit Ergebnissen der Leitung, Stände verdeck
   await bild(page, '18-gruppen');
 
   // Endrunde
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByRole('button', { name: 'Endrunde auslosen' }).click();
   page.once('dialog', (d) => void d.accept());
   await page.getByRole('button', { name: 'Endrunde starten' }).click();
@@ -440,7 +441,7 @@ test('Einzelgerät: Gruppen + K.-o. mit Ergebnissen der Leitung, Stände verdeck
   await bild(page, '19-ko-baum');
 
   // Stände verdecken: die Leitung sieht weiter alles, bekommt aber den Hinweis und den Knopf
-  await page.getByRole('link', { name: 'Einstellungen' }).click();
+  await reiterOeffnen(page, 'Einstellungen');
   await page.getByLabel('Tabellen und Platzierungen zeigen').uncheck();
   await page.getByLabel('K.-o.-Baum zeigen').uncheck();
   await page.getByRole('link', { name: 'Tabellen' }).click();
@@ -478,7 +479,7 @@ test('Einzelgerät: Konkurrenzen nach Leistungsklassen, klassenreine Gruppen', a
     await expect(page.getByText(`${v} Test ✓`)).toBeVisible();
   }
   // Assistent: je Klasse eine Konkurrenz
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByTestId('klassen-assistent').click();
   await expect(page.getByTestId('klassen-vorschau')).toContainText('A');
   await expect(page.getByTestId('klassen-vorschau')).toContainText('B');
@@ -551,7 +552,7 @@ test('Etappe 5: Doppel mit Trostrunde, Spielaufruf an Tische mit Schiedsrichter'
     await page.getByRole('button', { name: 'Hinzufügen' }).click();
     await expect(page.getByText(`${v} ${v}son ✓`)).toBeVisible();
   }
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Herren-Doppel');
   await page.getByRole('radio', { name: 'Doppel', exact: true }).check();
   await page.getByRole('radio', { name: /^K\.-o\.-System/ }).check();
@@ -585,7 +586,8 @@ test('Etappe 5: Doppel mit Trostrunde, Spielaufruf an Tische mit Schiedsrichter'
   await expect(tisch1).toContainText('/');
   await bild(page, '25-tische');
   // Ergebnis direkt vom Tisch aus
-  await tisch1.getByRole('button', { name: 'Ergebnis eintragen' }).click();
+  await tisch1.getByRole('button', { name: /^Tisch 1: .+ gegen .+/ }).click();
+  await page.getByTestId('tisch-auswahl').getByRole('button', { name: 'Ergebnis eintragen' }).click();
   const dlg = page.getByRole('dialog');
   for (const sz of [1, 2, 3]) {
     await dlg.getByTestId(`satz-${sz}`).getByRole('radio').first().click();
@@ -624,7 +626,7 @@ test('Etappe 6: Schweizer System mit Vorgabe, Kaiserturnier', async ({ page }) =
     await expect(page.getByText(`${v} Test ✓`)).toBeVisible();
   }
   // Schweizer System, 3 Runden, mit Vorgabe
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByLabel('Name', { exact: true }).fill('Schweizer');
   await page.getByRole('radio', { name: /^Schweizer System/ }).check();
   await page.getByLabel('Gewinnsätze').selectOption({ label: '2 Gewinnsätze (Best of 3)' });
@@ -666,7 +668,7 @@ test('Etappe 6: Schweizer System mit Vorgabe, Kaiserturnier', async ({ page }) =
   await bild(page, '29-schweizer-rangliste');
 
   // Kaiserturnier mit einem Gewinnsatz
-  await page.getByRole('link', { name: 'Konkurrenzen' }).click();
+  await reiterOeffnen(page, 'Konkurrenzen');
   await page.getByRole('button', { name: /Neue Konkurrenz/ }).click();
   await page.getByLabel('Name', { exact: true }).fill('Kaiser');
   await page.getByRole('radio', { name: /^Kaiserturnier/ }).check();

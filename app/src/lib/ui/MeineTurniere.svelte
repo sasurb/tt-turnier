@@ -61,7 +61,7 @@
           <button class="zeile" onclick={() => kontoTurnierOeffnen(t)}>
             <strong>{t.name}</strong>
             <span class="leise">
-              {datum(t.datum)}{t.datum ? ' · ' : ''}<span class="kennung">{codeAnzeige(t.id)}</span>{#if mehrereSparten && sparteVon(t)} · {sparteVon(t)}{/if}
+              {datum(t.datum)}{#if t.enddatum && t.enddatum !== t.datum}{t.datum ? ' – ' : 'bis '}{datum(t.enddatum)}{/if}{t.datum || t.enddatum ? ' · ' : ''}<span class="kennung">{codeAnzeige(t.id)}</span>{#if mehrereSparten && sparteVon(t)} · {sparteVon(t)}{/if}
               {#if t.zentrale}<span class="marke">{T.zentrale.liegtAndere(t.zentrale)}</span>{:else}<span class="marke online">{zentrale ? T.zentrale.modus : T.start.modusOnline}</span>{/if}
             </span>
           </button>

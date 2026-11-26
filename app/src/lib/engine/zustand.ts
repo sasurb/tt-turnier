@@ -1,3 +1,4 @@
+import { T } from '../texte';
 import { praemieLesen, type Auszahlung } from './praemie';
 import { ALLE_AUFGABEN, ART, HELFER_STANDARD, ID_MUSTER, UST_SAETZE, type Aufgabe, type Autor, type KasseEinstellungen, type NamenFuerZuschauer } from '@shared/protokoll';
 import type { LokalesEreignis } from './typen';
@@ -43,6 +44,7 @@ import {
   gruppenName,
   mitKo,
   standardEinstellungen,
+  wertungVorlaeufig,
   type Angabe,
   type Veroeffentlichung,
   type Ergebnis,
@@ -67,6 +69,8 @@ import {
 export interface TurnierZustand {
   name: string;
   datum: string | null;
+  enddatum: string | null;
+  spaeteErgebnisse: LokalesEreignis[];
   ort: string;
   tische: number | null;
   /** Tische, die gerade nicht bespielt werden (defekt, Siegerehrung …) */
@@ -138,6 +142,8 @@ export function leererZustand(): TurnierZustand {
   return {
     name: '',
     datum: null,
+    enddatum: null,
+    spaeteErgebnisse: [],
     ort: '',
     tische: null,
     tischeGesperrt: [],
@@ -549,8 +555,14 @@ export type PlatzGruppenPlan = { ok: true; gruppen: { platzAb: number; mitgliede
  * Platzierungsgruppe (bei 2 Gruppen à 4 und 2: 1.+2. → Plätze 1–4, 3.+4. → Plätze 5–8). Wer zurückgezogen hat, fällt
  * heraus. Reihenfolge in der Gruppe: erst alle Gruppenersten (A, B, …), dann alle Zweiten usw.
  */
-export function platzGruppenBilden(k: KonkurrenzZustand): PlatzGruppenPlan {
+export function platzGruppenBilden(k: KonkurrenzZustand, vakanz = false): PlatzGruppenPlan {
   if (!istPlatzModus(k.einst.modus) || !k.gestartet.gruppen) return { ok: false, grund: 'Die Vorrunde hat noch nicht begonnen.' };
+  const vakant = new Set(vakanz ? k.vorHauptrunde : []);
+  if (vakant.size) {
+    k = { ...k, spiele: Object.fromEntries(Object.entries(k.spiele).map(([id, spiel]) => [id, { ...spiel }])) };
+    k.rueckzuege = k.rueckzuege.filter((r) => !vakant.has(r.teilnehmer));
+    gruppenAktualisieren(k, new Set(zurueckgezogen(k)));
+  }
   const reihen: string[][] = [];
   for (const g of vorrundenGruppen(k)) {
     const t = gruppenTabelleVon(k, g.nr);
@@ -564,7 +576,7 @@ export function platzGruppenBilden(k: KonkurrenzZustand): PlatzGruppenPlan {
   let platz = 1;
   for (let ab = 0; ab < tiefe; ab += je) {
     const mitglieder: string[] = [];
-    for (let p = ab; p < ab + je; p++) for (const r of reihen) if (r[p]) mitglieder.push(r[p]!);
+    for (let p = ab; p < ab + je; p++) for (const r of reihen) if (r[p] && !vakant.has(r[p]!)) mitglieder.push(r[p]!);
     if (!mitglieder.length) continue;
     gruppen.push({ platzAb: platz, mitglieder });
     platz += mitglieder.length;
@@ -839,7 +851,7 @@ function ergebnisAnwenden(k: KonkurrenzZustand, s: Spiel, neu: ErgebnisEintrag):
     s.stand = 'eingetragen';
     return null;
   }
-  if (alt.amtlich && s.stand === 'bestaetigt') return 'Das Ergebnis hat die Turnierleitung eingetragen – ändern kann es nur die Leitung.';
+  if (alt.amtlich && s.stand === 'bestaetigt') return T.erg.amtlicherEintrag(alt.von) + ' Bitte wende dich an die Turnierleitung.';
   switch (s.stand) {
     case 'eingetragen':
       if (alt.seite === neu.seite) {
@@ -892,6 +904,17 @@ function folgeBlockiert(k: KonkurrenzZustand, s: Spiel, neuerSieger: Seite | nul
   return null;
 }
 
+const berlinDatum = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+export function nachTurnierende(enddatum: string | null, zeit: string): boolean {
+  const datum = new Date(zeit);
+  return enddatum !== null && Number.isFinite(datum.getTime()) && berlinDatum.format(datum) > enddatum;
+}
+
+export function fristgebundeneAktion(art: string): boolean {
+  return art === ART.spielErgebnis || art === ART.spielAufgerufen || art === ART.phaseGestartet;
+}
+
 /* ---------------- Ereignisse anwenden ---------------- */
 
 export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand {
@@ -917,15 +940,29 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
     return k ?? null;
   };
 
+  if (fristgebundeneAktion(e.art) && nachTurnierende(z.enddatum, e.empfangen ?? e.zeit)) {
+    warnen('Das Turnier ist beendet. Für neue Spiele bitte das Enddatum verlängern.');
+    return z;
+  }
+
   switch (e.art) {
     case ART.turnierAngelegt:
     case ART.turnierUmbenannt: {
       if (e.art === ART.turnierUmbenannt && !nurLeitung()) break;
+      if (e.art === ART.turnierUmbenannt && typeof d.datum === 'string' && z.enddatum && d.datum > z.enddatum) {
+        warnen('Das Startdatum darf nicht nach dem Enddatum liegen.');
+        break;
+      }
       if (typeof d.name === 'string') z.name = d.name;
       if (typeof d.datum === 'string' || d.datum === null) z.datum = d.datum as string | null;
       break;
     }
     case ART.turnierAbgeschlossen:
+      if (!nurLeitung()) break;
+      if (Object.values(z.konkurrenzen).some(wertungVorlaeufig)) {
+        warnen('Vor dem Abschluss alle strittigen Spiele entscheiden.');
+        break;
+      }
       z.abgeschlossen = true;
       break;
     case ART.turnierWiedereroeffnet:
@@ -946,6 +983,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
 
     case ART.turnierDaten: {
       if (!nurLeitung()) break;
+      if (d.enddatum === null || (typeof d.enddatum === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.enddatum) && Number.isFinite(Date.parse(d.enddatum)) && new Date(d.enddatum).toISOString().startsWith(d.enddatum) && (!z.datum || d.enddatum >= z.datum))) z.enddatum = d.enddatum;
       const ort = text(d.ort, 120);
       if (ort !== undefined) z.ort = ort;
       const t = zahl(d.tische, 1, 200);
@@ -1175,6 +1213,10 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         break;
       }
       if (!k.rueckzuege.some((r) => r.teilnehmer === id)) {
+        if (istPlatzModus(k.einst.modus) && k.gestartet.gruppen && !k.gestartet.ko &&
+            vorrundenGruppen(k).every((g) => gruppenTabelleVon(k, g.nr).fertig)) {
+          (k.vorHauptrunde ??= []).push(id);
+        }
         k.rueckzuege.push({
           teilnehmer: id,
           phase: k.gestartet.ko ? 'ko' : 'gruppen',
@@ -1195,6 +1237,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         warnen(f);
         break;
       }
+      k.vorHauptrunde = k.vorHauptrunde?.filter((x) => x !== id);
       k.rueckzuege = k.rueckzuege.filter((r) => r.teilnehmer !== id);
       statusAktualisieren(k);
       break;
@@ -1277,7 +1320,7 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         k.gestartet.gruppen = true;
       } else if (d.phase === 'ko' && istPlatzModus(k.einst.modus)) {
         if (k.gestartet.ko || !k.gestartet.gruppen) break;
-        const plan = platzGruppenBilden(k);
+        const plan = platzGruppenBilden(k, d.rueckzugUebergang === 'vakanz');
         if (!plan.ok) {
           warnen(plan.grund);
           break;
@@ -1294,6 +1337,9 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
         if (!passt) {
           warnen('Die Platzierungsgruppen passen nicht mehr zu den Tabellen der Vorrunde – bitte neu starten.');
           break;
+        }
+        if (d.rueckzugUebergang === 'vakanz') {
+          for (const r of k.rueckzuege) if (k.vorHauptrunde?.includes(r.teilnehmer)) r.phase = 'ko';
         }
         platzGruppenAnlegen(k, plan.gruppen);
         k.gestartet.ko = true;
@@ -1333,6 +1379,10 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       if (phase === 'gruppen') k.gruppen = [];
       if (platzRunde) k.gruppen = k.gruppen.filter((g) => typeof g.platzAb !== 'number');
       if (phase === 'ko' && k.einst.modus === 'gruppen_ko') k.auslosungKo = null;
+      if (platzRunde) for (const r of k.rueckzuege) {
+        if (k.vorHauptrunde?.includes(r.teilnehmer)) r.phase = 'gruppen';
+      }
+      if (phase === 'gruppen') delete k.vorHauptrunde;
       k.rueckzuege = k.rueckzuege.filter((r) => r.phase !== phase);
       statusAktualisieren(k);
       break;
@@ -1473,8 +1523,25 @@ export function anwenden(z: TurnierZustand, e: LokalesEreignis): TurnierZustand 
       }
       s.tisch = tisch;
       s.tisch2 = t2 ?? null;
-      s.aufgerufen = e.zeit;
+      s.aufgerufen ??= e.zeit;
       s.schiri = schiriLesen(z, d.schiri);
+      break;
+    }
+
+    case ART.spielErgebnisSpaet:
+      z.spaeteErgebnisse.push(e);
+      break;
+    case ART.spielSpaetGeprueft: {
+      if (!nurLeitung()) break;
+      const meldung = z.spaeteErgebnisse.find((eintrag) => eintrag.id === d.ereignis);
+      if (!meldung || typeof d.uebernehmen !== 'boolean') break;
+      if (d.uebernehmen) {
+        const warnungen = z.warnungen.length;
+        anwenden(z, { ...meldung, art: ART.spielErgebnis, empfangen: null });
+        z.anzahlEreignisse--;
+        if (z.warnungen.length > warnungen) break;
+      }
+      z.spaeteErgebnisse = z.spaeteErgebnisse.filter((eintrag) => eintrag.id !== d.ereignis);
       break;
     }
 
@@ -1975,7 +2042,7 @@ export function minderjaehrigeLautJahrgang(z: Pick<TurnierZustand, 'spieler' | '
 
 export function rueckgaengigErlaubt(e: Pick<LokalesEreignis, 'art' | 'daten'>): boolean {
   if (NICHT_RUECKGAENGIG.includes(e.art)) return false;
-  if (e.art === ART.turnierDaten && e.daten && typeof e.daten === 'object' && ('namen' in e.daten || 'wertungUebernommen' in e.daten || 'jugend' in e.daten)) return false;
+  if (e.art === ART.turnierDaten && e.daten && typeof e.daten === 'object' && ('enddatum' in e.daten || 'namen' in e.daten || 'wertungUebernommen' in e.daten || 'jugend' in e.daten)) return false;
   return true;
 }
 
