@@ -24,7 +24,7 @@ export default defineConfig({
     acceptDownloads: true,
   },
   projects: [
-    { name: 'webkit', testMatch: /(?:e01-e07|ablauf|etappe7|etappe9|etappe12)\.spec\.ts/, use: { ...devices['iPhone 13'], browserName: 'webkit' } },
+    { name: 'webkit', testMatch: /(?:e01-e07|ablauf|etappe7|etappe9|etappe12|tische)\.spec\.ts/, use: { ...devices['iPhone 13'], browserName: 'webkit' } },
     { name: 'handy', use: { ...devices['Pixel 7'], browserName: 'chromium' } },
     { name: 'tablet', use: { viewport: { width: 820, height: 1180 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, browserName: 'chromium' } },
     { name: 'pc', use: { viewport: { width: 1280, height: 860 }, browserName: 'chromium' } },

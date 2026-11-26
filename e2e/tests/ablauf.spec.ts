@@ -586,7 +586,8 @@ test('Etappe 5: Doppel mit Trostrunde, Spielaufruf an Tische mit Schiedsrichter'
   await expect(tisch1).toContainText('/');
   await bild(page, '25-tische');
   // Ergebnis direkt vom Tisch aus
-  await tisch1.getByRole('button', { name: 'Ergebnis eintragen' }).click();
+  await tisch1.getByRole('button', { name: /^Tisch 1: .+ gegen .+/ }).click();
+  await page.getByTestId('tisch-auswahl').getByRole('button', { name: 'Ergebnis eintragen' }).click();
   const dlg = page.getByRole('dialog');
   for (const sz of [1, 2, 3]) {
     await dlg.getByTestId(`satz-${sz}`).getByRole('radio').first().click();

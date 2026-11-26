@@ -266,8 +266,9 @@ export const HANDBUCH: HandbuchKapitel[] = [
       {
         titel: 'Aufrufen',
         text: [
-          'Ein Spiel auf einen freien Tisch ziehen (Griff ⠿) oder unter „Nächste Spiele“ antippen. Auf Wunsch belegt das Gerät freie Tische automatisch, berücksichtigt die Mindestpause und sagt den Aufruf an.',
-          'Die grafische Tischfläche zeigt die Paarung und die Belegung. Tippe auf den Tisch, um das Spiel zu öffnen. Berechtigte Personen können ein Spiel auf einen freien Tisch verschieben.',
+          'Ein Spiel auf einen freien Tisch ziehen (Griff ⠿) oder unter „Nächste Spiele“ antippen. Auf Wunsch belegt das Gerät freie Tische automatisch, berücksichtigt die Mindestpause und sagt den Aufruf an. Ausschalten stoppt nur neue Aufrufe; laufende Spiele bleiben. War die Automatik versehentlich an, bietet die App an, die automatisch aufgerufenen Spiele ohne Ergebnis wieder zurückzunehmen.',
+          'Jeder Tisch erscheint als Tischtennistisch mit Netz: links und rechts die beiden Seiten mit gewonnenen Sätzen (bei Mannschaften Teilspielen) und Satzergebnissen, am Netz Tischnummer und Spielzeit, darüber Konkurrenz, Runde und Zustand (läuft, frei, gesperrt, zu bestätigen, strittig). Bei Mannschaften steht darunter das laufende Teilspiel. Nach dem Ergebnis zeigt der freie Tisch noch 30 Minuten das letzte Spiel.',
+          'Tisch antippen: Turnierleitung und Helfer bekommen die Funktionen dieses Tisches – Spiel aufrufen, Ergebnis eintragen, Tisch wechseln, Ansage wiederholen, Aufruf zurücknehmen und (nur Leitung) Tisch sperren oder freigeben. Spieler und Zuschauer öffnen damit das Spiel: Spielinformationen, beim eigenen Spiel auch Ergebnis eintragen oder bestätigen. Die Live-Anzeige zeigt dieselben Tische ohne Funktionen.',
           'Wer gerade an einem Tisch spielt, wird nicht ein zweites Mal aufgerufen. Gesperrte Tische (nur Leitung) bleiben frei.',
         ],
       },

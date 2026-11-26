@@ -18,6 +18,9 @@
   import { Ansager, ansageText, aufrufeVon, neueAufrufe, type Aufruf } from '../ansage';
   import { liveEinstellungen, setzeLiveEinstellungen, type LiveEinstellungen } from '../live';
   import QrCode from './turnier/QrCode.svelte';
+  import TischFlaeche from './turnier/TischFlaeche.svelte';
+  import { tischAnzeige, zuletztText, type TischAnzeige } from '../engine/tischanzeige';
+  import type { TischStand } from '../engine/abfragen';
 
   /**
    * Live-Anzeige für Beamer und Fernseher: zeigt, was Zuschauer sehen dürfen (verdeckte Stände bleiben
@@ -198,6 +201,17 @@
           .slice(0, 8)
       : [],
   );
+  /** Tisch für die Anzeige; bei Konkurrenzfilter kein „zuletzt“ aus einer anderen Konkurrenz (F-029) */
+  function liveAnzeige(t: TischStand): TischAnzeige {
+    const a = tischAnzeige(z!, t, jetzt);
+    if (a.zuletzt && e.nurKonkurrenz && a.zuletzt.konkurrenz !== e.nurKonkurrenz) return { ...a, zuletzt: null, a: null, b: null, hinweis: null, minuten: null };
+    return a;
+  }
+  function liveLabel(a: TischAnzeige): string {
+    if (a.spiel) return T.tische.tischLabel(a.nr, name(z!, a.spiel.a), name(z!, a.spiel.b));
+    if (a.zuletzt) return T.tische.tischZuletztLabel(a.nr, zuletztText(z!, a.zuletzt));
+    return T.tische.tischFreiLabel(a.nr);
+  }
   function ort(s: Spiel) {
     const k = z!.konkurrenzen[s.konkurrenz]!;
     return `${k.einst.name} · ${rundeVon(k, s)}`;
@@ -320,14 +334,10 @@
             {#if laufend.some((t) => t.spiel)}
               <ul class="tisch-raster">
                 {#each laufend.filter((t) => t.spiel || !t.gesperrt) as t (t.nr)}
+                  {@const a = liveAnzeige(t)}
                   <li class="tisch" class:leer={!t.spiel} class:neu={t.spiel && frischAufgerufen(t.spiel)}>
-                    <span class="nr">{t.nr}</span>
-                    {#if t.spiel}
-                      <span class="paar"><span>{name(z, t.spiel.a)}</span><span class="gegen">–</span><span>{name(z, t.spiel.b)}</span></span>
-                      <span class="ort">{ort(t.spiel)} · {T.tische.seit(minuten(t.spiel.aufgerufen))}</span>
-                    {:else}
-                      <span class="paar frei">{T.tische.frei}</span>
-                    {/if}
+                    <TischFlaeche anzeige={a} label={liveLabel(a)} />
+                    {#if a.ort || a.zuletzt}<span class="ort">{a.ort ?? `${T.tische.zuletzt}: ${ort(a.zuletzt!)}`}{#if a.hinweis} · <strong class:strittig={a.hinweis === 'strittig'}>{a.hinweis === 'strittig' ? T.tische.strittig : T.tische.zuBestaetigen}</strong>{/if}{#if a.teilspiel} · {T.tische.teilspiel(a.teilspiel.nr, a.teilspiel.art === 'doppel')}{/if}</span>{/if}
                   </li>
                 {/each}
               </ul>
@@ -557,13 +567,11 @@
   .ablauf { display: grid; grid-template-columns: 1.5fr 1fr; grid-template-rows: auto 1fr; gap: 0.9em; }
   .tische-block { grid-row: span 2; }
   .tisch-raster { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(16em, 1fr)); gap: 0.5em; }
-  .tisch { display: grid; grid-template-columns: 2.4em 1fr; grid-template-rows: auto auto; column-gap: 0.6em; align-items: center; padding: 0.5em 0.7em; border-radius: 0.5em; background: var(--l-grund); border: 2px solid var(--l-linie); }
+  .tisch { display: block; padding: 0.3em 0.5em 0.4em; border-radius: 0.5em; background: var(--l-grund); border: 2px solid var(--l-linie); min-width: 0; }
+  .tisch .ort strong { color: var(--l-text); }
+  .tisch .ort strong.strittig { color: #b3261e; }
   .tisch.neu { background: var(--l-neu); border-color: #e0a800; animation: blinken 1.2s ease-in-out 3; }
-  .tisch.leer { opacity: 0.55; }
-  .tisch .nr { grid-row: span 2; font-size: 1.8em; font-weight: 800; text-align: center; color: var(--l-akzent); }
-  .paar { font-weight: 700; display: flex; flex-wrap: wrap; gap: 0 0.35em; overflow-wrap: anywhere; }
-  .paar.frei { font-weight: 400; color: var(--l-leise); }
-  .gegen { color: var(--l-leise); }
+  .tisch.leer { border-style: dashed; }
   .ort { display: block; color: var(--l-leise); font-size: 0.78em; }
   .zeilen { list-style: none; margin: 0; padding: 0; }
   .zeilen li { padding: 0.35em 0; border-top: 1px solid var(--l-linie); display: flex; flex-wrap: wrap; gap: 0 0.6em; align-items: baseline; }

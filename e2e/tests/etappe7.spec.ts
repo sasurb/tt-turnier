@@ -84,8 +84,8 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await einst.getByTestId('pause').selectOption('3');
   await einst.getByTestId('automatisch').check();
   const tische = page.getByTestId('tische').locator('li');
-  await expect(tische.nth(0).getByRole('button', { name: /Spielinformationen Tisch 1: .+ gegen .+/ })).toBeVisible();
-  await expect(tische.nth(1).getByRole('button', { name: /Spielinformationen Tisch 2: .+ gegen .+/ })).toBeVisible();
+  await expect(tische.nth(0).getByRole('button', { name: /^Tisch 1: .+ gegen .+/ })).toBeVisible();
+  await expect(tische.nth(1).getByRole('button', { name: /^Tisch 2: .+ gegen .+/ })).toBeVisible();
   await expect(page.getByTestId('tische').getByText('frei')).toHaveCount(0);
   await layoutPruefen(page, einst);
   await bild(page, '40-tische-automatisch');
@@ -111,7 +111,8 @@ test('Online: automatischer Aufruf, Live-Anzeige für Zuschauer, Kurzform, Druck
   await beamer.getByRole('dialog').getByRole('button', { name: 'Schließen' }).click();
 
   // Neuer Aufruf erscheint groß: Aufruf an Tisch 2 zurücknehmen → Automatik ruft neu auf
-  await tische.nth(1).getByRole('button', { name: 'Aufruf zurücknehmen' }).click();
+  await tische.nth(1).getByRole('button', { name: /^Tisch 2: .+ gegen .+/ }).click();
+  await page.getByTestId('tisch-auswahl').getByRole('button', { name: 'Aufruf zurücknehmen' }).click();
   await expect(beamer.getByTestId('live-banner')).toBeVisible({ timeout: 15_000 });
   await expect(beamer.getByTestId('live-banner')).toContainText('Tisch 2');
   await bild(beamer, '43-live-aufruf');

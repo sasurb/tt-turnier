@@ -256,9 +256,17 @@ test('Online-Anmeldung, Warteliste, Übernahme, Kasse mit Quittung, Helfer mit A
   await einst.locator('summary').click();
   await einst.getByTestId('automatisch').check();
   const tisch = page.getByTestId('tisch-1');
-  await expect(tisch.getByRole('button', { name: /Spielinformationen Tisch 1/ })).toHaveText(/Ben Netz.*Cem Netz|Cem Netz.*Ben Netz/);
+  await expect(tisch.getByRole('button', { name: /^Tisch 1: / })).toHaveText(/Ben Netz.*Cem Netz|Cem Netz.*Ben Netz/);
   await expect(s.getByTestId('aufruf-hinweis')).toContainText('Tisch 1', { timeout: 20_000 });
   await layoutPruefen(s);
   await bild(s, '99-aufruf-hinweis');
+  // V-010: Ein Spieler bekommt am Tisch keine Leitungsfunktionen – Antippen öffnet direkt sein Spiel
+  await reiterOeffnen(s, 'Tische');
+  await s.getByTestId('tisch-1').getByRole('button', { name: /^Tisch 1: / }).click();
+  await expect(s.getByRole('dialog')).toBeVisible();
+  await expect(s.getByRole('dialog')).toContainText(/Ben Netz.*Cem Netz|Cem Netz.*Ben Netz/);
+  await expect(s.getByTestId('tisch-auswahl')).toHaveCount(0);
+  await expect(s.getByRole('button', { name: 'Aufruf zurücknehmen' })).toHaveCount(0);
+  await s.keyboard.press('Escape');
   await k3.close();
 });

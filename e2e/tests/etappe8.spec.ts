@@ -137,8 +137,16 @@ test('Rückgängig, Nachmelden, Zeitplan, Vorplanen und Ziehen auf Tische', asyn
     await page.mouse.up();
   }
   await expect(page.getByText('Spiel an Tisch 1 aufgerufen.')).toBeVisible();
-  await expect(ziel.getByRole('button', { name: /Spielinformationen Tisch 1: .+ gegen .+/ })).toBeVisible();
-  await expect(ziel.getByRole('button', { name: 'Aufruf zurücknehmen' })).toBeVisible();
+  // V-010: Antippen des Tisches öffnet die Funktionen (Leitung)
+  const tischKnopf = ziel.getByRole('button', { name: /^Tisch 1: .+ gegen .+/ });
+  await expect(tischKnopf).toBeVisible();
+  await tischKnopf.click();
+  const auswahl = page.getByTestId('tisch-auswahl');
+  await expect(auswahl.getByRole('button', { name: 'Ergebnis eintragen' })).toBeVisible();
+  await expect(auswahl.getByRole('button', { name: 'Aufruf zurücknehmen' })).toBeVisible();
+  await layoutPruefen(page, auswahl);
+  await auswahl.getByRole('button', { name: 'Schließen' }).click();
+  await expect(auswahl).toBeHidden();
   await layoutPruefen(page, page.getByTestId('tische'));
   await bild(page, '53-tische-zeitplan');
 
